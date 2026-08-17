@@ -1,0 +1,29 @@
+{
+  "name": "ai-smart-scanner",
+  "version": "1.0.0",
+  "description": "AI Smart Stock Scanner using Angel One SmartAPI",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "stock",
+    "scanner",
+    "angelone",
+    "technical-analysis",
+    "ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.19.0",
+    "dotenv": "^17.4.2",
+    "googleapis": "^173.0.0",
+    "otplib": "^12.0.1",
+    "smartapi-javascript": "^1.0.27",
+    "technicalindicators": "^3.1.0"
+  }
+}
