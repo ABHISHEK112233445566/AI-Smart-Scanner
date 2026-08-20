@@ -1,31 +1,20 @@
 // ============================================================
-// STOCK SCANNER V3
+// STOCK SCANNER V4 — SEQUENTIAL QUALIFICATION PIPELINE
 // ============================================================
-// PURPOSE
-// ============================================================
-// - Broker independent
-// - Daily historical data
-// - Technical indicators
-// - AI score
-// - Stock trade setup
-// - Support / Resistance
-// - Breakout
-// - Multi-timeframe analysis
-// - Pivot / CPR
-// - Final ranking
-// - Options decision
+// FLOW
+// 1. Fetch daily stock data
+// 2. Cheap technical / score pre-filter
+// 3. Direction filter
+// 4. Momentum / breakout confirmation
+// 5. MTF confirmation ONLY for survivors
+// 6. Final ranking ONLY for survivors
+// 7. Options engine receives qualified survivors
 //
-// CORE RULES
-// ============================================================
-// 1. NEVER force CALL.
-// 2. NEVER force PUT.
-// 3. NEVER convert bearish into bullish.
-// 4. AI signal cannot blindly override technical structure.
-// 5. Bullish and bearish structures are calculated independently.
-// 6. Conflicting technical structure = NEUTRAL.
-// 7. OptionsDecisionEngine decides CALL / PUT / NO DIRECTION.
-// 8. Dashboard qualification = 85+.
-// 9. Scanner data keeps only useful fields.
+// IMPORTANT
+// - Options are NOT touched during stock scanning.
+// - MTF is NOT calculated for rejected stocks.
+// - A stock can be bullish OR bearish; no forced CALL/PUT.
+// - Weak/sideways stocks are removed early.
 // ============================================================
 
 const {
@@ -33,1872 +22,550 @@ const {
     getInstrument
 } = require("./brokers");
 
-const {
-    calculateIndicators
-} = require("./indicators");
-
-const {
-    calculateScore
-} = require("./aiEngine");
-
-const {
-    calculateTradeSetup
-} = require("./tradeSetup");
-
-const {
-    calculateSupportResistance
-} = require("./supportResistance");
-
-const {
-    calculateBreakout
-} = require("./breakout");
-
-const {
-    getMultiTimeframeAnalysis
-} = require("./mtfScanner");
-
-const {
-    calculatePivotPoints
-} = require("./pivotPoints");
-
-const {
-    calculateCPR
-} = require("./cpr");
-
-const {
-    calculateFinalRank
-} = require("./rankingEngine");
-
-const {
-    calculateOptionsDecision
-} = require("./optionsDecisionEngine");
-
-
-// ============================================================
-// CONFIGURATION
-// ============================================================
+const { calculateIndicators } = require("./indicators");
+const { calculateScore } = require("./aiEngine");
+const { calculateTradeSetup } = require("./tradeSetup");
+const { calculateSupportResistance } = require("./supportResistance");
+const { calculateBreakout } = require("./breakout");
+const { getMultiTimeframeAnalysis } = require("./mtfScanner");
+const { calculatePivotPoints } = require("./pivotPoints");
+const { calculateCPR } = require("./cpr");
+const { calculateFinalRank } = require("./rankingEngine");
 
 const DASHBOARD_MIN_SCORE = 85;
 
+// ============================================================
+// PIPELINE CONFIG
+// ============================================================
+
+const PIPELINE_CONFIG = Object.freeze({
+    PRE_SCORE_MIN: 55,
+    PRE_MOMENTUM_MIN: 2,
+    MAX_QUALIFIED_STOCKS: 20,
+    DAILY_CANDLE_MIN: 220
+});
 
 // ============================================================
-// BASIC HELPERS
+// HELPERS
 // ============================================================
 
 function toNumber(value, fallback = 0) {
-
     const n = Number(value);
-
-    return Number.isFinite(n)
-        ? n
-        : fallback;
+    return Number.isFinite(n) ? n : fallback;
 }
 
-
 function safeObject(value) {
-
-    return (
-        value &&
-        typeof value === "object" &&
-        !Array.isArray(value)
-    )
+    return value && typeof value === "object" && !Array.isArray(value)
         ? value
         : {};
 }
 
-
 function safeBoolean(value) {
-
-    if (value === true) return true;
-    if (value === false) return false;
-
-    if (typeof value === "string") {
-
-        return value
-            .trim()
-            .toUpperCase() === "TRUE";
-
-    }
-
-    return false;
+    if (value === true || value === false) return value;
+    return typeof value === "string" && value.trim().toUpperCase() === "TRUE";
 }
-
 
 function clampScore(value) {
-
-    return Math.max(
-        0,
-        Math.min(
-            100,
-            Math.round(
-                toNumber(value)
-            )
-        )
-    );
+    return Math.max(0, Math.min(100, Math.round(toNumber(value))));
 }
-
-
-// ============================================================
-// DIRECTION NORMALIZATION
-// ============================================================
 
 function normalizeDirection(value) {
-
-    const direction =
-        String(value || "")
-            .trim()
-            .toUpperCase();
-
-    if (
-        [
-            "BULLISH",
-            "BULL",
-            "LONG",
-            "CALL",
-            "CE",
-            "BUY",
-            "BUY SIGNAL",
-            "STRONG BUY"
-        ].includes(direction)
-    ) {
-
-        return "BULLISH";
-
-    }
-
-
-    if (
-        [
-            "BEARISH",
-            "BEAR",
-            "SHORT",
-            "PUT",
-            "PE",
-            "SELL",
-            "SELL SIGNAL",
-            "STRONG SELL"
-        ].includes(direction)
-    ) {
-
-        return "BEARISH";
-
-    }
-
-
+    const s = String(value || "").trim().toUpperCase();
+    if (["BULLISH", "BULL", "LONG", "CALL", "CE", "BUY", "BUY SIGNAL", "STRONG BUY", "UP"].includes(s)) return "BULLISH";
+    if (["BEARISH", "BEAR", "SHORT", "PUT", "PE", "SELL", "SELL SIGNAL", "STRONG SELL", "DOWN"].includes(s)) return "BEARISH";
     return "NEUTRAL";
-
 }
-
-
-// ============================================================
-// MACD
-// ============================================================
 
 function getMACDValues(indicators = {}) {
-
-    const macdObject =
-        safeObject(
-            indicators.macd
-        );
-
-
-    const macd =
-        toNumber(
-            macdObject.MACD ??
-            macdObject.macd ??
-            indicators.MACD
-        );
-
-
-    const signal =
-        toNumber(
-            macdObject.signal ??
-            macdObject.Signal ??
-            indicators.macdSignal ??
-            indicators.MACDSignal
-        );
-
-
-    const histogram =
-        toNumber(
-            macdObject.histogram ??
-            macdObject.Histogram ??
-            indicators.histogram,
-            macd - signal
-        );
-
-
-    return {
-        macd,
-        signal,
-        histogram
-    };
-
+    const m = safeObject(indicators.macd);
+    const macd = toNumber(m.MACD ?? m.macd ?? indicators.MACD);
+    const signal = toNumber(m.signal ?? m.Signal ?? indicators.macdSignal ?? indicators.MACDSignal);
+    const histogram = toNumber(m.histogram ?? m.Histogram ?? indicators.histogram, macd - signal);
+    return { macd, signal, histogram };
 }
 
+function resolveInstrumentKey(instrument) {
+    if (typeof instrument === "string" && instrument.trim()) return instrument.trim();
+    if (!instrument || typeof instrument !== "object") return null;
+
+    const candidates = [
+        instrument.instrumentKey,
+        instrument.instrument_key,
+        instrument.instrumentToken,
+        instrument.instrument_token,
+        instrument.exchangeToken,
+        instrument.exchange_token,
+        instrument.token,
+        instrument.key,
+        instrument.instrumentId,
+        instrument.instrument_id,
+        instrument.symbol,
+        instrument.tradingsymbol,
+        instrument.tradingSymbol
+    ];
+
+    for (const value of candidates) {
+        if (value !== null && value !== undefined && String(value).trim()) return String(value).trim();
+    }
+
+    return null;
+}
+
+function latestValidCandle(candles) {
+    if (!Array.isArray(candles)) return null;
+    for (let i = candles.length - 1; i >= 0; i--) {
+        const c = candles[i];
+        if (c && Number.isFinite(Number(c.close)) && Number(c.close) > 0) return c;
+    }
+    return null;
+}
+
+function validateCandles(candles) {
+    if (!Array.isArray(candles) || candles.length < PIPELINE_CONFIG.DAILY_CANDLE_MIN) return false;
+    return candles.every(c => {
+        if (!c || typeof c !== "object") return false;
+        const high = Number(c.high);
+        const low = Number(c.low);
+        const close = Number(c.close);
+        return Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(close) && high >= low && close > 0;
+    });
+}
 
 // ============================================================
 // TECHNICAL DIRECTION
 // ============================================================
-// IMPORTANT
-// ------------------------------------------------------------
-// This does NOT use AI.
-// Bullish and bearish scores are calculated independently.
-// ============================================================
 
-function determineTechnicalDirection(
-    indicators = {},
-    price = 0
-) {
-
-    const currentPrice =
-        toNumber(
-            price ||
-            indicators.price
-        );
-
-
-    const ema20 =
-        toNumber(
-            indicators.ema20 ??
-            indicators.EMA20
-        );
-
-
-    const ema50 =
-        toNumber(
-            indicators.ema50 ??
-            indicators.EMA50
-        );
-
-
-    const ema100 =
-        toNumber(
-            indicators.ema100 ??
-            indicators.EMA100
-        );
-
-
-    const ema200 =
-        toNumber(
-            indicators.ema200 ??
-            indicators.EMA200
-        );
-
-
-    const rsi =
-        toNumber(
-            indicators.rsi ??
-            indicators.RSI
-        );
-
-
-    const {
-        macd,
-        signal,
-        histogram
-    } =
-        getMACDValues(
-            indicators
-        );
-
-
-    const adxObject =
-        safeObject(
-            indicators.adx
-        );
-
-
-    const adx =
-        toNumber(
-            adxObject.adx ??
-            indicators.adxValue
-        );
-
-
-    const pdi =
-        toNumber(
-            adxObject.pdi ??
-            adxObject.PDI
-        );
-
-
-    const mdi =
-        toNumber(
-            adxObject.mdi ??
-            adxObject.MDI
-        );
-
-
-    if (
-        currentPrice <= 0 ||
-        ema20 <= 0 ||
-        ema50 <= 0
-    ) {
-
-        return "NEUTRAL";
-
-    }
-
-
-    // ========================================================
-    // BULLISH
-    // ========================================================
-
-    let bullish = 0;
-
-
-    if (currentPrice > ema20)
-        bullish += 1;
-
-    if (ema20 > ema50)
-        bullish += 1;
-
-    if (
-        ema100 > 0 &&
-        ema50 > ema100
-    )
-        bullish += 1;
-
-    if (
-        ema200 > 0 &&
-        ema100 > ema200
-    )
-        bullish += 1;
-
-    if (rsi > 50)
-        bullish += 1;
-
-    if (macd > signal)
-        bullish += 1;
-
-    if (histogram > 0)
-        bullish += 1;
-
-    if (
-        adx >= 20 &&
-        pdi > mdi
-    )
-        bullish += 2;
-
-
-    // ========================================================
-    // BEARISH
-    // ========================================================
-
-    let bearish = 0;
-
-
-    if (currentPrice < ema20)
-        bearish += 1;
-
-    if (ema20 < ema50)
-        bearish += 1;
-
-    if (
-        ema100 > 0 &&
-        ema50 < ema100
-    )
-        bearish += 1;
-
-    if (
-        ema200 > 0 &&
-        ema100 < ema200
-    )
-        bearish += 1;
-
-    if (rsi < 50)
-        bearish += 1;
-
-    if (macd < signal)
-        bearish += 1;
-
-    if (histogram < 0)
-        bearish += 1;
-
-    if (
-        adx >= 20 &&
-        mdi > pdi
-    )
-        bearish += 2;
-
-
-    // ========================================================
-    // STRONG STRUCTURE
-    // ========================================================
-
-    if (
-        bullish >= 6 &&
-        bullish >= bearish + 2
-    ) {
-
-        return "BULLISH";
-
-    }
-
-
-    if (
-        bearish >= 6 &&
-        bearish >= bullish + 2
-    ) {
-
-        return "BEARISH";
-
-    }
-
-
-    // ========================================================
-    // SECONDARY STRUCTURE
-    // ========================================================
-
-    const bullishStructure =
-        currentPrice > ema20 &&
-        ema20 > ema50 &&
-        rsi >= 50 &&
-        macd >= signal;
-
-
-    const bearishStructure =
-        currentPrice < ema20 &&
-        ema20 < ema50 &&
-        rsi <= 50 &&
-        macd <= signal;
-
-
-    if (
-        bullishStructure &&
-        !bearishStructure
-    ) {
-
-        return "BULLISH";
-
-    }
-
-
-    if (
-        bearishStructure &&
-        !bullishStructure
-    ) {
-
-        return "BEARISH";
-
-    }
-
-
+function determineTechnicalDirection(indicators = {}, price = 0) {
+    const p = toNumber(price || indicators.price);
+    const ema20 = toNumber(indicators.ema20 ?? indicators.EMA20);
+    const ema50 = toNumber(indicators.ema50 ?? indicators.EMA50);
+    const ema100 = toNumber(indicators.ema100 ?? indicators.EMA100);
+    const ema200 = toNumber(indicators.ema200 ?? indicators.EMA200);
+    const rsi = toNumber(indicators.rsi ?? indicators.RSI);
+    const { macd, signal, histogram } = getMACDValues(indicators);
+    const adxData = safeObject(indicators.adx);
+    const adx = toNumber(adxData.adx ?? indicators.adxValue);
+    const pdi = toNumber(adxData.pdi ?? adxData.PDI);
+    const mdi = toNumber(adxData.mdi ?? adxData.MDI);
+
+    if (p <= 0 || ema20 <= 0 || ema50 <= 0) return "NEUTRAL";
+
+    let bull = 0;
+    let bear = 0;
+
+    if (p > ema20) bull++;
+    if (p < ema20) bear++;
+    if (ema20 > ema50) bull++;
+    if (ema20 < ema50) bear++;
+    if (ema100 > 0 && ema50 > ema100) bull++;
+    if (ema100 > 0 && ema50 < ema100) bear++;
+    if (ema200 > 0 && ema100 > ema200) bull++;
+    if (ema200 > 0 && ema100 < ema200) bear++;
+    if (rsi > 50) bull++;
+    if (rsi < 50) bear++;
+    if (macd > signal) bull++;
+    if (macd < signal) bear++;
+    if (histogram > 0) bull++;
+    if (histogram < 0) bear++;
+    if (adx >= 20 && pdi > mdi) bull += 2;
+    if (adx >= 20 && mdi > pdi) bear += 2;
+
+    if (bull >= 6 && bull >= bear + 2) return "BULLISH";
+    if (bear >= 6 && bear >= bull + 2) return "BEARISH";
+
+    const bullStructure = p > ema20 && ema20 > ema50 && rsi >= 50 && macd >= signal;
+    const bearStructure = p < ema20 && ema20 < ema50 && rsi <= 50 && macd <= signal;
+
+    if (bullStructure && !bearStructure) return "BULLISH";
+    if (bearStructure && !bullStructure) return "BEARISH";
     return "NEUTRAL";
-
 }
 
+function determineStockDirection(signal, trend, indicators) {
+    const technical = determineTechnicalDirection(indicators, indicators.price);
+    if (technical !== "NEUTRAL") return technical;
 
-// ============================================================
-// STOCK DIRECTION
-// ============================================================
-// Technical structure gets priority.
-// AI is NOT allowed to turn bearish technical structure bullish.
-// ============================================================
+    const ai = normalizeDirection(signal);
+    const tr = normalizeDirection(trend);
 
-function determineStockDirection(
-    signal,
-    trend,
-    indicators
-) {
-
-    const aiDirection =
-        normalizeDirection(
-            signal
-        );
-
-
-    const trendDirection =
-        normalizeDirection(
-            trend
-        );
-
-
-    const technicalDirection =
-        determineTechnicalDirection(
-            indicators,
-            indicators.price
-        );
-
-
-    // Strong technical direction wins.
-    if (
-        technicalDirection === "BULLISH"
-    ) {
-
-        return "BULLISH";
-
-    }
-
-
-    if (
-        technicalDirection === "BEARISH"
-    ) {
-
-        return "BEARISH";
-
-    }
-
-
-    // Technical neutral:
-    // only accept AI + trend if they agree.
-
-    if (
-        aiDirection !== "NEUTRAL" &&
-        trendDirection !== "NEUTRAL"
-    ) {
-
-        if (
-            aiDirection === trendDirection
-        ) {
-
-            return aiDirection;
-
-        }
-
-        return "NEUTRAL";
-
-    }
-
-
-    if (
-        aiDirection !== "NEUTRAL"
-    ) {
-
-        return aiDirection;
-
-    }
-
-
-    if (
-        trendDirection !== "NEUTRAL"
-    ) {
-
-        return trendDirection;
-
-    }
-
-
+    if (ai !== "NEUTRAL" && tr !== "NEUTRAL") return ai === tr ? ai : "NEUTRAL";
+    if (ai !== "NEUTRAL") return ai;
+    if (tr !== "NEUTRAL") return tr;
     return "NEUTRAL";
-
 }
 
-
 // ============================================================
-// INSTRUMENT KEY
+// PRE-FILTER
 // ============================================================
 
-function resolveInstrumentKey(instrument) {
+function evaluatePreFilter({ scoreData, indicators, breakout, direction }) {
+    const score = clampScore(scoreData.finalScore ?? scoreData.score);
+    const { macd, signal, histogram } = getMACDValues(indicators);
+    const rsi = toNumber(indicators.rsi);
+    const adx = toNumber(safeObject(indicators.adx).adx ?? indicators.adxValue);
+    const pdi = toNumber(safeObject(indicators.adx).pdi ?? safeObject(indicators.adx).PDI);
+    const mdi = toNumber(safeObject(indicators.adx).mdi ?? safeObject(indicators.adx).MDI);
+    const rvol = toNumber(indicators.rvol);
 
-    if (
-        typeof instrument === "string" &&
-        instrument.trim()
-    ) {
-
-        return instrument.trim();
-
+    if (score < PIPELINE_CONFIG.PRE_SCORE_MIN) {
+        return { passed: false, reason: "LOW_SCORE", momentumScore: 0 };
     }
 
-
-    if (
-        !instrument ||
-        typeof instrument !== "object"
-    ) {
-
-        return null;
-
+    if (direction === "NEUTRAL") {
+        return { passed: false, reason: "NO_DIRECTION", momentumScore: 0 };
     }
 
+    let momentum = 0;
+    const bullish = direction === "BULLISH";
 
-    const candidates = [
+    if (bullish ? rsi >= 50 : rsi <= 50) momentum++;
+    if (bullish ? macd >= signal && histogram >= 0 : macd <= signal && histogram <= 0) momentum++;
+    if (adx >= 20 && (bullish ? pdi > mdi : mdi > pdi)) momentum++;
+    if (rvol >= 1.0 || safeBoolean(breakout.volumeConfirmed)) momentum++;
+    if (safeBoolean(breakout.breakout) || safeBoolean(breakout.momentumConfirmed)) momentum++;
 
-        instrument.instrumentKey,
-        instrument.instrument_key,
-
-        instrument.instrumentToken,
-        instrument.instrument_token,
-
-        instrument.exchangeToken,
-        instrument.exchange_token,
-
-        instrument.token,
-
-        instrument.key,
-
-        instrument.instrumentId,
-        instrument.instrument_id,
-
-        instrument.symbol,
-        instrument.tradingsymbol,
-        instrument.tradingSymbol
-
-    ];
-
-
-    for (
-        const candidate of candidates
-    ) {
-
-        if (
-            candidate !== null &&
-            candidate !== undefined &&
-            String(candidate).trim()
-        ) {
-
-            return String(candidate).trim();
-
-        }
-
+    if (momentum < PIPELINE_CONFIG.PRE_MOMENTUM_MIN) {
+        return { passed: false, reason: "WEAK_MOMENTUM", momentumScore: momentum };
     }
 
-
-    return null;
-
+    return { passed: true, reason: "QUALIFIED", momentumScore: momentum };
 }
 
-
 // ============================================================
-// CANDLE VALIDATION
-// ============================================================
-
-function getLatestValidCandle(candles) {
-
-    if (
-        !Array.isArray(candles) ||
-        candles.length === 0
-    ) {
-
-        return null;
-
-    }
-
-
-    for (
-        let i = candles.length - 1;
-        i >= 0;
-        i--
-    ) {
-
-        const candle =
-            candles[i];
-
-
-        if (
-            candle &&
-            typeof candle === "object"
-        ) {
-
-            const close =
-                toNumber(
-                    candle.close,
-                    NaN
-                );
-
-
-            if (
-                Number.isFinite(close) &&
-                close > 0
-            ) {
-
-                return candle;
-
-            }
-
-        }
-
-    }
-
-
-    return null;
-
-}
-
-
-function validateCandles(candles) {
-
-    if (
-        !Array.isArray(candles)
-    ) {
-
-        return false;
-
-    }
-
-
-    if (
-        candles.length < 220
-    ) {
-
-        return false;
-
-    }
-
-
-    return candles.every(
-        candle => {
-
-            if (
-                !candle ||
-                typeof candle !== "object"
-            ) {
-
-                return false;
-
-            }
-
-
-            const high =
-                Number(candle.high);
-
-            const low =
-                Number(candle.low);
-
-            const close =
-                Number(candle.close);
-
-
-            return (
-                Number.isFinite(high) &&
-                Number.isFinite(low) &&
-                Number.isFinite(close) &&
-                high >= low &&
-                close > 0
-            );
-
-        }
-    );
-
-}
-
-
-// ============================================================
-// SCORE NORMALIZATION
+// BUILD RESULT
 // ============================================================
 
-function extractScoreData(
-    scoreData,
-    latestPrice
-) {
-
-    const data =
-        safeObject(
-            scoreData
-        );
-
-
-    const score =
-        clampScore(
-            data.score ??
-            data.aiScore
-        );
-
-
-    const finalScore =
-        clampScore(
-            data.finalScore ??
-            data.aiFinalScore ??
-            score
-        );
-
-
-    const bullishScore =
-        clampScore(
-            data.bullishScore ??
-            data.bullScore ??
-            data.callScore
-        );
-
-
-    const bearishScore =
-        clampScore(
-            data.bearishScore ??
-            data.bearScore ??
-            data.putScore
-        );
-
+function buildStockAnalysis({ stockSymbol, instrumentKey, latestPrice, indicators, scoreData, trade, sr, breakout, mtf, pivot, cpr, stockDirection, technicalDirection, preFilter }) {
+    const { macd, signal, histogram } = getMACDValues(indicators);
+    const adx = safeObject(indicators.adx);
 
     return {
-
-        score,
-
-        finalScore,
-
-        bullishScore,
-
-        bearishScore,
-
-        rating:
-            data.rating ||
-            "N/A",
-
-        signal:
-            data.signal ||
-            data.direction ||
-            "NO SIGNAL",
-
-        price:
-            latestPrice
-
-    };
-
-}
-
-
-// ============================================================
-// BUILD STOCK ANALYSIS
-// ============================================================
-
-function buildStockAnalysis({
-
-    stockSymbol,
-    instrumentKey,
-    latestPrice,
-
-    indicators,
-    scoreData,
-
-    trade,
-    sr,
-    breakout,
-    mtf,
-    pivot,
-    cpr,
-
-    stockDirection,
-    technicalDirection
-
-}) {
-
-    const macd =
-        getMACDValues(
-            indicators
-        );
-
-
-    const adx =
-        safeObject(
-            indicators.adx
-        );
-
-
-    return {
-
-        // ====================================================
-        // IDENTITY
-        // ====================================================
-
-        stock:
-            stockSymbol,
-
-        symbol:
-            stockSymbol,
-
-        tradingSymbol:
-            stockSymbol,
-
+        stock: stockSymbol,
+        symbol: stockSymbol,
+        tradingSymbol: stockSymbol,
         instrumentKey,
-
-
-        // ====================================================
-        // PRICE
-        // ====================================================
-
-        price:
-            latestPrice,
-
-
-        // ====================================================
-        // DIRECTION
-        // ====================================================
-
-        direction:
-            stockDirection,
-
+        price: latestPrice,
+        direction: stockDirection,
         stockDirection,
-
         technicalDirection,
-
-        isBullish:
-            stockDirection === "BULLISH",
-
-        isBearish:
-            stockDirection === "BEARISH",
-
-
-        // ====================================================
-        // AI
-        // ====================================================
-
-        score:
-            scoreData.score,
-
-        scannerScore:
-            scoreData.score,
-
-        aiScore:
-            scoreData.score,
-
-        aiRating:
-            scoreData.rating,
-
-        signal:
-            scoreData.signal,
-
-        bullishScore:
-            scoreData.bullishScore,
-
-        bearishScore:
-            scoreData.bearishScore,
-
-        callScore:
-            scoreData.bullishScore,
-
-        putScore:
-            scoreData.bearishScore,
-
-        aiFinalScore:
-            scoreData.finalScore,
-
-
-        // ====================================================
-        // STOCK SETUP
-        // ====================================================
-
-        entry:
-            toNumber(
-                trade.entry
-            ),
-
-        stopLoss:
-            toNumber(
-                trade.stopLoss
-            ),
-
-        target1:
-            toNumber(
-                trade.target1
-            ),
-
-        target2:
-            toNumber(
-                trade.target2
-            ),
-
-        risk:
-            toNumber(
-                trade.risk
-            ),
-
-        reward:
-            toNumber(
-                trade.reward
-            ),
-
-        riskReward:
-            toNumber(
-                trade.riskReward
-            ),
-
-        trend:
-            trade.trend || "",
-
-        confidence:
-            clampScore(
-                trade.confidence
-            ),
-
-
-        // ====================================================
-        // SUPPORT / RESISTANCE
-        // ====================================================
-
-        support1:
-            toNumber(sr.support1),
-
-        support2:
-            toNumber(sr.support2),
-
-        support3:
-            toNumber(sr.support3),
-
-        resistance1:
-            toNumber(sr.resistance1),
-
-        resistance2:
-            toNumber(sr.resistance2),
-
-        resistance3:
-            toNumber(sr.resistance3),
-
-
-        // ====================================================
-        // BREAKOUT
-        // ====================================================
-
-        breakout:
-            safeBoolean(
-                breakout.breakout
-            ),
-
-        breakoutType:
-            breakout.breakoutType || "",
-
-        breakoutStrength:
-            breakout.breakoutStrength || "",
-
-        breakoutScore:
-            toNumber(
-                breakout.breakoutScore
-            ),
-
-        aboveResistance:
-            safeBoolean(
-                breakout.aboveResistance
-            ),
-
-        belowSupport:
-            safeBoolean(
-                breakout.belowSupport
-            ),
-
-        nearResistance:
-            safeBoolean(
-                breakout.nearResistance
-            ),
-
-        nearSupport:
-            safeBoolean(
-                breakout.nearSupport
-            ),
-
-        volumeConfirmed:
-            safeBoolean(
-                breakout.volumeConfirmed
-            ),
-
-        trendConfirmed:
-            safeBoolean(
-                breakout.trendConfirmed
-            ),
-
-        momentumConfirmed:
-            safeBoolean(
-                breakout.momentumConfirmed
-            ),
-
-
-        // ====================================================
-        // MTF
-        // ====================================================
-
-        dailyTrend:
-            mtf.dailyTrend || "",
-
-        fourHourTrend:
-            mtf.fourHourTrend || "",
-
-        oneHourTrend:
-            mtf.oneHourTrend || "",
-
-        fifteenMinTrend:
-            mtf.fifteenMinTrend || "",
-
-        mtfScore:
-            toNumber(
-                mtf.mtfScore
-            ),
-
-        mtfAlignment:
-            toNumber(
-                mtf.mtfAlignment
-            ),
-
-        mtfAlignedTimeframes:
-            toNumber(
-                mtf.alignedTimeframes
-            ),
-
-
-        // ====================================================
-        // PIVOT
-        // ====================================================
-
-        pivot:
-            toNumber(
-                pivot.pivot
-            ),
-
-        pivotR1:
-            toNumber(pivot.r1),
-
-        pivotR2:
-            toNumber(pivot.r2),
-
-        pivotR3:
-            toNumber(pivot.r3),
-
-        pivotS1:
-            toNumber(pivot.s1),
-
-        pivotS2:
-            toNumber(pivot.s2),
-
-        pivotS3:
-            toNumber(pivot.s3),
-
-
-        // ====================================================
-        // CPR
-        // ====================================================
-
-        cprTop:
-            toNumber(cpr.top),
-
-        cprBottom:
-            toNumber(cpr.bottom),
-
-        cprWidth:
-            toNumber(cpr.width),
-
-        cprType:
-            cpr.type || "",
-
-
-        // ====================================================
-        // EMA
-        // ====================================================
-
-        ema5:
-            toNumber(indicators.ema5),
-
-        ema9:
-            toNumber(indicators.ema9),
-
-        ema20:
-            toNumber(indicators.ema20),
-
-        ema50:
-            toNumber(indicators.ema50),
-
-        ema100:
-            toNumber(indicators.ema100),
-
-        ema200:
-            toNumber(indicators.ema200),
-
-
-        // ====================================================
-        // MOMENTUM
-        // ====================================================
-
-        rsi:
-            toNumber(indicators.rsi),
-
-        macd:
-            macd.macd,
-
-        macdSignal:
-            macd.signal,
-
-        histogram:
-            macd.histogram,
-
-
-        // ====================================================
-        // ADX
-        // ====================================================
-
-        adx:
-            toNumber(adx.adx),
-
-        pdi:
-            toNumber(adx.pdi),
-
-        mdi:
-            toNumber(adx.mdi),
-
-
-        // ====================================================
-        // VOLATILITY
-        // ====================================================
-
-        atr:
-            toNumber(indicators.atr),
-
-
-        // ====================================================
-        // BOLLINGER
-        // ====================================================
-
-        bollingerUpper:
-            toNumber(
-                indicators.bollinger?.upper
-            ),
-
-        bollingerMiddle:
-            toNumber(
-                indicators.bollinger?.middle
-            ),
-
-        bollingerLower:
-            toNumber(
-                indicators.bollinger?.lower
-            ),
-
-
-        // ====================================================
-        // VOLUME
-        // ====================================================
-
-        volume:
-            toNumber(
-                indicators.volume
-            ),
-
-        volumeSMA20:
-            toNumber(
-                indicators.volumeSMA20
-            ),
-
-        rvol:
-            toNumber(
-                indicators.rvol
-            ),
-
-        volumeSpike:
-            safeBoolean(
-                indicators.volumeSpike
-            ),
-
-
-        // ====================================================
-        // OTHER INDICATORS
-        // ====================================================
-
-        obv:
-            toNumber(
-                indicators.obv
-            ),
-
-        mfi:
-            toNumber(
-                indicators.mfi
-            ),
-
-        supertrend:
-            indicators.supertrend?.trend ??
-            indicators.supertrend ??
-            "",
-
-        vwap:
-            toNumber(
-                indicators.vwap
-            )
-
+        isBullish: stockDirection === "BULLISH",
+        isBearish: stockDirection === "BEARISH",
+
+        score: scoreData.score,
+        scannerScore: scoreData.score,
+        aiScore: scoreData.score,
+        aiFinalScore: scoreData.finalScore,
+        aiRating: scoreData.rating || "N/A",
+        signal: scoreData.signal || "NO SIGNAL",
+        bullishScore: scoreData.bullishScore,
+        bearishScore: scoreData.bearishScore,
+        callScore: scoreData.bullishScore,
+        putScore: scoreData.bearishScore,
+
+        entry: toNumber(trade.entry),
+        stopLoss: toNumber(trade.stopLoss),
+        target1: toNumber(trade.target1),
+        target2: toNumber(trade.target2),
+        risk: toNumber(trade.risk),
+        reward: toNumber(trade.reward),
+        riskReward: toNumber(trade.riskReward),
+        trend: trade.trend || "",
+        confidence: clampScore(trade.confidence),
+
+        support1: toNumber(sr.support1),
+        support2: toNumber(sr.support2),
+        support3: toNumber(sr.support3),
+        resistance1: toNumber(sr.resistance1),
+        resistance2: toNumber(sr.resistance2),
+        resistance3: toNumber(sr.resistance3),
+
+        breakout: safeBoolean(breakout.breakout),
+        breakoutType: breakout.breakoutType || "",
+        breakoutStrength: breakout.breakoutStrength || "",
+        breakoutScore: toNumber(breakout.breakoutScore),
+        aboveResistance: safeBoolean(breakout.aboveResistance),
+        belowSupport: safeBoolean(breakout.belowSupport),
+        nearResistance: safeBoolean(breakout.nearResistance),
+        nearSupport: safeBoolean(breakout.nearSupport),
+        volumeConfirmed: safeBoolean(breakout.volumeConfirmed),
+        trendConfirmed: safeBoolean(breakout.trendConfirmed),
+        momentumConfirmed: safeBoolean(breakout.momentumConfirmed),
+
+        dailyTrend: mtf.dailyTrend || "",
+        fourHourTrend: mtf.fourHourTrend || "",
+        oneHourTrend: mtf.oneHourTrend || "",
+        fifteenMinTrend: mtf.fifteenMinTrend || "",
+        mtfScore: toNumber(mtf.mtfScore),
+        mtfAlignment: toNumber(mtf.mtfAlignment),
+        mtfAlignedTimeframes: toNumber(mtf.alignedTimeframes),
+
+        pivot: toNumber(pivot.pivot),
+        pivotR1: toNumber(pivot.r1),
+        pivotR2: toNumber(pivot.r2),
+        pivotR3: toNumber(pivot.r3),
+        pivotS1: toNumber(pivot.s1),
+        pivotS2: toNumber(pivot.s2),
+        pivotS3: toNumber(pivot.s3),
+
+        cprTop: toNumber(cpr.top),
+        cprBottom: toNumber(cpr.bottom),
+        cprWidth: toNumber(cpr.width),
+        cprType: cpr.type || "",
+
+        ema5: toNumber(indicators.ema5),
+        ema9: toNumber(indicators.ema9),
+        ema20: toNumber(indicators.ema20),
+        ema50: toNumber(indicators.ema50),
+        ema100: toNumber(indicators.ema100),
+        ema200: toNumber(indicators.ema200),
+        rsi: toNumber(indicators.rsi),
+        macd,
+        macdValue: macd,
+        macdSignal: signal,
+        histogram,
+        adx: toNumber(adx.adx ?? indicators.adxValue),
+        pdi: toNumber(adx.pdi ?? adx.PDI),
+        mdi: toNumber(adx.mdi ?? adx.MDI),
+        atr: toNumber(indicators.atr),
+        bollingerUpper: toNumber(indicators.bollinger?.upper),
+        bollingerMiddle: toNumber(indicators.bollinger?.middle),
+        bollingerLower: toNumber(indicators.bollinger?.lower),
+        volume: toNumber(indicators.volume),
+        volumeSMA20: toNumber(indicators.volumeSMA20),
+        rvol: toNumber(indicators.rvol),
+        volumeSpike: safeBoolean(indicators.volumeSpike),
+        obv: toNumber(indicators.obv),
+        mfi: toNumber(indicators.mfi),
+        supertrend: indicators.supertrend?.trend ?? indicators.supertrend ?? "",
+        vwap: toNumber(indicators.vwap),
+
+        pipeline: {
+            preFilter: preFilter.reason,
+            momentumScore: preFilter.momentumScore,
+            mtfChecked: true,
+            optionsChecked: false
+        }
     };
-
 }
-
 
 // ============================================================
 // SCAN ONE STOCK
 // ============================================================
 
 async function scanStock(stock) {
-
     let stockSymbol = "";
 
-
     try {
+        if (stock === null || stock === undefined) throw new Error("Invalid stock symbol");
+
+        stockSymbol = typeof stock === "object"
+            ? String(stock.symbol || stock.tradingSymbol || stock.tradingsymbol || stock.name || "").trim()
+            : String(stock).trim();
+
+        if (!stockSymbol) throw new Error("Empty stock symbol");
+        if (typeof getInstrument !== "function") throw new Error("Broker adapter does not expose getInstrument()");
+        if (typeof getHistoricalData !== "function") throw new Error("Broker adapter does not expose getHistoricalData()");
 
         // ====================================================
-        // 1. STOCK SYMBOL
+        // STAGE 1 — RAW DAILY DATA
         // ====================================================
+        const instrument = await getInstrument(stockSymbol);
+        if (!instrument) throw new Error(`Instrument not found: ${stockSymbol}`);
 
-        if (
-            stock === null ||
-            stock === undefined
-        ) {
+        const instrumentKey = resolveInstrumentKey(instrument);
+        if (!instrumentKey) throw new Error(`Instrument key missing: ${stockSymbol}`);
 
-            throw new Error(
-                "Invalid stock symbol"
-            );
-
+        const candles = await getHistoricalData(instrumentKey, "ONE_DAY");
+        if (!validateCandles(candles)) {
+            throw new Error(`Invalid/insufficient daily candles: ${Array.isArray(candles) ? candles.length : 0}`);
         }
 
+        const latestCandle = latestValidCandle(candles);
+        if (!latestCandle) throw new Error("Latest valid candle unavailable");
 
-        if (
-            typeof stock === "object" &&
-            !Array.isArray(stock)
-        ) {
-
-            stockSymbol =
-                String(
-                    stock.symbol ||
-                    stock.tradingSymbol ||
-                    stock.tradingsymbol ||
-                    stock.name ||
-                    ""
-                ).trim();
-
-        } else {
-
-            stockSymbol =
-                String(stock).trim();
-
-        }
-
-
-        if (!stockSymbol) {
-
-            throw new Error(
-                "Empty stock symbol"
-            );
-
-        }
-
+        const latestPrice = toNumber(latestCandle.close, NaN);
+        if (!Number.isFinite(latestPrice) || latestPrice <= 0) throw new Error("Invalid latest price");
 
         // ====================================================
-        // 2. INSTRUMENT
+        // STAGE 2 — CHEAP TECHNICAL FILTER
         // ====================================================
-
-        if (
-            typeof getInstrument !== "function"
-        ) {
-
-            throw new Error(
-                "Broker adapter does not expose getInstrument()"
-            );
-
-        }
-
-
-        const instrument =
-            await getInstrument(
-                stockSymbol
-            );
-
-
-        if (!instrument) {
-
-            throw new Error(
-                `Instrument not found: ${stockSymbol}`
-            );
-
-        }
-
-
-        const instrumentKey =
-            resolveInstrumentKey(
-                instrument
-            );
-
-
-        if (!instrumentKey) {
-
-            throw new Error(
-                `Instrument key missing: ${stockSymbol}`
-            );
-
-        }
-
-
-        // ====================================================
-        // 3. DAILY CANDLES
-        // ====================================================
-
-        if (
-            typeof getHistoricalData !== "function"
-        ) {
-
-            throw new Error(
-                "Broker adapter does not expose getHistoricalData()"
-            );
-
-        }
-
-
-        const candles =
-            await getHistoricalData(
-                instrumentKey,
-                "ONE_DAY"
-            );
-
-
-        if (
-            !validateCandles(candles)
-        ) {
-
-            throw new Error(
-                `Invalid/insufficient daily candles: ${
-                    Array.isArray(candles)
-                        ? candles.length
-                        : 0
-                }`
-            );
-
-        }
-
-
-        // ====================================================
-        // 4. PRICE
-        // ====================================================
-
-        const latestCandle =
-            getLatestValidCandle(
-                candles
-            );
-
-
-        if (!latestCandle) {
-
-            throw new Error(
-                "Latest valid candle unavailable"
-            );
-
-        }
-
-
-        const latestPrice =
-            toNumber(
-                latestCandle.close,
-                NaN
-            );
-
-
-        if (
-            !Number.isFinite(latestPrice) ||
-            latestPrice <= 0
-        ) {
-
-            throw new Error(
-                "Invalid latest price"
-            );
-
-        }
-
-
-        // ====================================================
-        // 5. INDICATORS
-        // ====================================================
-
-        const indicators =
-            safeObject(
-                calculateIndicators(
-                    candles
-                )
-            );
-
-
-        // ====================================================
-        // 6. AI SCORE
-        // ====================================================
-
-        const scoreData =
-            extractScoreData(
-
-                calculateScore({
-
-                    price:
-                        latestPrice,
-
-                    ...indicators
-
-                }),
-
-                latestPrice
-
-            );
-
-
-        // ====================================================
-        // 7. STOCK SETUP
-        // ====================================================
+        const indicators = safeObject(calculateIndicators(candles));
+        const scoreDataRaw = safeObject(calculateScore({ price: latestPrice, ...indicators }));
+        const scoreData = {
+            score: clampScore(scoreDataRaw.score ?? scoreDataRaw.aiScore),
+            finalScore: clampScore(scoreDataRaw.finalScore ?? scoreDataRaw.aiFinalScore ?? scoreDataRaw.score),
+            bullishScore: clampScore(scoreDataRaw.bullishScore ?? scoreDataRaw.bullScore ?? scoreDataRaw.callScore),
+            bearishScore: clampScore(scoreDataRaw.bearishScore ?? scoreDataRaw.bearScore ?? scoreDataRaw.putScore),
+            rating: scoreDataRaw.rating || "N/A",
+            signal: scoreDataRaw.signal || scoreDataRaw.direction || "NO SIGNAL"
+        };
 
         let trade = {};
+        try { trade = safeObject(calculateTradeSetup(latestPrice, indicators)); } catch (_) {}
 
+        const sr = safeObject(calculateSupportResistance(candles));
+        const breakout = safeObject(calculateBreakout(candles, indicators, sr));
 
-        try {
+        const directionIndicators = { ...indicators, price: latestPrice };
+        const technicalDirection = determineTechnicalDirection(directionIndicators, latestPrice);
+        const stockDirection = determineStockDirection(scoreData.signal, trade.trend, directionIndicators);
 
-            if (
-                typeof calculateTradeSetup ===
-                "function"
-            ) {
+        const preFilter = evaluatePreFilter({ scoreData, indicators, breakout, direction: stockDirection });
 
-                trade =
-                    safeObject(
-                        calculateTradeSetup(
-                            latestPrice,
-                            indicators
-                        )
-                    );
-
-            }
-
-        } catch (error) {
-
-            console.log(
-                `⚠️ ${stockSymbol}: trade setup unavailable | ${
-                    error?.message || error
-                }`
-            );
-
-        }
-
-
-        // ====================================================
-        // 8. SUPPORT / RESISTANCE
-        // ====================================================
-
-        const sr =
-            safeObject(
-                calculateSupportResistance(
-                    candles
-                )
-            );
-
-
-        // ====================================================
-        // 9. BREAKOUT
-        // ====================================================
-
-        const breakout =
-            safeObject(
-                calculateBreakout(
-                    candles,
-                    indicators,
-                    sr
-                )
-            );
-
-
-        // ====================================================
-        // 10. MTF
-        // ====================================================
-
-        let mtf = {};
-
-
-        try {
-
-            mtf =
-                safeObject(
-                    await getMultiTimeframeAnalysis(
-                        stockSymbol
-                    )
-                );
-
-        } catch (error) {
-
-            console.log(
-                `⚠️ ${stockSymbol}: MTF unavailable | ${
-                    error?.message || error
-                }`
-            );
-
-        }
-
-
-        // ====================================================
-        // 11. PIVOT
-        // ====================================================
-
-        const pivot =
-            safeObject(
-                calculatePivotPoints(
-                    candles
-                )
-            );
-
-
-        // ====================================================
-        // 12. CPR
-        // ====================================================
-
-        const cpr =
-            safeObject(
-                calculateCPR(
-                    candles
-                )
-            );
-
-
-        // ====================================================
-        // 13. DIRECTION
-        // ====================================================
-
-        const directionIndicators = {
-
-            ...indicators,
-
-            price:
-                latestPrice
-
-        };
-
-
-        const technicalDirection =
-            determineTechnicalDirection(
-                directionIndicators,
-                latestPrice
-            );
-
-
-        const stockDirection =
-            determineStockDirection(
-
-                scoreData.signal,
-
-                trade.trend,
-
-                directionIndicators
-
-            );
-
-
-        // ====================================================
-        // 14. BUILD STOCK ANALYSIS
-        // ====================================================
-
-        const stockAnalysis =
-            buildStockAnalysis({
-
-                stockSymbol,
+        if (!preFilter.passed) {
+            return {
+                stock: stockSymbol,
+                symbol: stockSymbol,
+                tradingSymbol: stockSymbol,
                 instrumentKey,
-                latestPrice,
-
-                indicators,
-                scoreData,
-
-                trade,
-                sr,
-                breakout,
-                mtf,
-                pivot,
-                cpr,
-
-                stockDirection,
-                technicalDirection
-
-            });
-
+                price: latestPrice,
+                direction: stockDirection,
+                technicalDirection,
+                score: scoreData.score,
+                finalScore: scoreData.finalScore,
+                signal: scoreData.signal,
+                pipeline: {
+                    preFilter: preFilter.reason,
+                    momentumScore: preFilter.momentumScore,
+                    mtfChecked: false,
+                    optionsChecked: false
+                },
+                qualified: false,
+                rejectionStage: preFilter.reason
+            };
+        }
 
         // ====================================================
-        // 15. FINAL RANKING
+        // STAGE 3 — MTF CONFIRMATION
+        // Only qualified stocks reach this expensive stage.
         // ====================================================
+        let mtf = {};
+        try {
+            mtf = safeObject(await getMultiTimeframeAnalysis(stockSymbol));
+        } catch (error) {
+            console.log(`⚠️ ${stockSymbol}: MTF unavailable | ${error?.message || error}`);
+        }
+
+        const mtfDirections = [mtf.dailyTrend, mtf.fourHourTrend, mtf.oneHourTrend, mtf.fifteenMinTrend]
+            .map(normalizeDirection)
+            .filter(x => x !== "NEUTRAL");
+        const expected = stockDirection;
+        const mtfAligned = mtfDirections.filter(x => x === expected).length;
+        const mtfOpposed = mtfDirections.filter(x => x !== expected).length;
+
+        // Reject only when MTF is available and clearly opposed.
+        if (mtfDirections.length >= 3 && mtfAligned < 2 && mtfOpposed >= 2) {
+            return {
+                stock: stockSymbol,
+                symbol: stockSymbol,
+                tradingSymbol: stockSymbol,
+                instrumentKey,
+                price: latestPrice,
+                direction: stockDirection,
+                technicalDirection,
+                score: scoreData.score,
+                finalScore: scoreData.finalScore,
+                signal: scoreData.signal,
+                dailyTrend: mtf.dailyTrend || "",
+                fourHourTrend: mtf.fourHourTrend || "",
+                oneHourTrend: mtf.oneHourTrend || "",
+                fifteenMinTrend: mtf.fifteenMinTrend || "",
+                mtfAlignment: mtfAligned,
+                pipeline: { preFilter: "QUALIFIED", momentumScore: preFilter.momentumScore, mtfChecked: true, optionsChecked: false },
+                qualified: false,
+                rejectionStage: "MTF_CONFLICT"
+            };
+        }
+
+        // ====================================================
+        // STAGE 4 — FULL STOCK ANALYSIS + RANKING
+        // ====================================================
+        const pivot = safeObject(calculatePivotPoints(candles));
+        const cpr = safeObject(calculateCPR(candles));
+
+        const stockAnalysis = buildStockAnalysis({
+            stockSymbol,
+            instrumentKey,
+            latestPrice,
+            indicators,
+            scoreData,
+            trade,
+            sr,
+            breakout,
+            mtf,
+            pivot,
+            cpr,
+            stockDirection,
+            technicalDirection,
+            preFilter
+        });
 
         let ranking = {};
+        try { ranking = safeObject(calculateFinalRank(stockAnalysis)); } catch (_) {}
 
+        const finalScore = clampScore(ranking.finalScore ?? ranking.score ?? stockAnalysis.finalScore ?? stockAnalysis.score);
+        stockAnalysis.finalScore = finalScore;
+        stockAnalysis.rankingScore = finalScore;
+        stockAnalysis.rating = ranking.rating || "QUALIFIED";
+        stockAnalysis.ranking = ranking;
+        stockAnalysis.is85Plus = finalScore >= DASHBOARD_MIN_SCORE;
+        stockAnalysis.is90Plus = finalScore >= 90;
+        stockAnalysis.qualified = true;
+        stockAnalysis.pipeline.mtfAlignment = mtfAligned;
+        stockAnalysis.pipeline.optionsChecked = false;
 
-        try {
+        return stockAnalysis;
 
-            ranking =
-                safeObject(
-                    calculateFinalRank(
-                        stockAnalysis
-                    )
-                );
-
-        } catch (error) {
-
-            console.log(
-                `⚠️ ${stockSymbol}: ranking unavailable | ${
-                    error?.message || error
-                }`
-            );
-
-        }
-
-
-        const finalScore =
-            clampScore(
-
-                ranking.finalScore ??
-                ranking.score ??
-                stockAnalysis.score
-
-            );
-
-
-        stockAnalysis.finalScore =
-            finalScore;
-
-
-        stockAnalysis.rating =
-            ranking.rating ||
-            "❌ AVOID";
-
-
-        // Keep ranking object because downstream
-        // Google Sheet / diagnostics may use it.
-        stockAnalysis.ranking =
-            ranking;
-
-
-        stockAnalysis.rankingScore =
-            finalScore;
-
-
-        // ====================================================
-        // IMPORTANT: 85+ QUALIFICATION
-        // ====================================================
-
-        stockAnalysis.is85Plus =
-            finalScore >= DASHBOARD_MIN_SCORE;
-
-
-        // ====================================================
-        // 90+ IS NO LONGER THE PRIMARY FLAG
-        // ====================================================
-        // Kept only for backward compatibility with old code.
-        // Dashboard should use is85Plus / threshold 85.
-        // ====================================================
-
-        stockAnalysis.is90Plus =
-            finalScore >= 90;
-
-
-        // ====================================================
-        // 16. OPTIONS DECISION
-        // ====================================================
-        // Scanner does NOT decide CALL/PUT.
-        // ====================================================
-
-        let optionsDecision = null;
-
-
-        try {
-
-            optionsDecision =
-                await calculateOptionsDecision(
-                    stockAnalysis
-                );
-
-        } catch (error) {
-
-            console.log(
-                `⚠️ ${stockSymbol}: options decision failed | ${
-                    error?.message || error
-                }`
-            );
-
-        }
-
-
-        // ====================================================
-        // 17. FINAL RESULT
-        // ====================================================
-
-        if (!optionsDecision) {
-
-            return stockAnalysis;
-
-        }
-
-
-        return {
-
-            ...stockAnalysis,
-
-            ...safeObject(
-                optionsDecision
-            )
-
-        };
-
-    }
-
-
-    catch (error) {
-
-        console.log(
-            `❌ ${stockSymbol || stock}: ${
-                error?.message || error
-            }`
-        );
-
+    } catch (error) {
+        console.log(`❌ ${stockSymbol || stock}: ${error?.message || error}`);
         return null;
-
     }
-
 }
 
-
 // ============================================================
-// SCAN MULTIPLE STOCKS
+// SCAN MULTIPLE STOCKS — STRICTLY SEQUENTIAL
+// ============================================================
+// This function intentionally uses one stock at a time.
+// It is available to app/cloud runners that want true stage-wise
+// sequencing instead of Promise.all batches.
 // ============================================================
 
 async function scanStocks(stocks) {
+    if (!Array.isArray(stocks)) return [];
 
-    if (
-        !Array.isArray(stocks)
-    ) {
+    const qualified = [];
+    const rejected = [];
 
-        return [];
+    for (const stock of stocks) {
+        const result = await scanStock(stock);
+        if (!result) continue;
 
+        if (result.qualified) qualified.push(result);
+        else rejected.push(result);
     }
 
+    qualified.sort((a, b) =>
+        Number(b.finalScore || b.score || 0) - Number(a.finalScore || a.score || 0)
+    );
 
-    const results = [];
+    // Do not send the entire universe to the option engine.
+    // Keep a wider shortlist than TOP 5 so strong late movers are not lost.
+    const shortlist = qualified.slice(0, PIPELINE_CONFIG.MAX_QUALIFIED_STOCKS);
 
+    shortlist.forEach((item, index) => {
+        item.pipeline.rank = index + 1;
+        item.pipeline.optionsChecked = false;
+    });
 
-    for (
-        const stock of stocks
-    ) {
-
-        try {
-
-            const result =
-                await scanStock(
-                    stock
-                );
-
-
-            if (result) {
-
-                results.push(
-                    result
-                );
-
-            }
-
-        } catch (error) {
-
-            console.log(
-                `⚠️ Stock scan failed: ${
-                    stock
-                } | ${
-                    error?.message || error
-                }`
-            );
-
-        }
-
-    }
-
-
-    return results;
-
+    return shortlist;
 }
 
-
-// ============================================================
-// EXPORT
-// ============================================================
-
 module.exports = {
-
     scanStock,
-
     scanStocks,
-
     normalizeDirection,
-
     determineTechnicalDirection,
-
     determineStockDirection,
-
-    DASHBOARD_MIN_SCORE
-
+    DASHBOARD_MIN_SCORE,
+    PIPELINE_CONFIG
 };
