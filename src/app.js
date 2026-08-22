@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const symbols = require("./symbols/nifty100");
+const { getStockUniverseAsync, getEnabledIndexOptions } = require("./universeEngine");
 const { setBroker, getActiveBroker } = require("./brokers");
 const { loadSymbolMaster } = require("./services/symbolService");
 const { scanStocks } = require("./scanner");
@@ -13,7 +13,7 @@ async function main() {
 
     console.log("\n===============================");
     console.log("   AI SMART SCANNER V4");
-    console.log("   SEQUENTIAL PIPELINE");
+    console.log("   CONFIGURABLE UNIVERSE");
     console.log("===============================\n");
 
     const brokerName = process.env.BROKER || "ANGELONE";
@@ -37,24 +37,22 @@ async function main() {
         console.log(`⚠️ Symbol master load skipped: ${error?.message || error}`);
     }
 
+    // V4: build one unique universe from all enabled lists.
+    // A stock present in multiple lists is scanned exactly once.
+    const symbols = await getStockUniverseAsync();
+    const enabledIndexes = getEnabledIndexOptions();
+
     if (!Array.isArray(symbols) || symbols.length === 0) {
-        throw new Error("No NIFTY 100 scanner symbols configured.");
+        throw new Error("No stock symbols are enabled in the V4 universe configuration.");
     }
 
     console.log("========================================");
-    console.log("        NIFTY 100 SEQUENTIAL SCANNER");
+    console.log("        V4 CONFIGURABLE SCANNER");
     console.log("========================================");
-    console.log(`Total Stocks Loaded: ${symbols.length}`);
-    console.log("Pipeline: DAILY → DIRECTION → MOMENTUM → MTF → RANK → OPTIONS");
+    console.log(`Unique Stocks Loaded: ${symbols.length}`);
+    console.log(`Enabled Index Options: ${enabledIndexes.join(", ") || "NONE"}`);
+    console.log("Pipeline: UNIVERSE → DAILY → DIRECTION → MOMENTUM → MTF → RANK → OPTIONS");
     console.log("========================================\n");
-
-    // ========================================================
-    // STAGES 1–4 — SEQUENTIAL STOCK QUALIFICATION
-    // ========================================================
-    // scanStocks() deliberately scans one stock at a time and
-    // returns only the strongest qualified shortlist.
-    // No option contract/LTP is requested here.
-    // ========================================================
 
     const qualifiedStocks = await scanStocks(symbols);
 
@@ -69,10 +67,6 @@ async function main() {
             `Momentum: ${stock.pipeline?.momentumScore ?? 0}`
         );
     });
-
-    // ========================================================
-    // STAGE 5 — OPTIONS ONLY FOR QUALIFIED STOCKS
-    // ========================================================
 
     console.log("\n========== OPTIONS DECISION ENGINE ==========");
 
@@ -118,10 +112,6 @@ async function main() {
         );
     });
 
-    // ========================================================
-    // FINAL TOP 5
-    // ========================================================
-
     const finalTop5 = optionDecisions.slice(0, 5);
 
     console.log("\n========== FINAL TOP 5 ==========");
@@ -134,10 +124,6 @@ async function main() {
             `${option?.optionsDecision || option?.decision || "N/A"}`
         );
     });
-
-    // ========================================================
-    // OUTPUTS
-    // ========================================================
 
     try {
         if (typeof updateGoogleSheet === "function") {
@@ -161,6 +147,7 @@ async function main() {
     console.log("       SCAN COMPLETE");
     console.log("========================================");
     console.log(`Universe: ${symbols.length}`);
+    console.log(`Enabled indexes: ${enabledIndexes.length}`);
     console.log(`Qualified stocks: ${qualifiedStocks.length}`);
     console.log(`Option decisions: ${optionDecisions.length}`);
     console.log(`Final TOP 5: ${finalTop5.length}`);
@@ -169,6 +156,7 @@ async function main() {
 
     return {
         scanned: symbols.length,
+        enabledIndexes,
         qualifiedStocks,
         optionDecisions,
         finalTop5,
