@@ -10,6 +10,7 @@ const { scanStocks } = require("./scanner");
 const { calculateOptionsDecisions } = require("./optionsDecisionEngine");
 const { updateGoogleSheet } = require("./googleSheet");
 const { buildDashboard } = require("./dashboard");
+const { createPrediction } = require("./accuracyTracker");
 
 async function main() {
     const scanStartedAt = new Date();
@@ -65,6 +66,14 @@ async function main() {
         if (confidenceDiff !== 0) return confidenceDiff;
         return Number(b?.finalScore ?? b?.score ?? 0) - Number(a?.finalScore ?? a?.score ?? 0);
     });
+
+    // Create a fresh immutable prediction snapshot for every option decision.
+    // The snapshot gets a unique predictionId and is appended to ACCURACY by googleSheet.js.
+    optionDecisions = optionDecisions.map(item => ({
+        ...item,
+        predictionId: item.predictionId || createPrediction(item).predictionId,
+        predictionTime: item.predictionTime || new Date().toISOString()
+    }));
 
     optionDecisions.forEach((option, index) => {
         const entry = Number(option?.entry ?? option?.optionEntry ?? 0);
