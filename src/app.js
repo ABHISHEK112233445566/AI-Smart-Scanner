@@ -6,6 +6,7 @@ const { loadSymbolMaster } = require("./services/symbolService");
 const { scanStocks } = require("./scanner");
 const { calculateOptionsDecisions } = require("./optionsDecisionEngine");
 const { updateGoogleSheet } = require("./googleSheet");
+const { updateStrategySheets } = require("./strategySheets");
 const { buildDashboard } = require("./dashboard");
 
 function safeNumber(value, fallback = 0) {
@@ -23,35 +24,18 @@ function getStockKey(row) {
 
 function normalizeUniverseName(value) {
     return String(value || "NIFTY100")
-        .trim()
-        .toUpperCase()
-        .replace(/[\s-]+/g, "");
+        .trim().toUpperCase().replace(/[\s-]+/g, "");
 }
 
 function getScannerSymbols() {
     const requested = normalizeUniverseName(process.env.SCANNER_UNIVERSE || "NIFTY100");
-
-    const aliases = {
-        NIFTY50: "NIFTY50",
-        NIFTY100: "NIFTY100",
-        BANKNIFTY: "BANKNIFTY",
-        CUSTOM: "CUSTOM"
-    };
-
+    const aliases = { NIFTY50: "NIFTY50", NIFTY100: "NIFTY100", BANKNIFTY: "BANKNIFTY", CUSTOM: "CUSTOM" };
     const universeName = aliases[requested] || "NIFTY100";
     const selected = symbolUniverses[universeName];
-
     if (!Array.isArray(selected) || selected.length === 0) {
-        throw new Error(
-            `Scanner universe '${universeName}' is empty or unavailable. ` +
-            "Use SCANNER_UNIVERSE=NIFTY50, NIFTY100 or CUSTOM."
-        );
+        throw new Error(`Scanner universe '${universeName}' is empty or unavailable. Use SCANNER_UNIVERSE=NIFTY50, NIFTY100 or CUSTOM.`);
     }
-
-    return {
-        name: universeName,
-        symbols: [...new Set(selected.map(symbol => String(symbol).trim()).filter(Boolean))]
-    };
+    return { name: universeName, symbols: [...new Set(selected.map(symbol => String(symbol).trim()).filter(Boolean))] };
 }
 
 function mergeScannerAndOptionData(stocks, decisions) {
@@ -60,53 +44,31 @@ function mergeScannerAndOptionData(stocks, decisions) {
         const key = getStockKey(decision);
         if (key) optionMap.set(key, decision);
     }
-
     return (Array.isArray(stocks) ? stocks : []).map(stock => {
         const option = optionMap.get(getStockKey(stock));
         if (!option) return stock;
-        return {
-            ...stock,
-            ...option,
-            stock: option.stock || stock.stock,
-            symbol: option.symbol || stock.symbol || stock.stock
-        };
+        return { ...stock, ...option, stock: option.stock || stock.stock, symbol: option.symbol || stock.symbol || stock.stock };
     });
 }
 
 async function main() {
     const scanStartedAt = new Date();
+    console.log("\n===============================\n   AI SMART SCANNER V4\n   SEQUENTIAL PIPELINE\n===============================\n");
 
-    console.log("\n===============================");
-    console.log("   AI SMART SCANNER V4");
-    console.log("   SEQUENTIAL PIPELINE");
-    console.log("===============================\n");
-
-    // Upstox is the primary broker. Angel One remains available as fallback
-    // through BROKER=ANGELONE when required.
     const brokerName = String(process.env.BROKER || "UPSTOX").trim().toUpperCase();
     setBroker(brokerName);
-
     const activeBroker = getActiveBroker();
-    if (!activeBroker || typeof activeBroker.login !== "function") {
-        throw new Error("Active broker does not implement login()");
-    }
-
+    if (!activeBroker || typeof activeBroker.login !== "function") throw new Error("Active broker does not implement login()");
     console.log(`Broker Configuration: ${brokerName}`);
     console.log(`Active Broker: ${activeBroker?.name || brokerName}`);
-
     await activeBroker.login();
     console.log("✅ Broker Login Successful\n");
 
-    try {
-        await loadSymbolMaster();
-        console.log("✅ Symbol master loaded successfully.\n");
-    } catch (error) {
-        console.log(`⚠️ Symbol master load skipped: ${error?.message || error}`);
-    }
+    try { await loadSymbolMaster(); console.log("✅ Symbol master loaded successfully.\n"); }
+    catch (error) { console.log(`⚠️ Symbol master load skipped: ${error?.message || error}`); }
 
     const universe = getScannerSymbols();
     const symbols = universe.symbols;
-
     console.log("========================================");
     console.log(`        ${universe.name} SEQUENTIAL SCANNER`);
     console.log("========================================");
@@ -115,32 +77,17 @@ async function main() {
     console.log("========================================\n");
 
     const qualifiedStocks = await scanStocks(symbols);
-    if (!Array.isArray(qualifiedStocks)) {
-        throw new Error("Scanner returned an invalid shortlist");
-    }
-
-    // scanStocks() remains an array for options-engine compatibility, while
-    // exposing allResults for the complete scanner/audit sheet.
-    const allScannerResults = Array.isArray(qualifiedStocks.allResults)
-        ? qualifiedStocks.allResults
-        : qualifiedStocks;
+    if (!Array.isArray(qualifiedStocks)) throw new Error("Scanner returned an invalid shortlist");
+    const allScannerResults = Array.isArray(qualifiedStocks.allResults) ? qualifiedStocks.allResults : qualifiedStocks;
 
     console.log("\n========== STOCK QUALIFICATION ==========");
     console.log(`Complete universe scanned: ${allScannerResults.length}`);
     console.log(`Qualified shortlist: ${qualifiedStocks.length}`);
 
-    qualifiedStocks.forEach((stock, index) => {
-        console.log(
-            `${index + 1}. ${stock.stock} | ${stock.direction} | ` +
-            `Score: ${stock.finalScore ?? stock.score ?? 0} | ` +
-            `MTF: ${stock.mtfAlignment ?? 0} | ` +
-            `Momentum: ${stock.pipeline?.momentumScore ?? 0}`
-        );
-    });
+    qualifiedStocks.forEach((stock, index) => console.log(`${index + 1}. ${stock.stock} | ${stock.direction} | Score: ${stock.finalScore ?? stock.score ?? 0} | MTF: ${stock.mtfAlignment ?? 0} | Momentum: ${stock.pipeline?.momentumScore ?? 0}`));
 
     console.log("\n========== OPTIONS DECISION ENGINE ==========");
     let optionDecisions = [];
-
     try {
         const decisions = await calculateOptionsDecisions(qualifiedStocks);
         optionDecisions = Array.isArray(decisions) ? decisions : [];
@@ -152,10 +99,8 @@ async function main() {
         const decisionRank = { TRADE: 3, WATCH: 2, REJECT: 1 };
         const rankDiff = (decisionRank[normalizeDecision(b)] || 0) - (decisionRank[normalizeDecision(a)] || 0);
         if (rankDiff !== 0) return rankDiff;
-
         const confidenceDiff = safeNumber(b?.optionsConfidence ?? b?.confidence) - safeNumber(a?.optionsConfidence ?? a?.confidence);
         if (confidenceDiff !== 0) return confidenceDiff;
-
         return safeNumber(b?.finalScore ?? b?.score) - safeNumber(a?.finalScore ?? a?.score);
     });
 
@@ -166,51 +111,33 @@ async function main() {
         const target2 = safeNumber(option?.target2 ?? option?.optionTarget2);
         const rr = safeNumber(option?.riskReward ?? option?.optionRiskReward);
         const confidence = option?.optionsConfidence ?? option?.confidence ?? 0;
-
-        console.log(
-            `${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | ` +
-            `Strike: ${option?.recommendedStrike ?? "N/A"} | Entry: ${entry.toFixed(2)} | ` +
-            `SL: ${stopLoss.toFixed(2)} | T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | ` +
-            `R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ${normalizeDecision(option) || "N/A"}`
-        );
+        console.log(`${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Entry: ${entry.toFixed(2)} | SL: ${stopLoss.toFixed(2)} | T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ${normalizeDecision(option) || "N/A"}`);
     });
 
     const completeScannerData = mergeScannerAndOptionData(allScannerResults, optionDecisions);
     const finalTop5 = optionDecisions.slice(0, 5);
 
     console.log("\n========== FINAL TOP 5 ==========");
-    finalTop5.forEach((option, index) => {
-        console.log(
-            `${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | ` +
-            `Strike: ${option?.recommendedStrike ?? "N/A"} | ` +
-            `Confidence: ${option?.optionsConfidence ?? option?.confidence ?? 0} | ` +
-            `${normalizeDecision(option) || "N/A"}`
-        );
-    });
+    finalTop5.forEach((option, index) => console.log(`${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Confidence: ${option?.optionsConfidence ?? option?.confidence ?? 0} | ${normalizeDecision(option) || "N/A"}`));
 
     try {
-        if (typeof updateGoogleSheet === "function") {
-            await updateGoogleSheet({
-                scannerData: completeScannerData,
-                dashboardData: optionDecisions,
-                accuracyData: completeScannerData
-            });
-        }
+        await updateGoogleSheet({ scannerData: completeScannerData, dashboardData: optionDecisions, accuracyData: completeScannerData });
     } catch (error) {
-        console.error(`⚠️ Google Sheet update failed: ${error?.message || error}`);
+        console.error(`⚠️ Google Sheet core update failed: ${error?.message || error}`);
     }
 
     try {
-        if (typeof buildDashboard === "function") await buildDashboard(finalTop5);
+        const strategyResult = await updateStrategySheets(completeScannerData, optionDecisions);
+        console.log(`📊 Strategy sheets updated | EQUITY: ${strategyResult.equityRows} | CALL: ${strategyResult.callRows} | PUT: ${strategyResult.putRows}`);
     } catch (error) {
-        console.error(`⚠️ Dashboard update failed: ${error?.message || error}`);
+        console.error(`⚠️ Strategy sheet update failed: ${error?.message || error}`);
     }
+
+    try { if (typeof buildDashboard === "function") await buildDashboard(finalTop5); }
+    catch (error) { console.error(`⚠️ Dashboard update failed: ${error?.message || error}`); }
 
     const elapsedSeconds = ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
-
-    console.log("\n========================================");
-    console.log("       SCAN COMPLETE");
-    console.log("========================================");
+    console.log("\n========================================\n       SCAN COMPLETE\n========================================");
     console.log(`Universe: ${universe.name}`);
     console.log(`Universe size: ${symbols.length}`);
     console.log(`Complete scanner rows: ${completeScannerData.length}`);
@@ -220,16 +147,7 @@ async function main() {
     console.log(`Elapsed: ${elapsedSeconds}s`);
     console.log("========================================\n");
 
-    return {
-        universe: universe.name,
-        scanned: symbols.length,
-        allScannerResults,
-        qualifiedStocks,
-        completeScannerData,
-        optionDecisions,
-        finalTop5,
-        elapsedSeconds: Number(elapsedSeconds)
-    };
+    return { universe: universe.name, scanned: symbols.length, allScannerResults, qualifiedStocks, completeScannerData, optionDecisions, finalTop5, elapsedSeconds: Number(elapsedSeconds) };
 }
 
 main().catch(error => {
