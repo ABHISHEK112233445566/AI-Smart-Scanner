@@ -24,19 +24,36 @@ function getStockKey(row) {
 }
 
 function normalizeUniverseName(value) {
-    return String(value || "NIFTY100")
+    return String(value || "ALL")
         .trim().toUpperCase().replace(/[\s-]+/g, "");
 }
 
 function getScannerSymbols() {
-    const requested = normalizeUniverseName(process.env.SCANNER_UNIVERSE || "NIFTY100");
-    const aliases = { NIFTY50: "NIFTY50", NIFTY100: "NIFTY100", BANKNIFTY: "BANKNIFTY", CUSTOM: "CUSTOM" };
-    const universeName = aliases[requested] || "NIFTY100";
+    const requested = normalizeUniverseName(process.env.SCANNER_UNIVERSE || "ALL");
+
+    const aliases = {
+        ALL: "ALL",
+        ALLSYMBOLS: "ALL",
+        NIFTY50: "NIFTY50",
+        NIFTY100: "NIFTY100",
+        BANKNIFTY: "BANKNIFTY",
+        CUSTOM: "CUSTOM"
+    };
+
+    const universeName = aliases[requested] || "ALL";
     const selected = symbolUniverses[universeName];
+
     if (!Array.isArray(selected) || selected.length === 0) {
-        throw new Error(`Scanner universe '${universeName}' is empty or unavailable. Use SCANNER_UNIVERSE=NIFTY50, NIFTY100 or CUSTOM.`);
+        throw new Error(`Scanner universe '${universeName}' is empty or unavailable.`);
     }
-    return { name: universeName, symbols: [...new Set(selected.map(symbol => String(symbol).trim()).filter(Boolean))] };
+
+    const symbols = [...new Set(
+        selected
+            .map(symbol => String(symbol || "").trim().toUpperCase())
+            .filter(Boolean)
+    )];
+
+    return { name: universeName, symbols };
 }
 
 function mergeScannerAndOptionData(stocks, decisions) {
