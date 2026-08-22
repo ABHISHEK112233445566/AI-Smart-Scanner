@@ -8,6 +8,7 @@ const { calculateOptionsDecisions } = require("./optionsDecisionEngine");
 const { updateGoogleSheet } = require("./googleSheet");
 const { updateStrategySheets } = require("./strategySheets");
 const { buildDashboard } = require("./dashboard");
+const { createAccuracyRecord } = require("./accuracyTracker");
 
 function safeNumber(value, fallback = 0) {
     const n = Number(value);
@@ -49,6 +50,13 @@ function mergeScannerAndOptionData(stocks, decisions) {
         if (!option) return stock;
         return { ...stock, ...option, stock: option.stock || stock.stock, symbol: option.symbol || stock.symbol || stock.stock };
     });
+}
+
+function buildAccuracyData(scannerData) {
+    const timestamp = new Date();
+    return (Array.isArray(scannerData) ? scannerData : [])
+        .filter(row => getStockKey(row))
+        .map(row => createAccuracyRecord(row, timestamp));
 }
 
 async function main() {
@@ -115,13 +123,19 @@ async function main() {
     });
 
     const completeScannerData = mergeScannerAndOptionData(allScannerResults, optionDecisions);
+    const accuracyData = buildAccuracyData(completeScannerData);
     const finalTop5 = optionDecisions.slice(0, 5);
 
     console.log("\n========== FINAL TOP 5 ==========");
     finalTop5.forEach((option, index) => console.log(`${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Confidence: ${option?.optionsConfidence ?? option?.confidence ?? 0} | ${normalizeDecision(option) || "N/A"}`));
 
     try {
-        await updateGoogleSheet({ scannerData: completeScannerData, dashboardData: optionDecisions, accuracyData: completeScannerData });
+        await updateGoogleSheet({
+            scannerData: completeScannerData,
+            dashboardData: optionDecisions,
+            accuracyData
+        });
+        console.log(`📈 Accuracy records prepared: ${accuracyData.length}`);
     } catch (error) {
         console.error(`⚠️ Google Sheet core update failed: ${error?.message || error}`);
     }
@@ -141,13 +155,14 @@ async function main() {
     console.log(`Universe: ${universe.name}`);
     console.log(`Universe size: ${symbols.length}`);
     console.log(`Complete scanner rows: ${completeScannerData.length}`);
+    console.log(`Accuracy records: ${accuracyData.length}`);
     console.log(`Qualified stocks: ${qualifiedStocks.length}`);
     console.log(`Option decisions: ${optionDecisions.length}`);
     console.log(`Final TOP 5: ${finalTop5.length}`);
     console.log(`Elapsed: ${elapsedSeconds}s`);
     console.log("========================================\n");
 
-    return { universe: universe.name, scanned: symbols.length, allScannerResults, qualifiedStocks, completeScannerData, optionDecisions, finalTop5, elapsedSeconds: Number(elapsedSeconds) };
+    return { universe: universe.name, scanned: symbols.length, allScannerResults, qualifiedStocks, completeScannerData, accuracyData, optionDecisions, finalTop5, elapsedSeconds: Number(elapsedSeconds) };
 }
 
 main().catch(error => {
