@@ -15,10 +15,8 @@ module.exports = {
     // ========================================================
 
     UPSTOX: {
-
         ACCESS_TOKEN:
             process.env.UPSTOX_ACCESS_TOKEN || ""
-
     },
 
     // ========================================================
@@ -26,36 +24,17 @@ module.exports = {
     // ========================================================
 
     ANGELONE: {
-
-        API_KEY:
-            process.env.API_KEY || "",
-
-        CLIENT_ID:
-            process.env.CLIENT_ID || "",
-
-        MPIN:
-            process.env.MPIN || "",
-
-        TOTP_SECRET:
-            process.env.TOTP_SECRET || ""
-
+        API_KEY: process.env.API_KEY || "",
+        CLIENT_ID: process.env.CLIENT_ID || "",
+        MPIN: process.env.MPIN || "",
+        TOTP_SECRET: process.env.TOTP_SECRET || ""
     },
 
-    // ========================================================
-    // BACKWARD COMPATIBILITY
-    // ========================================================
-
-    API_KEY:
-        process.env.API_KEY || "",
-
-    CLIENT_ID:
-        process.env.CLIENT_ID || "",
-
-    MPIN:
-        process.env.MPIN || "",
-
-    TOTP_SECRET:
-        process.env.TOTP_SECRET || "",
+    // Backward compatibility
+    API_KEY: process.env.API_KEY || "",
+    CLIENT_ID: process.env.CLIENT_ID || "",
+    MPIN: process.env.MPIN || "",
+    TOTP_SECRET: process.env.TOTP_SECRET || "",
 
     // ========================================================
     // GOOGLE SHEET
@@ -65,90 +44,48 @@ module.exports = {
         process.env.GOOGLE_SHEET_URL || "",
 
     // ========================================================
-    // STOCK SCANNER
+    // STOCK UNIVERSE
     // ========================================================
+    // NIFTY50 / NIFTY100 / BANKNIFTY / CUSTOM use maintained
+    // universe files. ALL_NSE uses the active broker instrument
+    // master and therefore is not limited to a hard-coded list.
 
-    SCAN_LIST: "CUSTOM",
+    SCANNER_UNIVERSE: (
+        process.env.SCANNER_UNIVERSE || "NIFTY100"
+    ).trim().toUpperCase(),
 
     SCANNER_INTERVAL: 60,
 
-    MAX_STOCKS: 20,
+    // 0 = no artificial stock-count limit.
+    // The scanner may still be constrained by broker/API rate limits.
+    MAX_STOCKS: 0,
 
     // ========================================================
     // TECHNICAL INDICATORS
     // ========================================================
 
-    EMA_PERIODS: [
-        5,
-        9,
-        20,
-        50,
-        100,
-        200
-    ],
-
-    // Config sheet:
-    // EMA Short = 20
-    // EMA Long  = 200
-
+    EMA_PERIODS: [5, 9, 20, 50, 100, 200],
     EMA_SHORT: 20,
-
     EMA_LONG: 200,
-
-    // ========================================================
-    // RSI
-    // ========================================================
-
     RSI_PERIOD: 14,
 
-    // ========================================================
-    // MACD
-    // ========================================================
-
     MACD: {
-
         FAST: 12,
-
         SLOW: 26,
-
         SIGNAL: 9
-
     },
-
-    // ========================================================
-    // ADX
-    // ========================================================
 
     ADX_PERIOD: 14,
-
-    // ========================================================
-    // ATR
-    // ========================================================
-
     ATR_PERIOD: 14,
 
-    // ========================================================
-    // SUPERTREND
-    // ========================================================
-
     SUPERTREND: {
-
         ATR_PERIOD: 10,
-
         MULTIPLIER: 3
-
     },
 
-    // ========================================================
-    // BOLLINGER BANDS
-    // ========================================================
-
     BOLLINGER: {
-
         PERIOD: 20,
-
         STD_DEV: 2
-
     },
 
     // ========================================================
@@ -156,22 +93,13 @@ module.exports = {
     // ========================================================
 
     AI_BUY_SCORE: 80,
-
     AI_WATCH_SCORE: 60,
 
     // ========================================================
     // DASHBOARD
     // ========================================================
-    //
-    // Dashboard should show only high-confidence candidates.
-    //
-    // These values are kept here so they can be controlled from
-    // configuration instead of being hidden inside other files.
-    //
-    // ========================================================
 
     DASHBOARD_MIN_SCORE: 90,
-
     DASHBOARD_MAX_ROWS: 10
 
 };
