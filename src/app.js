@@ -8,6 +8,46 @@ const { calculateOptionsDecisions } = require("./optionsDecisionEngine");
 const { updateGoogleSheet } = require("./googleSheet");
 const { buildDashboard } = require("./dashboard");
 
+function safeNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeDecision(row) {
+    return String(
+        row?.optionsDecision ?? row?.decision ?? ""
+    ).trim().toUpperCase();
+}
+
+function getStockKey(row) {
+    return String(
+        row?.stock ?? row?.symbol ?? row?.name ?? ""
+    ).trim().toUpperCase();
+}
+
+function mergeScannerAndOptionData(stocks, decisions) {
+    const optionMap = new Map();
+
+    for (const decision of Array.isArray(decisions) ? decisions : []) {
+        const key = getStockKey(decision);
+        if (key) optionMap.set(key, decision);
+    }
+
+    return (Array.isArray(stocks) ? stocks : []).map(stock => {
+        const option = optionMap.get(getStockKey(stock));
+        if (!option) return stock;
+
+        // Preserve every scanner field while allowing the option engine
+        // to add its final decision/contract/gate information.
+        return {
+            ...stock,
+            ...option,
+            stock: option.stock || stock.stock,
+            symbol: option.symbol || stock.symbol || stock.stock
+        };
+    });
+}
+
 async function main() {
     const scanStartedAt = new Date();
 
@@ -48,15 +88,13 @@ async function main() {
     console.log("Pipeline: DAILY → DIRECTION → MOMENTUM → MTF → RANK → OPTIONS");
     console.log("========================================\n");
 
-    // ========================================================
-    // STAGES 1–4 — SEQUENTIAL STOCK QUALIFICATION
-    // ========================================================
-    // scanStocks() deliberately scans one stock at a time and
-    // returns only the strongest qualified shortlist.
-    // No option contract/LTP is requested here.
-    // ========================================================
-
+    // Stage 1–4: stock qualification. The scanner deliberately does not
+    // request option contracts/LTP for the full universe.
     const qualifiedStocks = await scanStocks(symbols);
+
+    if (!Array.isArray(qualifiedStocks)) {
+        throw new Error("Scanner returned an invalid shortlist");
+    }
 
     console.log("\n========== STOCK QUALIFICATION ==========");
     console.log(`Qualified shortlist: ${qualifiedStocks.length}`);
@@ -70,10 +108,7 @@ async function main() {
         );
     });
 
-    // ========================================================
-    // STAGE 5 — OPTIONS ONLY FOR QUALIFIED STOCKS
-    // ========================================================
-
+    // Stage 5: options only for qualified stocks.
     console.log("\n========== OPTIONS DECISION ENGINE ==========");
 
     let optionDecisions = [];
@@ -87,24 +122,28 @@ async function main() {
 
     optionDecisions.sort((a, b) => {
         const decisionRank = { TRADE: 3, WATCH: 2, REJECT: 1 };
-        const rankDiff = (decisionRank[b?.optionsDecision || b?.decision] || 0) -
-            (decisionRank[a?.optionsDecision || a?.decision] || 0);
+        const rankDiff =
+            (decisionRank[normalizeDecision(b)] || 0) -
+            (decisionRank[normalizeDecision(a)] || 0);
         if (rankDiff !== 0) return rankDiff;
 
-        const confidenceDiff = Number(b?.optionsConfidence ?? b?.confidence ?? 0) -
-            Number(a?.optionsConfidence ?? a?.confidence ?? 0);
+        const confidenceDiff =
+            safeNumber(b?.optionsConfidence ?? b?.confidence) -
+            safeNumber(a?.optionsConfidence ?? a?.confidence);
         if (confidenceDiff !== 0) return confidenceDiff;
 
-        return Number(b?.finalScore ?? b?.score ?? 0) -
-            Number(a?.finalScore ?? a?.score ?? 0);
+        return (
+            safeNumber(b?.finalScore ?? b?.score) -
+            safeNumber(a?.finalScore ?? a?.score)
+        );
     });
 
     optionDecisions.forEach((option, index) => {
-        const entry = Number(option?.entry ?? option?.optionEntry ?? 0);
-        const stopLoss = Number(option?.stopLoss ?? option?.optionStopLoss ?? 0);
-        const target1 = Number(option?.target1 ?? option?.optionTarget1 ?? 0);
-        const target2 = Number(option?.target2 ?? option?.optionTarget2 ?? 0);
-        const rr = Number(option?.riskReward ?? option?.optionRiskReward ?? 0);
+        const entry = safeNumber(option?.entry ?? option?.optionEntry);
+        const stopLoss = safeNumber(option?.stopLoss ?? option?.optionStopLoss);
+        const target1 = safeNumber(option?.target1 ?? option?.optionTarget1);
+        const target2 = safeNumber(option?.target2 ?? option?.optionTarget2);
+        const rr = safeNumber(option?.riskReward ?? option?.optionRiskReward);
         const confidence = option?.optionsConfidence ?? option?.confidence ?? 0;
 
         console.log(
@@ -114,14 +153,20 @@ async function main() {
             `Entry: ${entry.toFixed(2)} | SL: ${stopLoss.toFixed(2)} | ` +
             `T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | ` +
             `R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ` +
-            `${option?.optionsDecision || option?.decision || "N/A"}`
+            `${normalizeDecision(option) || "N/A"}`
         );
     });
 
-    // ========================================================
-    // FINAL TOP 5
-    // ========================================================
+    // Merge the stock scanner fields back into option decisions. This is
+    // important because SCANNER must remain the complete audit list rather
+    // than only the final TOP 5 dashboard view.
+    const completeScannerData = mergeScannerAndOptionData(
+        qualifiedStocks,
+        optionDecisions
+    );
 
+    // Final dashboard selection is intentionally separate from the complete
+    // scanner dataset.
     const finalTop5 = optionDecisions.slice(0, 5);
 
     console.log("\n========== FINAL TOP 5 ==========");
@@ -131,17 +176,22 @@ async function main() {
             `${option?.optionType || "N/A"} | ` +
             `Strike: ${option?.recommendedStrike ?? "N/A"} | ` +
             `Confidence: ${option?.optionsConfidence ?? option?.confidence ?? 0} | ` +
-            `${option?.optionsDecision || option?.decision || "N/A"}`
+            `${normalizeDecision(option) || "N/A"}`
         );
     });
 
-    // ========================================================
-    // OUTPUTS
-    // ========================================================
-
+    // Outputs:
+    // - SCANNER receives the complete qualified scanner dataset.
+    // - Dashboard receives the final ranked candidates and applies its own
+    //   confidence/decision gate.
+    // - Accuracy and parameter sheets use the same complete scanner dataset.
     try {
         if (typeof updateGoogleSheet === "function") {
-            await updateGoogleSheet(finalTop5);
+            await updateGoogleSheet({
+                scannerData: completeScannerData,
+                dashboardData: optionDecisions,
+                accuracyData: completeScannerData
+            });
         }
     } catch (error) {
         console.error(`⚠️ Google Sheet update failed: ${error?.message || error}`);
@@ -155,7 +205,8 @@ async function main() {
         console.error(`⚠️ Dashboard update failed: ${error?.message || error}`);
     }
 
-    const elapsedSeconds = ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
+    const elapsedSeconds =
+        ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
 
     console.log("\n========================================");
     console.log("       SCAN COMPLETE");
@@ -163,6 +214,7 @@ async function main() {
     console.log(`Universe: ${symbols.length}`);
     console.log(`Qualified stocks: ${qualifiedStocks.length}`);
     console.log(`Option decisions: ${optionDecisions.length}`);
+    console.log(`Complete scanner rows: ${completeScannerData.length}`);
     console.log(`Final TOP 5: ${finalTop5.length}`);
     console.log(`Elapsed: ${elapsedSeconds}s`);
     console.log("========================================\n");
@@ -170,6 +222,7 @@ async function main() {
     return {
         scanned: symbols.length,
         qualifiedStocks,
+        completeScannerData,
         optionDecisions,
         finalTop5,
         elapsedSeconds: Number(elapsedSeconds)
