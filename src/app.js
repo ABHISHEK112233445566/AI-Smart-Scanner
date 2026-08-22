@@ -14,20 +14,15 @@ function safeNumber(value, fallback = 0) {
 }
 
 function normalizeDecision(row) {
-    return String(
-        row?.optionsDecision ?? row?.decision ?? ""
-    ).trim().toUpperCase();
+    return String(row?.optionsDecision ?? row?.decision ?? "").trim().toUpperCase();
 }
 
 function getStockKey(row) {
-    return String(
-        row?.stock ?? row?.symbol ?? row?.name ?? ""
-    ).trim().toUpperCase();
+    return String(row?.stock ?? row?.symbol ?? row?.name ?? "").trim().toUpperCase();
 }
 
 function mergeScannerAndOptionData(stocks, decisions) {
     const optionMap = new Map();
-
     for (const decision of Array.isArray(decisions) ? decisions : []) {
         const key = getStockKey(decision);
         if (key) optionMap.set(key, decision);
@@ -36,9 +31,6 @@ function mergeScannerAndOptionData(stocks, decisions) {
     return (Array.isArray(stocks) ? stocks : []).map(stock => {
         const option = optionMap.get(getStockKey(stock));
         if (!option) return stock;
-
-        // Preserve every scanner field while allowing the option engine
-        // to add its final decision/contract/gate information.
         return {
             ...stock,
             ...option,
@@ -88,15 +80,17 @@ async function main() {
     console.log("Pipeline: DAILY → DIRECTION → MOMENTUM → MTF → RANK → OPTIONS");
     console.log("========================================\n");
 
-    // Stage 1–4: stock qualification. The scanner deliberately does not
-    // request option contracts/LTP for the full universe.
     const qualifiedStocks = await scanStocks(symbols);
+    if (!Array.isArray(qualifiedStocks)) throw new Error("Scanner returned an invalid shortlist");
 
-    if (!Array.isArray(qualifiedStocks)) {
-        throw new Error("Scanner returned an invalid shortlist");
-    }
+    // scanStocks() remains an array for options-engine compatibility, while
+    // exposing allResults for the complete scanner/audit sheet.
+    const allScannerResults = Array.isArray(qualifiedStocks.allResults)
+        ? qualifiedStocks.allResults
+        : qualifiedStocks;
 
     console.log("\n========== STOCK QUALIFICATION ==========");
+    console.log(`Complete universe scanned: ${allScannerResults.length}`);
     console.log(`Qualified shortlist: ${qualifiedStocks.length}`);
 
     qualifiedStocks.forEach((stock, index) => {
@@ -108,9 +102,7 @@ async function main() {
         );
     });
 
-    // Stage 5: options only for qualified stocks.
     console.log("\n========== OPTIONS DECISION ENGINE ==========");
-
     let optionDecisions = [];
 
     try {
@@ -122,20 +114,13 @@ async function main() {
 
     optionDecisions.sort((a, b) => {
         const decisionRank = { TRADE: 3, WATCH: 2, REJECT: 1 };
-        const rankDiff =
-            (decisionRank[normalizeDecision(b)] || 0) -
-            (decisionRank[normalizeDecision(a)] || 0);
+        const rankDiff = (decisionRank[normalizeDecision(b)] || 0) - (decisionRank[normalizeDecision(a)] || 0);
         if (rankDiff !== 0) return rankDiff;
 
-        const confidenceDiff =
-            safeNumber(b?.optionsConfidence ?? b?.confidence) -
-            safeNumber(a?.optionsConfidence ?? a?.confidence);
+        const confidenceDiff = safeNumber(b?.optionsConfidence ?? b?.confidence) - safeNumber(a?.optionsConfidence ?? a?.confidence);
         if (confidenceDiff !== 0) return confidenceDiff;
 
-        return (
-            safeNumber(b?.finalScore ?? b?.score) -
-            safeNumber(a?.finalScore ?? a?.score)
-        );
+        return safeNumber(b?.finalScore ?? b?.score) - safeNumber(a?.finalScore ?? a?.score);
     });
 
     optionDecisions.forEach((option, index) => {
@@ -147,44 +132,28 @@ async function main() {
         const confidence = option?.optionsConfidence ?? option?.confidence ?? 0;
 
         console.log(
-            `${index + 1}. ${option?.stock || "N/A"} | ` +
-            `${option?.optionType || "N/A"} | ` +
-            `Strike: ${option?.recommendedStrike ?? "N/A"} | ` +
-            `Entry: ${entry.toFixed(2)} | SL: ${stopLoss.toFixed(2)} | ` +
-            `T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | ` +
-            `R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ` +
-            `${normalizeDecision(option) || "N/A"}`
+            `${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | ` +
+            `Strike: ${option?.recommendedStrike ?? "N/A"} | Entry: ${entry.toFixed(2)} | ` +
+            `SL: ${stopLoss.toFixed(2)} | T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | ` +
+            `R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ${normalizeDecision(option) || "N/A"}`
         );
     });
 
-    // Merge the stock scanner fields back into option decisions. This is
-    // important because SCANNER must remain the complete audit list rather
-    // than only the final TOP 5 dashboard view.
-    const completeScannerData = mergeScannerAndOptionData(
-        qualifiedStocks,
-        optionDecisions
-    );
-
-    // Final dashboard selection is intentionally separate from the complete
-    // scanner dataset.
+    // Keep the full scanner audit list, then overlay option information only
+    // where the options engine actually evaluated a qualified stock.
+    const completeScannerData = mergeScannerAndOptionData(allScannerResults, optionDecisions);
     const finalTop5 = optionDecisions.slice(0, 5);
 
     console.log("\n========== FINAL TOP 5 ==========");
     finalTop5.forEach((option, index) => {
         console.log(
-            `${index + 1}. ${option?.stock || "N/A"} | ` +
-            `${option?.optionType || "N/A"} | ` +
+            `${index + 1}. ${option?.stock || "N/A"} | ${option?.optionType || "N/A"} | ` +
             `Strike: ${option?.recommendedStrike ?? "N/A"} | ` +
             `Confidence: ${option?.optionsConfidence ?? option?.confidence ?? 0} | ` +
             `${normalizeDecision(option) || "N/A"}`
         );
     });
 
-    // Outputs:
-    // - SCANNER receives the complete qualified scanner dataset.
-    // - Dashboard receives the final ranked candidates and applies its own
-    //   confidence/decision gate.
-    // - Accuracy and parameter sheets use the same complete scanner dataset.
     try {
         if (typeof updateGoogleSheet === "function") {
             await updateGoogleSheet({
@@ -198,29 +167,27 @@ async function main() {
     }
 
     try {
-        if (typeof buildDashboard === "function") {
-            await buildDashboard(finalTop5);
-        }
+        if (typeof buildDashboard === "function") await buildDashboard(finalTop5);
     } catch (error) {
         console.error(`⚠️ Dashboard update failed: ${error?.message || error}`);
     }
 
-    const elapsedSeconds =
-        ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
+    const elapsedSeconds = ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
 
     console.log("\n========================================");
     console.log("       SCAN COMPLETE");
     console.log("========================================");
     console.log(`Universe: ${symbols.length}`);
+    console.log(`Complete scanner rows: ${completeScannerData.length}`);
     console.log(`Qualified stocks: ${qualifiedStocks.length}`);
     console.log(`Option decisions: ${optionDecisions.length}`);
-    console.log(`Complete scanner rows: ${completeScannerData.length}`);
     console.log(`Final TOP 5: ${finalTop5.length}`);
     console.log(`Elapsed: ${elapsedSeconds}s`);
     console.log("========================================\n");
 
     return {
         scanned: symbols.length,
+        allScannerResults,
         qualifiedStocks,
         completeScannerData,
         optionDecisions,
