@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const symbols = require("./symbols/nifty100");
+const symbolUniverses = require("./symbols");
 const { setBroker, getActiveBroker } = require("./brokers");
 const { loadSymbolMaster } = require("./services/symbolService");
 const { scanStocks } = require("./scanner");
@@ -19,6 +19,39 @@ function normalizeDecision(row) {
 
 function getStockKey(row) {
     return String(row?.stock ?? row?.symbol ?? row?.name ?? "").trim().toUpperCase();
+}
+
+function normalizeUniverseName(value) {
+    return String(value || "NIFTY100")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s-]+/g, "");
+}
+
+function getScannerSymbols() {
+    const requested = normalizeUniverseName(process.env.SCANNER_UNIVERSE || "NIFTY100");
+
+    const aliases = {
+        NIFTY50: "NIFTY50",
+        NIFTY100: "NIFTY100",
+        BANKNIFTY: "BANKNIFTY",
+        CUSTOM: "CUSTOM"
+    };
+
+    const universeName = aliases[requested] || "NIFTY100";
+    const selected = symbolUniverses[universeName];
+
+    if (!Array.isArray(selected) || selected.length === 0) {
+        throw new Error(
+            `Scanner universe '${universeName}' is empty or unavailable. ` +
+            "Use SCANNER_UNIVERSE=NIFTY50, NIFTY100 or CUSTOM."
+        );
+    }
+
+    return {
+        name: universeName,
+        symbols: [...new Set(selected.map(symbol => String(symbol).trim()).filter(Boolean))]
+    };
 }
 
 function mergeScannerAndOptionData(stocks, decisions) {
@@ -48,7 +81,9 @@ async function main() {
     console.log("   SEQUENTIAL PIPELINE");
     console.log("===============================\n");
 
-    const brokerName = process.env.BROKER || "ANGELONE";
+    // Upstox is the primary broker. Angel One remains available as fallback
+    // through BROKER=ANGELONE when required.
+    const brokerName = String(process.env.BROKER || "UPSTOX").trim().toUpperCase();
     setBroker(brokerName);
 
     const activeBroker = getActiveBroker();
@@ -69,19 +104,20 @@ async function main() {
         console.log(`⚠️ Symbol master load skipped: ${error?.message || error}`);
     }
 
-    if (!Array.isArray(symbols) || symbols.length === 0) {
-        throw new Error("No NIFTY 100 scanner symbols configured.");
-    }
+    const universe = getScannerSymbols();
+    const symbols = universe.symbols;
 
     console.log("========================================");
-    console.log("        NIFTY 100 SEQUENTIAL SCANNER");
+    console.log(`        ${universe.name} SEQUENTIAL SCANNER`);
     console.log("========================================");
     console.log(`Total Stocks Loaded: ${symbols.length}`);
     console.log("Pipeline: DAILY → DIRECTION → MOMENTUM → MTF → RANK → OPTIONS");
     console.log("========================================\n");
 
     const qualifiedStocks = await scanStocks(symbols);
-    if (!Array.isArray(qualifiedStocks)) throw new Error("Scanner returned an invalid shortlist");
+    if (!Array.isArray(qualifiedStocks)) {
+        throw new Error("Scanner returned an invalid shortlist");
+    }
 
     // scanStocks() remains an array for options-engine compatibility, while
     // exposing allResults for the complete scanner/audit sheet.
@@ -139,8 +175,6 @@ async function main() {
         );
     });
 
-    // Keep the full scanner audit list, then overlay option information only
-    // where the options engine actually evaluated a qualified stock.
     const completeScannerData = mergeScannerAndOptionData(allScannerResults, optionDecisions);
     const finalTop5 = optionDecisions.slice(0, 5);
 
@@ -177,7 +211,8 @@ async function main() {
     console.log("\n========================================");
     console.log("       SCAN COMPLETE");
     console.log("========================================");
-    console.log(`Universe: ${symbols.length}`);
+    console.log(`Universe: ${universe.name}`);
+    console.log(`Universe size: ${symbols.length}`);
     console.log(`Complete scanner rows: ${completeScannerData.length}`);
     console.log(`Qualified stocks: ${qualifiedStocks.length}`);
     console.log(`Option decisions: ${optionDecisions.length}`);
@@ -186,6 +221,7 @@ async function main() {
     console.log("========================================\n");
 
     return {
+        universe: universe.name,
         scanned: symbols.length,
         allScannerResults,
         qualifiedStocks,
