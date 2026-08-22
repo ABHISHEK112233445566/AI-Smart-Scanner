@@ -4,17 +4,17 @@
 A component is not complete when code is changed. It is complete only after its relevant tests pass.
 
 ## Phase 1 — Universe
-- [ ] NIFTY50 enable/disable works
-- [ ] NIFTY100 enable/disable works
-- [ ] NIFTY200 enable/disable works
-- [ ] NIFTY500 enable/disable works
-- [ ] CUSTOM enable/disable works
-- [ ] Empty/disabled universe contributes zero symbols
-- [ ] Duplicate symbols are removed
-- [ ] Same stock from multiple universes is scanned once
-- [ ] NIFTY index option flag works
-- [ ] BANKNIFTY index option flag works
-- [ ] Deep-scan limit is configurable
+- [x] V4 universe configuration created
+- [x] Configurable NIFTY50/NIFTY100/NIFTY200/NIFTY500/custom switches
+- [x] NIFTY and BANKNIFTY index switches
+- [x] Duplicate-symbol removal implemented
+- [x] V4 universe integrated into app.js
+- [ ] NIFTY50 enable/disable runtime test
+- [ ] NIFTY100 enable/disable runtime test
+- [ ] Duplicate-universe runtime test
+- [ ] Empty/disabled universe runtime test
+- [ ] NIFTY/BANKNIFTY runtime test
+- [ ] Deep-scan limit runtime test
 
 ## Phase 2 — Broker
 - [ ] Upstox is primary
