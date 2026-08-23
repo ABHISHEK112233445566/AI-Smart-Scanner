@@ -1,878 +1,104 @@
 // ============================================================
-// AI SMART SCANNER - AUTOMATIC MARKET HOURS SCHEDULER
+// AI SMART SCANNER - MARKET HOURS SCHEDULER
 // ============================================================
-//
-// PURPOSE
-// ------------------------------------------------------------
-// Automatically runs the existing app.js during NSE market
-// hours without changing the scanner itself.
-//
-// MARKET HOURS
-// ------------------------------------------------------------
-// Start : 09:15 IST
-// Stop  : 15:30 IST
-//
-// SCAN INTERVAL
-// ------------------------------------------------------------
-// Every 5 minutes
-//
-// IMPORTANT
-// ------------------------------------------------------------
-// This file does NOT modify:
-// - scanner.js
-// - optionsDecisionEngine.js
-// - dashboard.js
-// - googleSheet.js
-// - broker adapters
-//
-// It simply launches the existing app.js automatically.
-// ============================================================
+// Configuration is owned by config.js. This file only schedules app.js.
 
 const { spawn } = require("child_process");
 const path = require("path");
+const config = require("./config");
 
-// ============================================================
-// CONFIGURATION
-// ============================================================
-
-const SCAN_START_HOUR = 9;
-const SCAN_START_MINUTE = 15;
-
-const SCAN_END_HOUR = 15;
-const SCAN_END_MINUTE = 30;
-
-// Scan every 5 minutes
-const SCAN_INTERVAL_MINUTES = 5;
-
-// Give the scanner some time to finish before safety timeout
-const SCAN_TIMEOUT_MINUTES = 10;
-
-
-// ============================================================
-// STATE
-// ============================================================
+const schedule = config.SCHEDULER || {};
+const START_HOUR = Number(schedule.START_HOUR ?? 9);
+const START_MINUTE = Number(schedule.START_MINUTE ?? 15);
+const END_HOUR = Number(schedule.END_HOUR ?? 15);
+const END_MINUTE = Number(schedule.END_MINUTE ?? 30);
+const INTERVAL_MINUTES = Number(schedule.INTERVAL_MINUTES ?? 5);
+const TIMEOUT_MINUTES = Number(schedule.TIMEOUT_MINUTES ?? 10);
 
 let scannerRunning = false;
 let scannerProcess = null;
 let nextScanTimer = null;
 
-
-// ============================================================
-// GET INDIA TIME
-// ============================================================
-
 function getIndiaTime() {
-
     const now = new Date();
-
-    const indiaString =
-        now.toLocaleString(
-            "en-US",
-            {
-                timeZone:
-                    "Asia/Kolkata"
-            }
-        );
-
-    return new Date(
-        indiaString
-    );
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    }).formatToParts(now);
+    const get = type => parts.find(p => p.type === type)?.value;
+    return new Date(`${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`);
 }
 
-
-// ============================================================
-// FORMAT TIME
-// ============================================================
-
-function formatTime(date) {
-
-    return date.toLocaleTimeString(
-        "en-IN",
-        {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: false
-        }
-    );
-
-}
-
-
-// ============================================================
-// CHECK WEEKDAY
-// ============================================================
-
-function isTradingDay(date) {
-
-    const day =
-        date.getDay();
-
-    // 0 = Sunday
-    // 6 = Saturday
-
-    return (
-        day !== 0 &&
-        day !== 6
-    );
-
-}
-
-
-// ============================================================
-// CONVERT TIME TO MINUTES
-// ============================================================
-
-function timeToMinutes(date) {
-
-    return (
-        date.getHours() * 60 +
-        date.getMinutes()
-    );
-
-}
-
-
-// ============================================================
-// CHECK MARKET HOURS
-// ============================================================
-
+function timeToMinutes(date) { return date.getHours() * 60 + date.getMinutes(); }
+function isTradingDay(date) { const day = date.getDay(); return day !== 0 && day !== 6; }
 function isMarketHours(date) {
-
-    if (
-        !isTradingDay(date)
-    ) {
-
-        return false;
-
-    }
-
-
-    const currentMinutes =
-        timeToMinutes(date);
-
-
-    const startMinutes =
-        SCAN_START_HOUR * 60 +
-        SCAN_START_MINUTE;
-
-
-    const endMinutes =
-        SCAN_END_HOUR * 60 +
-        SCAN_END_MINUTE;
-
-
-    return (
-        currentMinutes >= startMinutes &&
-        currentMinutes <= endMinutes
-    );
-
+    if (!isTradingDay(date)) return false;
+    const now = timeToMinutes(date);
+    return now >= START_HOUR * 60 + START_MINUTE && now <= END_HOUR * 60 + END_MINUTE;
 }
-
-
-// ============================================================
-// CHECK WHETHER MARKET HAS NOT OPENED
-// ============================================================
-
-function beforeMarketOpen(date) {
-
-    if (
-        !isTradingDay(date)
-    ) {
-
-        return false;
-
-    }
-
-
-    const currentMinutes =
-        timeToMinutes(date);
-
-
-    const startMinutes =
-        SCAN_START_HOUR * 60 +
-        SCAN_START_MINUTE;
-
-
-    return (
-        currentMinutes < startMinutes
-    );
-
-}
-
-
-// ============================================================
-// CHECK WHETHER MARKET HAS CLOSED
-// ============================================================
-
-function afterMarketClose(date) {
-
-    if (
-        !isTradingDay(date)
-    ) {
-
-        return false;
-
-    }
-
-
-    const currentMinutes =
-        timeToMinutes(date);
-
-
-    const endMinutes =
-        SCAN_END_HOUR * 60 +
-        SCAN_END_MINUTE;
-
-
-    return (
-        currentMinutes > endMinutes
-    );
-
-}
-
-
-// ============================================================
-// RUN EXISTING SCANNER
-// ============================================================
+function formatTime(date) { return date.toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false }); }
 
 function runScanner() {
-
-    if (
-        scannerRunning
-    ) {
-
-        console.log(
-            "\n⚠️ Previous scan is still running."
-        );
-
-        console.log(
-            "⏭️ Skipping this cycle.\n"
-        );
-
-        return;
-
-    }
-
-
+    if (scannerRunning) return;
     scannerRunning = true;
-
-
-    console.log(
-        "\n=========================================="
-    );
-
-    console.log(
-        "🚀 AUTOMATIC SCAN STARTED"
-    );
-
-    console.log(
-        `🇮🇳 India Time: ${formatTime(
-            getIndiaTime()
-        )}`
-    );
-
-    console.log(
-        "==========================================\n"
-    );
-
-
-    const appPath =
-        path.join(
-            __dirname,
-            "app.js"
-        );
-
-
-    scannerProcess =
-        spawn(
-            process.execPath,
-            [appPath],
-            {
-                cwd: path.dirname(
-                    appPath
-                ),
-
-                env: {
-                    ...process.env
-                },
-
-                stdio: [
-                    "inherit",
-                    "inherit",
-                    "inherit"
-                ]
-            }
-        );
-
-
-    // ========================================================
-    // SAFETY TIMEOUT
-    // ========================================================
-
-    const timeout =
-        setTimeout(
-            () => {
-
-                if (
-                    scannerRunning &&
-                    scannerProcess
-                ) {
-
-                    console.log(
-                        "\n⚠️ Scanner exceeded safety timeout."
-                    );
-
-                    console.log(
-                        "🛑 Terminating scanner process.\n"
-                    );
-
-
-                    scannerProcess.kill(
-                        "SIGTERM"
-                    );
-
-                }
-
-            },
-
-            SCAN_TIMEOUT_MINUTES *
-            60 *
-            1000
-        );
-
-
-    // ========================================================
-    // SCANNER FINISHED
-    // ========================================================
-
-    scannerProcess.on(
-        "close",
-        code => {
-
-            clearTimeout(
-                timeout
-            );
-
-
-            scannerRunning =
-                false;
-
-            scannerProcess =
-                null;
-
-
-            console.log(
-                "\n=========================================="
-            );
-
-            if (
-                code === 0
-            ) {
-
-                console.log(
-                    "✅ AUTOMATIC SCAN COMPLETED"
-                );
-
-            }
-            else {
-
-                console.log(
-                    `⚠️ Scanner exited with code: ${code}`
-                );
-
-            }
-
-
-            console.log(
-                `🇮🇳 India Time: ${formatTime(
-                    getIndiaTime()
-                )}`
-            );
-
-            console.log(
-                "==========================================\n"
-            );
-
+    const appPath = path.join(__dirname, "app.js");
+    console.log(`\n[${formatTime(getIndiaTime())}] Starting scanner...`);
+    scannerProcess = spawn(process.execPath, [appPath], { stdio: "inherit", env: process.env });
+    const timeout = setTimeout(() => {
+        if (scannerProcess && !scannerProcess.killed) {
+            console.error("⚠️ Scanner timeout reached; terminating current scan.");
+            scannerProcess.kill();
         }
-    );
-
-
-    scannerProcess.on(
-        "error",
-        error => {
-
-            clearTimeout(
-                timeout
-            );
-
-
-            scannerRunning =
-                false;
-
-            scannerProcess =
-                null;
-
-
-            console.error(
-                "\n❌ Failed to start scanner:"
-            );
-
-            console.error(
-                error.message
-            );
-
-        }
-    );
-
+    }, Math.max(1, TIMEOUT_MINUTES) * 60 * 1000);
+    scannerProcess.on("close", code => {
+        clearTimeout(timeout);
+        scannerRunning = false;
+        scannerProcess = null;
+        console.log(`[${formatTime(getIndiaTime())}] Scanner finished with code ${code}.`);
+    });
+    scannerProcess.on("error", error => {
+        clearTimeout(timeout);
+        scannerRunning = false;
+        scannerProcess = null;
+        console.error("❌ Scanner process error:", error.message);
+    });
 }
 
-
-// ============================================================
-// CALCULATE NEXT SCAN
-// ============================================================
-
-function calculateNextScanDelay() {
-
-    const now =
-        getIndiaTime();
-
-
-    // --------------------------------------------------------
-    // Weekend
-    // --------------------------------------------------------
-
-    if (
-        !isTradingDay(now)
-    ) {
-
-        return getNextTradingDayDelay(
-            now
-        );
-
-    }
-
-
-    const currentMinutes =
-        timeToMinutes(now);
-
-
-    const startMinutes =
-        SCAN_START_HOUR * 60 +
-        SCAN_START_MINUTE;
-
-
-    const endMinutes =
-        SCAN_END_HOUR * 60 +
-        SCAN_END_MINUTE;
-
-
-    // --------------------------------------------------------
-    // Before market
-    // --------------------------------------------------------
-
-    if (
-        currentMinutes < startMinutes
-    ) {
-
-        const target =
-            new Date(now);
-
-
-        target.setHours(
-            SCAN_START_HOUR,
-            SCAN_START_MINUTE,
-            0,
-            0
-        );
-
-
-        return (
-            target.getTime() -
-            now.getTime()
-        );
-
-    }
-
-
-    // --------------------------------------------------------
-    // After market
-    // --------------------------------------------------------
-
-    if (
-        currentMinutes > endMinutes
-    ) {
-
-        return getNextTradingDayDelay(
-            now
-        );
-
-    }
-
-
-    // --------------------------------------------------------
-    // Market is open
-    // --------------------------------------------------------
-
-    const intervalMs =
-        SCAN_INTERVAL_MINUTES *
-        60 *
-        1000;
-
-
-    const elapsedSinceMidnight =
-        (
-            now.getHours() * 60 +
-            now.getMinutes()
-        ) *
-        60 *
-        1000
-        +
-        now.getSeconds() *
-        1000
-        +
-        now.getMilliseconds();
-
-
-    const startSinceMidnight =
-        (
-            SCAN_START_HOUR * 60 +
-            SCAN_START_MINUTE
-        ) *
-        60 *
-        1000;
-
-
-    const elapsed =
-        elapsedSinceMidnight -
-        startSinceMidnight;
-
-
-    const intervalsPassed =
-        Math.ceil(
-            elapsed /
-            intervalMs
-        );
-
-
-    let nextTime =
-        startSinceMidnight +
-        intervalsPassed *
-        intervalMs;
-
-
-    // --------------------------------------------------------
-    // Never schedule after market close
-    // --------------------------------------------------------
-
-    const endSinceMidnight =
-        (
-            SCAN_END_HOUR * 60 +
-            SCAN_END_MINUTE
-        ) *
-        60 *
-        1000;
-
-
-    if (
-        nextTime >
-        endSinceMidnight
-    ) {
-
-        return getNextTradingDayDelay(
-            now
-        );
-
-    }
-
-
-    return (
-        nextTime -
-        elapsedSinceMidnight
-    );
-
+function scheduleNext() {
+    if (nextScanTimer) clearTimeout(nextScanTimer);
+    const now = getIndiaTime();
+    if (!isMarketHours(now)) return;
+    const intervalMs = Math.max(1, INTERVAL_MINUTES) * 60 * 1000;
+    const elapsedFromHour = now.getMinutes() % Math.max(1, INTERVAL_MINUTES);
+    const seconds = now.getSeconds() * 1000 + now.getMilliseconds();
+    let delay = (Math.max(1, INTERVAL_MINUTES) - elapsedFromHour) * 60 * 1000 - seconds;
+    if (delay <= 0) delay = intervalMs;
+    nextScanTimer = setTimeout(() => {
+        const current = getIndiaTime();
+        if (isMarketHours(current)) runScanner();
+        scheduleNext();
+    }, delay);
 }
-
-
-// ============================================================
-// NEXT TRADING DAY
-// ============================================================
-
-function getNextTradingDayDelay(
-    currentDate
-) {
-
-    const next =
-        new Date(
-            currentDate
-        );
-
-
-    next.setDate(
-        next.getDate() + 1
-    );
-
-
-    next.setHours(
-        SCAN_START_HOUR,
-        SCAN_START_MINUTE,
-        0,
-        0
-    );
-
-
-    while (
-        !isTradingDay(next)
-    ) {
-
-        next.setDate(
-            next.getDate() + 1
-        );
-
-    }
-
-
-    return (
-        next.getTime() -
-        currentDate.getTime()
-    );
-
-}
-
-
-// ============================================================
-// SCHEDULE NEXT SCAN
-// ============================================================
-
-function scheduleNextScan() {
-
-    if (
-        nextScanTimer
-    ) {
-
-        clearTimeout(
-            nextScanTimer
-        );
-
-        nextScanTimer =
-            null;
-
-    }
-
-
-    const now =
-        getIndiaTime();
-
-
-    const delay =
-        calculateNextScanDelay();
-
-
-    const nextScanTime =
-        new Date(
-            now.getTime() +
-            delay
-        );
-
-
-    console.log(
-        "=========================================="
-    );
-
-    console.log(
-        "⏰ NEXT AUTOMATIC SCAN"
-    );
-
-    console.log(
-        `Current India Time : ${formatTime(now)}`
-    );
-
-    console.log(
-        `Next Scan          : ${formatTime(
-            nextScanTime
-        )}`
-    );
-
-    console.log(
-        "==========================================\n"
-    );
-
-
-    nextScanTimer =
-        setTimeout(
-            () => {
-
-                const current =
-                    getIndiaTime();
-
-
-                if (
-                    isMarketHours(
-                        current
-                    )
-                ) {
-
-                    runScanner();
-
-                }
-                else {
-
-                    console.log(
-                        "\n⏸️ Market is closed."
-                    );
-
-                }
-
-
-                scheduleNextScan();
-
-            },
-
-            Math.max(
-                delay,
-                1000
-            )
-        );
-
-}
-
-
-// ============================================================
-// START SCHEDULER
-// ============================================================
 
 function startScheduler() {
-
-    console.log(
-        "\n=========================================="
-    );
-
-    console.log(
-        "   AI SMART SCANNER"
-    );
-
-    console.log(
-        "   AUTOMATIC MARKET SCHEDULER"
-    );
-
-    console.log(
-        "=========================================="
-    );
-
-    console.log(
-        "📅 Trading Days : Monday - Friday"
-    );
-
-    console.log(
-        "🕘 Start         : 09:15 IST"
-    );
-
-    console.log(
-        "🕞 Stop          : 15:30 IST"
-    );
-
-    console.log(
-        `🔄 Interval      : Every ${
-            SCAN_INTERVAL_MINUTES
-        } minutes`
-    );
-
-    console.log(
-        "==========================================\n"
-    );
-
-
-    const now =
-        getIndiaTime();
-
-
-    // --------------------------------------------------------
-    // If market is currently open
-    // --------------------------------------------------------
-
-    if (
-        isMarketHours(now)
-    ) {
-
-        console.log(
-            `🟢 Market hours active: ${formatTime(now)}`
-        );
-
-
-        // Run immediately
-        runScanner();
-
-    }
-
-
-    // --------------------------------------------------------
-    // Schedule future scan
-    // --------------------------------------------------------
-
-    scheduleNextScan();
-
+    const now = getIndiaTime();
+    console.log(`🕘 Scheduler started | NSE ${String(START_HOUR).padStart(2,"0")}:${String(START_MINUTE).padStart(2,"0")}–${String(END_HOUR).padStart(2,"0")}:${String(END_MINUTE).padStart(2,"0")} IST | every ${INTERVAL_MINUTES} min`);
+    if (isMarketHours(now)) runScanner();
+    scheduleNext();
 }
 
-
-// ============================================================
-// GRACEFUL SHUTDOWN
-// ============================================================
-
-function shutdown() {
-
-    console.log(
-        "\n🛑 Scheduler shutting down..."
-    );
-
-
-    if (
-        nextScanTimer
-    ) {
-
-        clearTimeout(
-            nextScanTimer
-        );
-
-    }
-
-
-    if (
-        scannerProcess
-    ) {
-
-        console.log(
-            "🛑 Stopping active scanner..."
-        );
-
-
-        scannerProcess.kill(
-            "SIGTERM"
-        );
-
-    }
-
-
-    process.exit(
-        0
-    );
-
+function stopScheduler() {
+    if (nextScanTimer) clearTimeout(nextScanTimer);
+    nextScanTimer = null;
+    if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
+    scannerProcess = null;
+    scannerRunning = false;
 }
 
+if (require.main === module) {
+    startScheduler();
+    process.on("SIGINT", () => { stopScheduler(); process.exit(0); });
+    process.on("SIGTERM", () => { stopScheduler(); process.exit(0); });
+}
 
-process.on(
-    "SIGINT",
-    shutdown
-);
-
-
-process.on(
-    "SIGTERM",
-    shutdown
-);
-
-
-// ============================================================
-// START
-// ============================================================
-
-startScheduler();
+module.exports = { startScheduler, stopScheduler, runScanner, isMarketHours, getIndiaTime };
