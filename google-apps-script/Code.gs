@@ -1,5 +1,14 @@
-// AI SMART SCANNER — GOOGLE APPS SCRIPT API V6
-// Canonical webhook source. Performance optimized for the very wide SCANNER sheet.
+// AI SMART SCANNER — GOOGLE APPS SCRIPT API V7
+// Canonical webhook source.
+//
+// V7 FIXES
+// 1. ACCURACY now accepts incoming rows with a different column count.
+//    Incoming fields are matched by HEADER NAME to the existing ACCURACY
+//    sheet. Historical columns are preserved and never deleted.
+// 2. Other sheets retain strict header validation.
+// 3. Empty Dashboard payloads still replace/clear the Dashboard and keep a
+//    header row, preventing stale candidates from previous scans.
+// 4. SCANNER / ACCURACY remain in lightweight formatting mode for speed.
 
 var ALLOWED_SHEETS={SCANNER:true,Dashboard:true,ACCURACY:true,PARAMETER_MASTER:true,"Parameter List":true,EQUITY:true,CALL_OPTIONS:true,PUT_OPTIONS:true,SCANNER_STATUS:true};
 var WIDE_SHEETS={SCANNER:true,ACCURACY:true};
@@ -11,10 +20,79 @@ function getOrCreateSheet(s,n){return s.getSheetByName(n)||s.insertSheet(n);}
 
 function replaceSheet(name,headers,rows){var s=getOrCreateSheet(getSpreadsheet(),name);s.clear();var out=[headers];for(var i=0;i<rows.length;i++)out.push(normalizeRow(rows[i],headers.length));s.getRange(1,1,out.length,headers.length).setValues(out);lightFormat(s,out.length,headers.length,name);SpreadsheetApp.flush();return{rowCount:rows.length,columnCount:headers.length};}
 
-function appendRows(name,headers,rows){var s=getOrCreateSheet(getSpreadsheet(),name);if(s.getLastRow()===0){s.getRange(1,1,1,headers.length).setValues([headers]);lightFormat(s,1,headers.length,name);}else{var n=s.getLastColumn();if(n!==headers.length)throw new Error("Header column mismatch for sheet '"+name+"'. Existing: "+n+", Incoming: "+headers.length);var eh=s.getRange(1,1,1,n).getValues()[0];for(var h=0;h<headers.length;h++)if(String(eh[h]).trim()!==String(headers[h]).trim())throw new Error("Header mismatch at column "+(h+1)+" in sheet '"+name+"'");}if(!rows.length)return{rowCount:0,columnCount:headers.length};var out=[];for(var i=0;i<rows.length;i++)out.push(normalizeRow(rows[i],headers.length));s.getRange(s.getLastRow()+1,1,out.length,headers.length).setValues(out);SpreadsheetApp.flush();return{rowCount:out.length,columnCount:headers.length};}
+function appendRows(name,headers,rows){
+  var s=getOrCreateSheet(getSpreadsheet(),name);
 
-// Critical fix: no autoResizeColumns and no filter work on SCANNER/ACCURACY.
-// Those operations were causing the webhook to hit the 30s lock/HTTP timeout.
+  if(s.getLastRow()===0){
+    s.getRange(1,1,1,headers.length).setValues([headers]);
+    lightFormat(s,1,headers.length,name);
+  }else{
+    var n=s.getLastColumn();
+    var eh=s.getRange(1,1,1,n).getValues()[0];
+
+    // ACCURACY is a historical schema. It must be compatible with older
+    // sheets even when the scanner sends fewer/different fields today.
+    // Match columns by header name instead of requiring identical width/order.
+    if(name==="ACCURACY"){
+      if(!rows.length)return{rowCount:0,columnCount:n};
+      return appendAccuracyRows(s,eh,headers,rows);
+    }
+
+    // All non-ACCURACY sheets remain strict so schema mistakes are caught.
+    if(n!==headers.length)throw new Error("Header column mismatch for sheet '"+name+"'. Existing: "+n+", Incoming: "+headers.length);
+    for(var h=0;h<headers.length;h++)if(String(eh[h]).trim()!==String(headers[h]).trim())throw new Error("Header mismatch at column "+(h+1)+" in sheet '"+name+"'");
+  }
+
+  if(!rows.length)return{rowCount:0,columnCount:headers.length};
+  var out=[];for(var i=0;i<rows.length;i++)out.push(normalizeRow(rows[i],headers.length));
+  s.getRange(s.getLastRow()+1,1,out.length,headers.length).setValues(out);SpreadsheetApp.flush();return{rowCount:out.length,columnCount:headers.length};
+}
+
+// ------------------------------------------------------------
+// ACCURACY COMPATIBLE APPEND
+// ------------------------------------------------------------
+// Existing ACCURACY headers are authoritative. New prediction rows are
+// projected into those columns by header name. Extra historical columns are
+// preserved and receive blank values for new predictions when they are not
+// supplied by the scanner.
+function appendAccuracyRows(s,existingHeaders,incomingHeaders,rows){
+  var existingMap={};
+  for(var i=0;i<existingHeaders.length;i++){
+    var key=String(existingHeaders[i]).trim().toLowerCase();
+    if(key)existingMap[key]=i;
+  }
+
+  var incomingMap={};
+  for(var j=0;j<incomingHeaders.length;j++){
+    var ikey=String(incomingHeaders[j]).trim().toLowerCase();
+    if(ikey)incomingMap[ikey]=j;
+  }
+
+  var out=[];
+  for(var r=0;r<rows.length;r++){
+    var source=Array.isArray(rows[r])?rows[r]:[];
+    var target=[];
+    for(var c=0;c<existingHeaders.length;c++){
+      var h=String(existingHeaders[c]).trim().toLowerCase();
+      if(h && incomingMap[h]!==undefined){
+        target.push(cell(source[incomingMap[h]]));
+      }else{
+        target.push("");
+      }
+    }
+    out.push(target);
+  }
+
+  if(out.length){
+    s.getRange(s.getLastRow()+1,1,out.length,existingHeaders.length).setValues(out);
+    SpreadsheetApp.flush();
+  }
+
+  return{rowCount:out.length,columnCount:existingHeaders.length,headerMatched:true};
+}
+
+// Critical performance rule: no autoResizeColumns and no filter work on
+// SCANNER/ACCURACY. Those operations can make a wide webhook exceed timeout.
 function lightFormat(s,rowCount,colCount,name){if(!colCount)return;s.getRange(1,1,1,colCount).setFontWeight("bold").setWrap(false);s.setFrozenRows(1);if(!WIDE_SHEETS[name]&&rowCount>1){try{var f=s.getFilter();if(f)f.remove();s.getRange(1,1,rowCount,colCount).createFilter();}catch(e){console.log("Filter skipped: "+e.message);}}}
 
 function updateScannerStatus(st){var s=getOrCreateSheet(getSpreadsheet(),"SCANNER_STATUS");var h=["Last Scan Time","Last Scan Time IST","Status","Source","Broker","Universe","Stocks Scanned","Successful Scans","Failed Scans","CALL Candidates","PUT Candidates","TRADE","WATCH","REJECT","Duration Seconds","Duration MS"];var v=[st.lastScanTime||"",st.lastScanTimeIST||"",st.status||"",st.lastScanSource||"",st.broker||"",st.universe||"",num(st.stocksScanned),num(st.successfulScans),num(st.failedScans),num(st.callCandidates),num(st.putCandidates),num(st.tradeCount),num(st.watchCount),num(st.rejectCount),num(st.elapsedSeconds),num(st.durationMs)];s.clear();s.getRange(1,1,2,h.length).setValues([h,v]);lightFormat(s,2,h.length,"SCANNER_STATUS");SpreadsheetApp.flush();return{rowCount:1,columnCount:h.length};}
@@ -27,4 +105,4 @@ function normalizeRow(r,n){if(!Array.isArray(r))r=[];var o=[];for(var i=0;i<n;i+
 function cell(v){if(v===null||v===undefined)return"";if(Object.prototype.toString.call(v)==="[object Date]")return isNaN(v.getTime())?"":v;if(typeof v==="number")return isFinite(v)?v:"";if(typeof v==="boolean")return v;if(typeof v==="object"){try{return JSON.stringify(v);}catch(e){return String(v);}}return String(v);}
 function num(v){var n=Number(v);return isFinite(n)?n:0;}
 function jsonResponse(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}
-function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",status:"RUNNING",version:"V6",performanceMode:true,supportedActions:["replaceSheet","appendRows","updateAccuracy","scanner_status"],supportedSheets:Object.keys(ALLOWED_SHEETS),timestamp:new Date().toISOString()});}
+function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",status:"RUNNING",version:"V7",performanceMode:true,accuracyHeaderCompatible:true,supportedActions:["replaceSheet","appendRows","updateAccuracy","scanner_status"],supportedSheets:Object.keys(ALLOWED_SHEETS),timestamp:new Date().toISOString()});}
