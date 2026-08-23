@@ -461,76 +461,17 @@ function getRecommendedStrike(price, type) {
     return { strike: Math.max(interval, strike), interval };
 }
 
-// Normalize both the broker-neutral contract shape and the native
-// Upstox /v2/option/contract response shape. The latter uses:
-//   instrument_key, trading_symbol, strike_price, expiry, instrument_type
-// while the decision engine works with:
-//   instrumentKey, tradingSymbol, strike, expiry, optionType
 function normalizeOptionContract(contract, fallbackStrike = 0) {
     if (!contract || typeof contract !== "object") return null;
-
-    const instrumentKey = firstValue(
-        contract.instrumentKey,
-        contract.instrument_key,
-        contract.instrument_token,
-        contract.instrumentToken,
-        contract.exchange_token,
-        contract.exchangeToken,
-        contract.token
-    );
-
-    const tradingSymbol = firstValue(
-        contract.tradingSymbol,
-        contract.trading_symbol,
-        contract.symbol,
-        contract.name
-    );
-
-    const strike = toNumber(firstValue(
-        contract.strike,
-        contract.strikePrice,
-        contract.strike_price,
-        contract.strike_price_value,
-        fallbackStrike
-    ));
-
-    const expiry = firstValue(
-        contract.expiry,
-        contract.expiryDate,
-        contract.expiry_date,
-        contract.expiry_date_time
-    );
-
-    const expiryDays = toNumber(firstValue(
-        contract.expiryDays,
-        contract.expiry_days,
-        contract.daysToExpiry
-    ));
-
-    let optionType = normalizeOptionType(firstValue(
-        contract.optionType,
-        contract.option_type,
-        contract.instrumentType,
-        contract.instrument_type,
-        contract.option,
-        ""
-    ));
-
+    const instrumentKey = firstValue(contract.instrumentKey, contract.instrument_key, contract.instrument_token, contract.instrumentToken, contract.exchange_token, contract.exchangeToken, contract.token);
+    const tradingSymbol = firstValue(contract.tradingSymbol, contract.trading_symbol, contract.symbol, contract.name);
+    const strike = toNumber(firstValue(contract.strike, contract.strikePrice, contract.strike_price, contract.strike_price_value, fallbackStrike));
+    const expiry = firstValue(contract.expiry, contract.expiryDate, contract.expiry_date, contract.expiry_date_time);
+    const expiryDays = toNumber(firstValue(contract.expiryDays, contract.expiry_days, contract.daysToExpiry));
+    let optionType = normalizeOptionType(firstValue(contract.optionType, contract.option_type, contract.instrumentType, contract.instrument_type, contract.option, ""));
     if (!optionType && tradingSymbol) optionType = normalizeOptionType(tradingSymbol);
-
     if ((!instrumentKey && !tradingSymbol) || strike <= 0) return null;
-
-    return {
-        ...contract,
-        instrumentKey,
-        tradingSymbol,
-        strike,
-        expiry,
-        expiryDays,
-        optionType,
-        lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize),
-        tickSize: firstValue(contract.tickSize, contract.tick_size)
-    };
+    return { ...contract, instrumentKey, tradingSymbol, strike, expiry, expiryDays, optionType, lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize), tickSize: firstValue(contract.tickSize, contract.tick_size) };
 }
 
 function expiryDaysFromContract(contract) {
@@ -550,7 +491,6 @@ function validContract(contract, type) {
 async function resolveOptionContract(symbol, type, strike, interval) {
     const broker = getBroker();
     if (!broker) return null;
-
     if (typeof broker.getOptionContracts === "function") {
         try {
             const raw = await broker.getOptionContracts(symbol);
@@ -563,15 +503,13 @@ async function resolveOptionContract(symbol, type, strike, interval) {
                         return Math.abs(a.strike - strike) - Math.abs(b.strike - strike);
                     });
                     const expiry = expiryDaysFromContract(valid[0]);
-                    return valid.filter(c => Math.abs(expiryDaysFromContract(c) - expiry) <= 0.25)
-                        .sort((a, b) => Math.abs(a.strike - strike) - Math.abs(b.strike - strike))[0] || null;
+                    return valid.filter(c => Math.abs(expiryDaysFromContract(c) - expiry) <= 0.25).sort((a, b) => Math.abs(a.strike - strike) - Math.abs(b.strike - strike))[0] || null;
                 }
             }
         } catch (error) {
             console.log(`⚠️ Direct option search failed: ${symbol} | ${error.message}`);
         }
     }
-
     if (typeof broker.getOptionContract === "function") {
         const step = Number(interval) > 0 ? Number(interval) : getStrikeInterval(strike);
         const candidates = [...new Set([strike, strike - step, strike + step, strike - step * 2, strike + step * 2].filter(v => v > 0))];
@@ -597,7 +535,6 @@ async function resolveOptionQuote(contract) {
     if (!broker) return null;
     const key = firstValue(contract.instrumentKey, contract.instrument_key, contract.instrument_token, contract.tradingSymbol, contract.trading_symbol);
     if (!key) return null;
-
     for (const method of ["getOptionQuote", "getQuote"]) {
         if (typeof broker[method] !== "function") continue;
         try {
@@ -625,15 +562,11 @@ function getDecision(direction, mtf, rr, confidence, gates, contract, quote, mar
 async function makeOptionDecision(data = {}) {
     const symbol = firstValue(data.symbol, data.stock, data.name);
     const price = getStockPrice(data);
-
     if (!symbol || price <= 0) return { ...data, symbol, direction: null, optionType: null, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: "INVALID_STOCK_DATA", optionsReason: "INVALID_STOCK_DATA", failedGates: ["symbol", "price"] };
-
     const direction = calculateDirection(data, price);
-
     if (!direction.optionType) {
         return { ...data, symbol, price, direction: "NO DIRECTION", finalDirection: null, optionType: null, callScore: direction.callScore, putScore: direction.putScore, scoreDifference: direction.directionDifference, callEvidence: direction.callEvidence, putEvidence: direction.putEvidence, entry: 0, stopLoss: 0, target1: 0, target2: 0, stockEntry: 0, stockStopLoss: 0, stockTarget1: 0, stockTarget2: 0, riskReward: 0, stockRiskReward: 0, confidence: 0, optionsConfidence: 0, decision: "REJECT", optionsDecision: "REJECT", rating: "NO DIRECTION", optionsRating: "NO DIRECTION", reason: "Directional evidence is insufficient.", optionsReason: "Directional evidence is insufficient.", contractAvailable: false, optionPriceAvailable: false, optionSetupAvailable: false, levelsSource: "MARKET_STRUCTURE_ONLY", failedGates: ["direction"] };
     }
-
     const type = direction.optionType;
     const entry = getStockEntry(data, price);
     const marketSetup = calculateMarketSetup(data, entry, type);
@@ -641,26 +574,59 @@ async function makeOptionDecision(data = {}) {
     const confidence = calculateConfidence(data, direction, mtf, marketSetup.riskReward);
     const gates = evaluateQualityGates(data, direction, mtf, marketSetup.riskReward, confidence.confidence);
     const strike = getRecommendedStrike(price, type);
-
     let contract = null;
     try { contract = await resolveOptionContract(symbol, type, strike.strike, strike.interval); } catch (_) {}
     const quote = contract ? await resolveOptionQuote(contract) : null;
-
     const decision = getDecision(direction, mtf, marketSetup.riskReward, confidence.confidence, gates, contract, quote, marketSetup);
-
     const optionEntry = quote?.ltp ?? null;
     const optionStopLoss = firstPositive(data.optionStopLoss, data.optionSL, data.optionMarketStopLoss);
     const optionTarget1 = firstPositive(data.optionTarget1, data.optionT1, data.optionMarketTarget1);
     const optionTarget2 = firstPositive(data.optionTarget2, data.optionT2, data.optionMarketTarget2);
     const optionSetupAvailable = optionEntry > 0 && optionStopLoss > 0 && optionTarget1 > 0 && optionTarget2 > 0;
-
     return { ...data, symbol, price, direction: type, finalDirection: type, optionType: type, callScore: direction.callScore, putScore: direction.putScore, scoreDifference: direction.directionDifference, callEvidence: direction.callEvidence, putEvidence: direction.putEvidence, entry: marketSetup.entry, stopLoss: marketSetup.stopLoss, target1: marketSetup.target1, target2: marketSetup.target2, stockEntry: marketSetup.entry, stockStopLoss: marketSetup.stopLoss, stockTarget1: marketSetup.target1, stockTarget2: marketSetup.target2, riskReward: marketSetup.riskReward, stockRiskReward: marketSetup.riskReward, risk: marketSetup.risk, reward: marketSetup.reward, stopSource: marketSetup.stopSource, target1Source: marketSetup.target1Source, target2Source: marketSetup.target2Source, levelsSource: marketSetup.levelsSource, supportLevels: marketSetup.supportLevels, resistanceLevels: marketSetup.resistanceLevels, mtfScore: mtf.score, mtfAlignment: mtf.alignment, mtfAligned: mtf.isAligned, alignedTimeframes: mtf.alignedTimeframes, mtfAvailableTimeframes: mtf.availableTimeframes, mtfAvailableCount: mtf.available, confidence: confidence.confidence, optionsConfidence: confidence.confidence, scannerScore: confidence.scannerScore, directionQuality: confidence.directionScore, directionScore: confidence.directionScore, trendScore: confidence.trendScore, momentumScore: confidence.momentumScore, volumeScore: confidence.volumeScore, breakoutScore: confidence.breakoutScore, rrScore: confidence.rrScore, recommendedStrike: strike.strike, optionStrike: contract?.strike ?? strike.strike, strikeInterval: strike.interval, optionStrikeDifference: contract ? Math.abs(Number(contract.strike) - strike.strike) : null, contractAvailable: !!contract, optionPriceAvailable: !!quote, optionSetupAvailable, optionSymbol: contract?.tradingSymbol || null, optionExpiry: contract?.expiry || null, optionExpiryDays: contract ? expiryDaysFromContract(contract) : null, optionInstrumentKey: contract?.instrumentKey || null, optionEntry, optionLTP: optionEntry, optionStopLoss: optionStopLoss || null, optionTarget1: optionTarget1 || null, optionTarget2: optionTarget2 || null, decision: decision.decision, optionsDecision: decision.decision, rating: decision.rating, optionsRating: decision.rating, reason: decision.reason, optionsReason: decision.reason, tradeGates: gates, failedGates: gates.failedGates, failedGateCount: gates.failedGates.length, marketSetupValid: marketSetup.valid, marketSetupReason: marketSetup.reason, contractDetails: contract ? { instrumentKey: contract.instrumentKey, tradingSymbol: contract.tradingSymbol, strike: contract.strike, optionType: contract.optionType, expiry: contract.expiry, expiryDays: expiryDaysFromContract(contract), lotSize: contract.lotSize, tickSize: contract.tickSize } : null };
 }
 
 async function evaluateOptions(data = {}) { return makeOptionDecision(data); }
-
 async function processOptions(data = {}) { return makeOptionDecision(data); }
-
 async function analyzeOptions(data = {}) { return makeOptionDecision(data); }
 
-module.exports = { makeOptionDecision, evaluateOptions, processOptions, analyzeOptions, resolveOptionContract, resolveOptionQuote, calculateDirection, calculateMTF, calculateMarketSetup, getRecommendedStrike, normalizeOptionContract, ENGINE_CONFIG };
+// Compatibility API used by app.js.
+// Keep the engine single-stock internally, but expose the batch function
+// expected by the scanner. One failed stock must not abort the whole batch.
+async function calculateOptionsDecisions(rows = []) {
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+
+    const results = [];
+    for (const row of rows) {
+        try {
+            const result = await makeOptionDecision(row || {});
+            if (result && typeof result === "object") results.push(result);
+        } catch (error) {
+            const symbol = firstValue(row?.symbol, row?.stock, row?.name) || "UNKNOWN";
+            console.error(`⚠️ Option decision failed for ${symbol}: ${error?.message || error}`);
+            results.push({
+                ...(row || {}),
+                symbol,
+                stock: row?.stock || symbol,
+                optionType: normalizeOptionType(row?.optionType || row?.direction),
+                decision: "REJECT",
+                optionsDecision: "REJECT",
+                rating: "ENGINE_ERROR",
+                optionsRating: "ENGINE_ERROR",
+                confidence: 0,
+                optionsConfidence: 0,
+                reason: error?.message || "Option decision calculation failed.",
+                optionsReason: error?.message || "Option decision calculation failed.",
+                contractAvailable: false,
+                optionPriceAvailable: false,
+                optionSetupAvailable: false,
+                failedGates: ["engine"],
+                failedGateCount: 1
+            });
+        }
+    }
+
+    return results;
+}
+
+module.exports = { calculateOptionsDecisions, makeOptionDecision, evaluateOptions, processOptions, analyzeOptions, resolveOptionContract, resolveOptionQuote, calculateDirection, calculateMTF, calculateMarketSetup, getRecommendedStrike, normalizeOptionContract, ENGINE_CONFIG };
