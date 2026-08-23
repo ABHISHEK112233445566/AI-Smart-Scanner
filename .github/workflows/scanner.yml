@@ -9,6 +9,10 @@ jobs:
   scanner:
     runs-on: ubuntu-latest
 
+    env:
+      UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+      GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
+
     steps:
       - name: Checkout scanner
         uses: actions/checkout@v5
