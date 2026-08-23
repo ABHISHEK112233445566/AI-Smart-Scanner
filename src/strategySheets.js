@@ -4,15 +4,15 @@ const config = require("./config");
 // ============================================================
 // V4 STRATEGY SHEETS
 // ============================================================
-//
-//   EQUITY       -> qualified stock setups / audit (max 20)
-//   CALL_OPTIONS -> CALL option candidates
-//   PUT_OPTIONS  -> PUT option candidates
-//
+// EQUITY       -> qualified stock setups / audit (max 20)
+// CALL_OPTIONS -> CALL option candidates
+// PUT_OPTIONS  -> PUT option candidates
 // SCANNER and ACCURACY are handled by googleSheet.js.
 // ============================================================
 
-const TIMEOUT = 30000;
+// Google Apps Script can take longer while writing/formatting large sheets.
+// 90 seconds prevents the previous 30-second client timeout.
+const TIMEOUT = 90000;
 const EQUITY_MAX_ROWS = 20;
 
 const EQUITY_COLUMNS = [
@@ -145,10 +145,8 @@ async function updateStrategySheets(scannerData, optionDecisions) {
     const scannerRows = Array.isArray(scannerData) ? scannerData : [];
     const options = Array.isArray(optionDecisions) ? optionDecisions : [];
 
-    // EQUITY must contain the same qualified stock set that feeds the
-    // option decision engine, not the complete 114-stock accuracy dataset.
-    // optionDecisions are one-per-qualified-stock, so use their stock keys
-    // to select the corresponding underlying scanner rows.
+    // EQUITY uses the same qualified stock set that feeds option decisions,
+    // not the complete accuracy dataset.
     const qualifiedKeys = new Set(
         options.map(getStockKey).filter(Boolean)
     );
@@ -161,11 +159,8 @@ async function updateStrategySheets(scannerData, optionDecisions) {
     const callRows = buildRows(options.filter(row => normalizeType(row) === "CALL"), OPTION_COLUMNS);
     const putRows = buildRows(options.filter(row => normalizeType(row) === "PUT"), OPTION_COLUMNS);
 
-    // IMPORTANT:
-    // Google Apps Script uses a script lock in doPost(). Sending these three
-    // requests concurrently can make them contend for the same lock. One
-    // request can then wait for the full lock timeout and fail in GitHub even
-    // though the scanner itself completed correctly. Send them sequentially.
+    // Apps Script uses a script lock in doPost(). Keep these requests
+    // sequential so they do not contend for the same lock.
     const equity = await post("EQUITY", EQUITY_COLUMNS, equityRows);
     const callOptions = await post("CALL_OPTIONS", OPTION_COLUMNS, callRows);
     const putOptions = await post("PUT_OPTIONS", OPTION_COLUMNS, putRows);
