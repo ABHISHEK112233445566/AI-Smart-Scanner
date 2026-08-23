@@ -2,17 +2,16 @@ const axios = require("axios");
 const config = require("./config");
 
 // ============================================================
-// V4 STRATEGY SHEETS
+// V5 STRATEGY SHEETS
 // ============================================================
-// EQUITY       -> qualified stock setups / audit (max 20)
-// CALL_OPTIONS -> CALL option candidates
-// PUT_OPTIONS  -> PUT option candidates
-// SCANNER and ACCURACY are handled by googleSheet.js.
+// EQUITY       -> qualified stock setups / audit
+// CALL_OPTIONS -> all CALL option candidates
+// PUT_OPTIONS  -> all PUT option candidates
+// Strategy sheets are sent in ONE webhook request so Apps Script
+// uses one lock cycle and updates all three sheets together.
 // ============================================================
 
-// Google Apps Script can take longer while writing/formatting large sheets.
-// 90 seconds prevents the previous 30-second client timeout.
-const TIMEOUT = 90000;
+const TIMEOUT = 120000;
 const EQUITY_MAX_ROWS = 20;
 
 const EQUITY_COLUMNS = [
@@ -55,10 +54,12 @@ function getWebhookUrl() {
 function clean(value) {
     if (value === undefined || value === null) return "";
     if (value instanceof Date) return value.toISOString();
+    if (typeof value === "number") return Number.isFinite(value) ? value : "";
+    if (typeof value === "boolean") return value;
     if (typeof value === "object") {
         try { return JSON.stringify(value); } catch (_) { return String(value); }
     }
-    return value;
+    return String(value);
 }
 
 function value(row, key, aliases = []) {
@@ -76,25 +77,30 @@ function getStockKey(row) {
 }
 
 function normalizeType(row) {
-    const raw = String(value(row, "optionType", ["optionsType", "type", "instrument_type"]))
-        .trim().toUpperCase();
-    if (raw === "CALL" || raw === "CE") return "CALL";
-    if (raw === "PUT" || raw === "PE") return "PUT";
+    const raw = String(value(row, "optionType", [
+        "optionsType", "option_type", "type", "instrument_type"
+    ])).trim().toUpperCase();
+
+    if (raw === "CALL" || raw === "CE" || raw === "CALL_OPTION") return "CALL";
+    if (raw === "PUT" || raw === "PE" || raw === "PUT_OPTION") return "PUT";
     return "";
 }
 
 function decisionRank(row) {
-    const d = String(value(row, "optionsDecision", ["decision"])).trim().toUpperCase();
+    const d = String(value(row, "optionsDecision", ["decision"]))
+        .trim().toUpperCase();
     return ({ TRADE: 3, WATCH: 2, REJECT: 1 }[d] || 0);
 }
 
 function confidence(row) {
-    const n = Number(value(row, "optionsConfidence", ["confidence"]));
+    const n = Number(value(row, "optionsConfidence", ["confidence", "optionConfidence"]));
     return Number.isFinite(n) ? n : 0;
 }
 
 function scannerScore(row) {
-    const n = Number(value(row, "rankingScore", ["finalScore", "aiFinalScore", "score"]));
+    const n = Number(value(row, "rankingScore", [
+        "finalScore", "aiFinalScore", "scannerScore", "score"
+    ]));
     return Number.isFinite(n) ? n : 0;
 }
 
@@ -116,37 +122,28 @@ function buildRows(rows, columns) {
     );
 }
 
-async function post(sheet, headers, rows) {
+async function postStrategySheets(payload) {
     const url = getWebhookUrl();
     if (!url) throw new Error("Google Sheet webhook URL is missing.");
 
-    const response = await axios.post(url, {
-        action: "replaceSheet",
-        sheet,
-        clearFirst: true,
-        headers,
-        rows,
-        timestamp: new Date().toISOString()
-    }, {
+    const response = await axios.post(url, payload, {
         timeout: TIMEOUT,
         headers: { "Content-Type": "application/json" }
     });
 
     if (response?.data?.success === false) {
         throw new Error(
-            `Google Sheets rejected ${sheet}: ${response.data.error || "unknown error"}`
+            `Google Sheets rejected strategy sheets: ${response.data.error || "unknown error"}`
         );
     }
 
-    return response.data;
+    return response?.data || {};
 }
 
 async function updateStrategySheets(scannerData, optionDecisions) {
     const scannerRows = Array.isArray(scannerData) ? scannerData : [];
     const options = Array.isArray(optionDecisions) ? optionDecisions : [];
 
-    // EQUITY uses the same qualified stock set that feeds option decisions,
-    // not the complete accuracy dataset.
     const qualifiedKeys = new Set(
         options.map(getStockKey).filter(Boolean)
     );
@@ -156,23 +153,31 @@ async function updateStrategySheets(scannerData, optionDecisions) {
         .slice(0, EQUITY_MAX_ROWS);
 
     const equityRows = buildRows(qualifiedEquityRows, EQUITY_COLUMNS);
-    const callRows = buildRows(options.filter(row => normalizeType(row) === "CALL"), OPTION_COLUMNS);
-    const putRows = buildRows(options.filter(row => normalizeType(row) === "PUT"), OPTION_COLUMNS);
+    const callRows = buildRows(
+        options.filter(row => normalizeType(row) === "CALL"),
+        OPTION_COLUMNS
+    );
+    const putRows = buildRows(
+        options.filter(row => normalizeType(row) === "PUT"),
+        OPTION_COLUMNS
+    );
 
-    // Apps Script uses a script lock in doPost(). Keep these requests
-    // sequential so they do not contend for the same lock.
-    const equity = await post("EQUITY", EQUITY_COLUMNS, equityRows);
-    const callOptions = await post("CALL_OPTIONS", OPTION_COLUMNS, callRows);
-    const putOptions = await post("PUT_OPTIONS", OPTION_COLUMNS, putRows);
+    const result = await postStrategySheets({
+        action: "replaceStrategySheets",
+        timestamp: new Date().toISOString(),
+        sheets: {
+            EQUITY: { headers: EQUITY_COLUMNS, rows: equityRows },
+            CALL_OPTIONS: { headers: OPTION_COLUMNS, rows: callRows },
+            PUT_OPTIONS: { headers: OPTION_COLUMNS, rows: putRows }
+        }
+    });
 
     return {
         success: true,
         equityRows: equityRows.length,
         callRows: callRows.length,
         putRows: putRows.length,
-        equity,
-        callOptions,
-        putOptions
+        ...result
     };
 }
 
