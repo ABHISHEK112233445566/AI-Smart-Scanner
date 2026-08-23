@@ -132,6 +132,12 @@ async function post(sheet, headers, rows) {
         headers: { "Content-Type": "application/json" }
     });
 
+    if (response?.data?.success === false) {
+        throw new Error(
+            `Google Sheets rejected ${sheet}: ${response.data.error || "unknown error"}`
+        );
+    }
+
     return response.data;
 }
 
@@ -155,11 +161,14 @@ async function updateStrategySheets(scannerData, optionDecisions) {
     const callRows = buildRows(options.filter(row => normalizeType(row) === "CALL"), OPTION_COLUMNS);
     const putRows = buildRows(options.filter(row => normalizeType(row) === "PUT"), OPTION_COLUMNS);
 
-    const [equity, callOptions, putOptions] = await Promise.all([
-        post("EQUITY", EQUITY_COLUMNS, equityRows),
-        post("CALL_OPTIONS", OPTION_COLUMNS, callRows),
-        post("PUT_OPTIONS", OPTION_COLUMNS, putRows)
-    ]);
+    // IMPORTANT:
+    // Google Apps Script uses a script lock in doPost(). Sending these three
+    // requests concurrently can make them contend for the same lock. One
+    // request can then wait for the full lock timeout and fail in GitHub even
+    // though the scanner itself completed correctly. Send them sequentially.
+    const equity = await post("EQUITY", EQUITY_COLUMNS, equityRows);
+    const callOptions = await post("CALL_OPTIONS", OPTION_COLUMNS, callRows);
+    const putOptions = await post("PUT_OPTIONS", OPTION_COLUMNS, putRows);
 
     return {
         success: true,
