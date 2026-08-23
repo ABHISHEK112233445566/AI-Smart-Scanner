@@ -28,7 +28,13 @@ const DASHBOARD_MAX_ROWS = Number(
 
 const MIN_CONFIDENCE = Number(config.THRESHOLDS?.MIN_CONFIDENCE ?? 70);
 const MIN_RR = Number(config.THRESHOLDS?.MIN_RR ?? 1.5);
-const GOOGLE_TIMEOUT = 30000;
+
+// SCANNER contains 50 rows and a very wide technical schema. Google Apps
+// Script can take considerably longer than 30 seconds to write, format and
+// resize this payload. 30 seconds was causing GitHub to report a false
+// "Google Sheet core update failed" even though the scanner calculations had
+// completed correctly.
+const GOOGLE_TIMEOUT = 120000;
 
 function getGoogleSheetUrl() {
     return process.env.GOOGLE_SHEET_WEBHOOK_URL ||
@@ -216,8 +222,6 @@ async function updateGoogleSheet(payload = {}) {
         throw new Error("Google Sheet payload must be an object");
     }
 
-    // Scanner status is deliberately independent from the data uploads.
-    // app.js calls this after the main sheet update and again when needed.
     if (String(payload.action || "").trim() === "scanner_status") {
         const response = await postToGoogleSheet({
             action: "scanner_status",
@@ -245,12 +249,9 @@ async function updateGoogleSheet(payload = {}) {
         ? payload.accuracyData
         : [];
 
-    // IMPORTANT:
-    // 1. SCANNER always replaces old data with the exact Top 50 prepared by app.js.
-    // 2. Dashboard always replaces old data, including when dashboardData is [].
-    // 3. Accuracy only appends, preserving historical predictions.
-    // These three operations are intentionally awaited separately so a failure
-    // cannot silently leave stale Dashboard data behind.
+    // SCANNER replaces old data with the exact prepared Top 50.
+    // Dashboard replaces old data even when empty, preventing stale rows.
+    // Accuracy appends historical predictions.
     const scanner = await postReplaceSheet("SCANNER", scannerData);
     const dashboard = await postReplaceSheet("Dashboard", dashboardData);
     const accuracy = await postAccuracyRows(accuracyData);
