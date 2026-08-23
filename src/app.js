@@ -5,7 +5,7 @@ const { setBroker, getActiveBroker } = require("./brokers");
 const { loadSymbolMaster } = require("./services/symbolService");
 const { scanStocks } = require("./scanner");
 const { calculateOptionsDecisions } = require("./optionsDecisionEngine");
-const { updateGoogleSheet } = require("./googleSheet");
+const { updateGoogleSheet, buildScannerStatus } = require("./googleSheet");
 const { updateStrategySheets } = require("./strategySheets");
 const { buildDashboard } = require("./dashboard");
 const { createAccuracyRecord } = require("./accuracyTracker");
@@ -162,6 +162,7 @@ async function main() {
     const scanResult = await scanStocks(symbols);
     const scannerQualified = Array.isArray(scanResult) ? scanResult : [];
     const allScannerResults = Array.isArray(scanResult?.allResults) ? scanResult.allResults : scannerQualified;
+    const rejectedResults = Array.isArray(scanResult?.rejected) ? scanResult.rejected : allScannerResults.filter(row => row?.qualified === false);
 
     const rejectionSummary = getScannerSummary(allScannerResults);
 
@@ -175,12 +176,6 @@ async function main() {
         console.log(`Rejection summary: ${JSON.stringify(rejectionSummary)}`);
     }
 
-    // IMPORTANT:
-    // The stock scanner may reject every row because of a hard MTF/market-setup
-    // gate. That must NOT silently stop the options engine. The options engine
-    // already has its own MTF, confidence, RR and contract quality gates.
-    // Therefore recovery candidates are only a controlled shortlist, never
-    // blindly all 114 stocks.
     const optionInputStocks = scannerQualified.length > 0
         ? scannerQualified
         : recoverOptionCandidates(allScannerResults);
@@ -219,15 +214,21 @@ async function main() {
         console.log(`${index + 1}. ${option?.stock || option?.symbol || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Confidence: ${getConfidence(option)} | ${normalizeDecision(option) || "N/A"}`);
     });
 
+    // Core Google update. A successful HTTP response is required before the
+    // scan is reported as SUCCESS to the dashboard/status payload.
+    let coreSheetUpdated = false;
     try {
         await updateGoogleSheet({ scannerData: completeScannerData, dashboardData: optionDecisions, accuracyData });
+        coreSheetUpdated = true;
         console.log(`📈 Accuracy records prepared: ${accuracyData.length}`);
     } catch (error) {
         console.error(`⚠️ Google Sheet core update failed: ${error?.message || error}`);
     }
 
+    let strategySheetUpdated = false;
     try {
         const strategyResult = await updateStrategySheets(completeScannerData, optionDecisions);
+        strategySheetUpdated = true;
         console.log(`📊 Strategy sheets updated | EQUITY: ${strategyResult?.equityRows ?? 0} | CALL: ${strategyResult?.callRows ?? 0} | PUT: ${strategyResult?.putRows ?? 0}`);
     } catch (error) {
         console.error(`⚠️ Strategy sheet update failed: ${error?.message || error}`);
@@ -244,6 +245,44 @@ async function main() {
     }
 
     const elapsedSeconds = ((Date.now() - scanStartedAt.getTime()) / 1000).toFixed(1);
+    const callCandidates = optionDecisions.filter(x => String(x?.optionType || "").toUpperCase() === "CALL").length;
+    const putCandidates = optionDecisions.filter(x => String(x?.optionType || "").toUpperCase() === "PUT").length;
+    const tradeCount = optionDecisions.filter(x => normalizeDecision(x) === "TRADE").length;
+    const watchCount = optionDecisions.filter(x => normalizeDecision(x) === "WATCH").length;
+    const rejectCount = optionDecisions.filter(x => normalizeDecision(x) === "REJECT").length;
+    const successfulScans = Math.max(0, allScannerResults.length - rejectedResults.filter(x => String(x?.rejectionReason || "").toUpperCase() === "ERROR").length);
+    const failedScans = Math.max(0, allScannerResults.length - successfulScans);
+
+    // Status is written LAST. It is SUCCESS only when the core sheet update
+    // and strategy sheet update both completed successfully.
+    const scannerStatus = buildScannerStatus({
+        status: coreSheetUpdated && strategySheetUpdated ? "SUCCESS" : "PARTIAL_FAILURE",
+        startedAt: scanStartedAt,
+        universe: universe.name,
+        broker: brokerName,
+        scanned: allScannerResults.length,
+        successfulScans,
+        failedScans,
+        callCandidates,
+        putCandidates,
+        tradeCount,
+        watchCount,
+        rejectCount,
+        elapsedSeconds
+    });
+
+    try {
+        await updateGoogleSheet({
+            action: "scanner_status",
+            scannerStatus,
+            scannerData: completeScannerData,
+            dashboardData: optionDecisions,
+            accuracyData
+        });
+        console.log(`🟢 Scanner Status: ${scannerStatus.status} | Last Scan: ${scannerStatus.lastScanTimeIST} IST | Source: ${scannerStatus.lastScanSource}`);
+    } catch (error) {
+        console.error(`⚠️ Scanner status update failed: ${error?.message || error}`);
+    }
 
     console.log("\n========================================\n       SCAN COMPLETE\n========================================");
     console.log(`Universe: ${universe.name}`);
@@ -256,7 +295,12 @@ async function main() {
     console.log(`Confidence ${DASHBOARD_MIN_CONFIDENCE}+: ${optionDecisions.filter(option => getConfidence(option) >= DASHBOARD_MIN_CONFIDENCE).length}`);
     console.log(`Final TOP ${FINAL_TOP_COUNT}: ${finalTop5.length}`);
     console.log(`Elapsed: ${elapsedSeconds}s`);
+    console.log(`Scanner Status: ${scannerStatus.status}`);
     console.log("========================================\n");
+
+    if (scannerStatus.status !== "SUCCESS") {
+        throw new Error("Scanner completed with partial Google Sheets update failure");
+    }
 
     return {
         universe: universe.name,
@@ -269,6 +313,7 @@ async function main() {
         optionDecisions,
         finalTop5,
         dashboardData,
+        scannerStatus,
         rejectionSummary,
         elapsedSeconds: Number(elapsedSeconds)
     };
