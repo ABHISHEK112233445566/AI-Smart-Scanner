@@ -1,6 +1,12 @@
 // ============================================================
 // SUPPORT & RESISTANCE ENGINE
-// PRICE ACTION + OI BASED LEVELS
+// MARKET-STRUCTURE + OI LEVELS
+// ============================================================
+// Rules:
+// 1. Use actual swing structure, not arbitrary candle extrema.
+// 2. Return levels relative to the current market price.
+// 3. OI support/resistance must also be price-relative.
+// 4. Never create synthetic/percentage/ATR levels here.
 // ============================================================
 
 function toNumber(value) {
@@ -8,644 +14,225 @@ function toNumber(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
-// ============================================================
-// GET OI LEVEL FROM POSSIBLE FIELD NAMES
-// ============================================================
+function round2(value) {
+    return Number(toNumber(value).toFixed(2));
+}
+
+function uniqueSorted(levels) {
+    return [...new Set(levels.map(round2).filter(v => v > 0))].sort((a, b) => a - b);
+}
+
+function getCurrentPrice(candles) {
+    const valid = Array.isArray(candles)
+        ? candles.filter(c => c && toNumber(c.close) > 0)
+        : [];
+    return valid.length ? toNumber(valid[valid.length - 1].close) : 0;
+}
 
 function getOiLevel(data, keys) {
-
-    if (!data || typeof data !== "object") {
-        return 0;
-    }
-
+    if (!data || typeof data !== "object") return 0;
     for (const key of keys) {
-
         const value = toNumber(data[key]);
-
-        if (value > 0) {
-            return value;
-        }
+        if (value > 0) return value;
     }
-
     return 0;
 }
 
+function emptyPriceLevels() {
+    return {
+        support1: 0,
+        support2: 0,
+        resistance1: 0,
+        resistance2: 0
+    };
+}
+
 // ============================================================
-// CALCULATE PRICE ACTION SUPPORT / RESISTANCE
+// SWING STRUCTURE
+// ============================================================
+// A swing low is lower than the candles immediately around it.
+// A swing high is higher than the candles immediately around it.
+// We use a small confirmation window and recent history so levels
+// represent actual market structure rather than simply the lowest
+// or highest candle in an arbitrary 50-candle window.
 // ============================================================
 
 function calculatePriceActionLevels(candles) {
+    if (!Array.isArray(candles) || candles.length < 7) return emptyPriceLevels();
 
-    if (!Array.isArray(candles) || candles.length === 0) {
-        return {
-            support1: 0,
-            support2: 0,
-            resistance1: 0,
-            resistance2: 0
-        };
+    const valid = candles
+        .map(c => ({
+            high: toNumber(c?.high),
+            low: toNumber(c?.low),
+            close: toNumber(c?.close)
+        }))
+        .filter(c => c.high > 0 && c.low > 0 && c.close > 0);
+
+    if (valid.length < 7) return emptyPriceLevels();
+
+    const currentPrice = valid[valid.length - 1].close;
+    const lookback = Math.min(valid.length, 100);
+    const data = valid.slice(-lookback);
+    const swingHighs = [];
+    const swingLows = [];
+
+    for (let i = 2; i < data.length - 2; i++) {
+        const c = data[i];
+        const isSwingHigh =
+            c.high >= data[i - 1].high &&
+            c.high >= data[i - 2].high &&
+            c.high > data[i + 1].high &&
+            c.high >= data[i + 2].high;
+
+        const isSwingLow =
+            c.low <= data[i - 1].low &&
+            c.low <= data[i - 2].low &&
+            c.low < data[i + 1].low &&
+            c.low <= data[i + 2].low;
+
+        if (isSwingHigh && c.high > currentPrice) swingHighs.push(c.high);
+        if (isSwingLow && c.low < currentPrice) swingLows.push(c.low);
     }
 
-    const validCandles = candles.filter(c =>
-        c &&
-        Number(c.high) > 0 &&
-        Number(c.low) > 0
-    );
-
-    if (validCandles.length === 0) {
-        return {
-            support1: 0,
-            support2: 0,
-            resistance1: 0,
-            resistance2: 0
-        };
-    }
-
-    const highs =
-        validCandles.map(c => Number(c.high));
-
-    const lows =
-        validCandles.map(c => Number(c.low));
-
-    const recentHighs =
-        highs.slice(-50);
-
-    const recentLows =
-        lows.slice(-50);
-
-    const firstHalfHighs =
-        recentHighs.slice(0, 25);
-
-    const firstHalfLows =
-        recentLows.slice(0, 25);
-
-    const resistance1 =
-        Math.max(...recentHighs);
-
-    const support1 =
-        Math.min(...recentLows);
-
-    const resistance2 =
-        firstHalfHighs.length > 0
-            ? Math.max(...firstHalfHighs)
-            : resistance1;
-
-    const support2 =
-        firstHalfLows.length > 0
-            ? Math.min(...firstHalfLows)
-            : support1;
+    // Include only the actual current candle range as a structural level
+    // when it is clearly on the correct side. This is deliberately last
+    // resort; no artificial offset is added.
+    const supports = uniqueSorted(swingLows).sort((a, b) => b - a);
+    const resistances = uniqueSorted(swingHighs).sort((a, b) => a - b);
 
     return {
-
-        support1:
-            Number(
-                support1.toFixed(2)
-            ),
-
-        support2:
-            Number(
-                support2.toFixed(2)
-            ),
-
-        resistance1:
-            Number(
-                resistance1.toFixed(2)
-            ),
-
-        resistance2:
-            Number(
-                resistance2.toFixed(2)
-            )
+        support1: round2(supports[0] || 0),
+        support2: round2(supports[1] || 0),
+        resistance1: round2(resistances[0] || 0),
+        resistance2: round2(resistances[1] || 0)
     };
 }
 
 // ============================================================
-// CALCULATE OI SUPPORT / RESISTANCE
-//
-// Supports:
-//   - Highest Put OI
-//   - Highest Put OI Change
-//
-// Resistances:
-//   - Highest Call OI
-//   - Highest Call OI Change
-//
-// Flexible field names are supported.
+// OI SUPPORT / RESISTANCE
 // ============================================================
 
-function calculateOILevels(oiData) {
-
+function calculateOILevels(oiData, currentPrice = 0) {
     if (!oiData) {
-        return {
-            oiSupport1: 0,
-            oiSupport2: 0,
-            oiResistance1: 0,
-            oiResistance2: 0
-        };
+        return { oiSupport1: 0, oiSupport2: 0, oiResistance1: 0, oiResistance2: 0 };
     }
 
     let rows = [];
+    if (Array.isArray(oiData)) rows = oiData;
+    else if (Array.isArray(oiData.data)) rows = oiData.data;
+    else if (Array.isArray(oiData.records)) rows = oiData.records;
+    else if (Array.isArray(oiData.options)) rows = oiData.options;
+    else if (Array.isArray(oiData.optionChain)) rows = oiData.optionChain;
 
-    // --------------------------------------------------------
-    // ARRAY DIRECTLY
-    // --------------------------------------------------------
+    const directSupport1 = getOiLevel(oiData, ["oiSupport1", "oi_support1", "putOiSupport", "putOISupport", "highestPutOIstrike", "highestPutOIStrike", "maxPutOIStrike"]);
+    const directSupport2 = getOiLevel(oiData, ["oiSupport2", "oi_support2", "secondPutOiSupport", "secondHighestPutOIstrike", "secondHighestPutOIStrike"]);
+    const directResistance1 = getOiLevel(oiData, ["oiResistance1", "oi_resistance1", "callOiResistance", "callOIResistance", "highestCallOIstrike", "highestCallOIStrike", "maxCallOIStrike"]);
+    const directResistance2 = getOiLevel(oiData, ["oiResistance2", "oi_resistance2", "secondCallOiResistance", "secondHighestCallOIstrike", "secondHighestCallOIStrike"]);
 
-    if (Array.isArray(oiData)) {
-        rows = oiData;
-    }
-
-    // --------------------------------------------------------
-    // COMMON OBJECT WRAPPERS
-    // --------------------------------------------------------
-
-    else if (Array.isArray(oiData.data)) {
-        rows = oiData.data;
-    }
-
-    else if (Array.isArray(oiData.records)) {
-        rows = oiData.records;
-    }
-
-    else if (Array.isArray(oiData.options)) {
-        rows = oiData.options;
-    }
-
-    else if (Array.isArray(oiData.optionChain)) {
-        rows = oiData.optionChain;
-    }
-
-    // --------------------------------------------------------
-    // DIRECT OI LEVELS ALREADY PROVIDED
-    // --------------------------------------------------------
-
-    const directSupport1 =
-        getOiLevel(
-            oiData,
-            [
-                "oiSupport1",
-                "oi_support1",
-                "putOiSupport",
-                "putOISupport",
-                "highestPutOIstrike",
-                "highestPutOIStrike",
-                "maxPutOIStrike"
-            ]
-        );
-
-    const directSupport2 =
-        getOiLevel(
-            oiData,
-            [
-                "oiSupport2",
-                "oi_support2",
-                "secondPutOiSupport",
-                "secondHighestPutOIstrike",
-                "secondHighestPutOIStrike"
-            ]
-        );
-
-    const directResistance1 =
-        getOiLevel(
-            oiData,
-            [
-                "oiResistance1",
-                "oi_resistance1",
-                "callOiResistance",
-                "callOIResistance",
-                "highestCallOIstrike",
-                "highestCallOIStrike",
-                "maxCallOIStrike"
-            ]
-        );
-
-    const directResistance2 =
-        getOiLevel(
-            oiData,
-            [
-                "oiResistance2",
-                "oi_resistance2",
-                "secondCallOiResistance",
-                "secondHighestCallOIstrike",
-                "secondHighestCallOIStrike"
-            ]
-        );
-
-    if (rows.length === 0) {
-
+    const normalized = rows.map(row => {
+        if (!row || typeof row !== "object") return null;
+        const strike = getOiLevel(row, ["strike", "strikePrice", "strike_price", "strike_price_value"]);
+        if (!strike) return null;
         return {
+            strike,
+            callOI: getOiLevel(row, ["callOI", "callOi", "call_oi", "ceOI", "ceOi", "ce_oi", "callOpenInterest", "call_open_interest"]),
+            putOI: getOiLevel(row, ["putOI", "putOi", "put_oi", "peOI", "peOi", "pe_oi", "putOpenInterest", "put_open_interest"]),
+            callOIChange: getOiLevel(row, ["callOIChange", "callOiChange", "call_oi_change", "ceOIChange", "ceOiChange", "ce_oi_change"]),
+            putOIChange: getOiLevel(row, ["putOIChange", "putOiChange", "put_oi_change", "peOIChange", "peOiChange", "pe_oi_change"])
+        };
+    }).filter(Boolean);
 
-            oiSupport1:
-                directSupport1,
-
-            oiSupport2:
-                directSupport2,
-
-            oiResistance1:
-                directResistance1,
-
-            oiResistance2:
-                directResistance2
+    if (!normalized.length) {
+        return {
+            oiSupport1: currentPrice > 0 && directSupport1 < currentPrice ? round2(directSupport1) : 0,
+            oiSupport2: currentPrice > 0 && directSupport2 < currentPrice ? round2(directSupport2) : 0,
+            oiResistance1: currentPrice > 0 && directResistance1 > currentPrice ? round2(directResistance1) : 0,
+            oiResistance2: currentPrice > 0 && directResistance2 > currentPrice ? round2(directResistance2) : 0
         };
     }
 
-    // ========================================================
-    // NORMALIZE OI ROWS
-    // ========================================================
+    const supports = normalized
+        .filter(r => r.putOI > 0 && (!currentPrice || r.strike < currentPrice))
+        .sort((a, b) => b.putOI - a.putOI)
+        .map(r => r.strike);
 
-    const normalized = rows
-        .map(row => {
+    const resistances = normalized
+        .filter(r => r.callOI > 0 && (!currentPrice || r.strike > currentPrice))
+        .sort((a, b) => b.callOI - a.callOI)
+        .map(r => r.strike);
 
-            if (!row || typeof row !== "object") {
-                return null;
-            }
+    const supportChanges = normalized
+        .filter(r => r.putOIChange > 0 && (!currentPrice || r.strike < currentPrice))
+        .sort((a, b) => b.putOIChange - a.putOIChange)
+        .map(r => r.strike);
 
-            const strike =
-                getOiLevel(
-                    row,
-                    [
-                        "strike",
-                        "strikePrice",
-                        "strike_price",
-                        "strike_price_value"
-                    ]
-                );
+    const resistanceChanges = normalized
+        .filter(r => r.callOIChange > 0 && (!currentPrice || r.strike > currentPrice))
+        .sort((a, b) => b.callOIChange - a.callOIChange)
+        .map(r => r.strike);
 
-            const callOI =
-                getOiLevel(
-                    row,
-                    [
-                        "callOI",
-                        "callOi",
-                        "call_oi",
-                        "ceOI",
-                        "ceOi",
-                        "ce_oi",
-                        "callOpenInterest",
-                        "call_open_interest"
-                    ]
-                );
-
-            const putOI =
-                getOiLevel(
-                    row,
-                    [
-                        "putOI",
-                        "putOi",
-                        "put_oi",
-                        "peOI",
-                        "peOi",
-                        "pe_oi",
-                        "putOpenInterest",
-                        "put_open_interest"
-                    ]
-                );
-
-            const callOIChange =
-                getOiLevel(
-                    row,
-                    [
-                        "callOIChange",
-                        "callOiChange",
-                        "call_oi_change",
-                        "ceOIChange",
-                        "ceOiChange",
-                        "ce_oi_change"
-                    ]
-                );
-
-            const putOIChange =
-                getOiLevel(
-                    row,
-                    [
-                        "putOIChange",
-                        "putOiChange",
-                        "put_oi_change",
-                        "peOIChange",
-                        "peOiChange",
-                        "pe_oi_change"
-                    ]
-                );
-
-            if (!strike || strike <= 0) {
-                return null;
-            }
-
-            return {
-                strike,
-                callOI,
-                putOI,
-                callOIChange,
-                putOIChange
-            };
-        })
-        .filter(Boolean);
-
-    if (normalized.length === 0) {
-
-        return {
-
-            oiSupport1:
-                directSupport1,
-
-            oiSupport2:
-                directSupport2,
-
-            oiResistance1:
-                directResistance1,
-
-            oiResistance2:
-                directResistance2
-        };
-    }
-
-    // ========================================================
-    // PUT OI = SUPPORT
-    // ========================================================
-
-    const putOiLevels =
-        normalized
-            .filter(row =>
-                row.putOI > 0
-            )
-            .sort(
-                (a, b) =>
-                    b.putOI - a.putOI
-            );
-
-    // ========================================================
-    // CALL OI = RESISTANCE
-    // ========================================================
-
-    const callOiLevels =
-        normalized
-            .filter(row =>
-                row.callOI > 0
-            )
-            .sort(
-                (a, b) =>
-                    b.callOI - a.callOI
-            );
-
-    // ========================================================
-    // FALLBACK TO OI CHANGE
-    // ========================================================
-
-    const putOiChangeLevels =
-        normalized
-            .filter(row =>
-                row.putOIChange > 0
-            )
-            .sort(
-                (a, b) =>
-                    b.putOIChange -
-                    a.putOIChange
-            );
-
-    const callOiChangeLevels =
-        normalized
-            .filter(row =>
-                row.callOIChange > 0
-            )
-            .sort(
-                (a, b) =>
-                    b.callOIChange -
-                    a.callOIChange
-            );
-
-    const oiSupport1 =
-        putOiLevels[0]?.strike ||
-        putOiChangeLevels[0]?.strike ||
-        directSupport1 ||
-        0;
-
-    const oiSupport2 =
-        putOiLevels[1]?.strike ||
-        putOiChangeLevels[1]?.strike ||
-        directSupport2 ||
-        0;
-
-    const oiResistance1 =
-        callOiLevels[0]?.strike ||
-        callOiChangeLevels[0]?.strike ||
-        directResistance1 ||
-        0;
-
-    const oiResistance2 =
-        callOiLevels[1]?.strike ||
-        callOiChangeLevels[1]?.strike ||
-        directResistance2 ||
-        0;
+    const supportCandidates = uniqueSorted([...supports, ...supportChanges]).sort((a, b) => b - a);
+    const resistanceCandidates = uniqueSorted([...resistances, ...resistanceChanges]).sort((a, b) => a - b);
 
     return {
-
-        oiSupport1:
-            Number(
-                oiSupport1.toFixed(2)
-            ),
-
-        oiSupport2:
-            Number(
-                oiSupport2.toFixed(2)
-            ),
-
-        oiResistance1:
-            Number(
-                oiResistance1.toFixed(2)
-            ),
-
-        oiResistance2:
-            Number(
-                oiResistance2.toFixed(2)
-            )
+        oiSupport1: round2(supportCandidates[0] || (currentPrice > 0 && directSupport1 < currentPrice ? directSupport1 : 0)),
+        oiSupport2: round2(supportCandidates[1] || (currentPrice > 0 && directSupport2 < currentPrice ? directSupport2 : 0)),
+        oiResistance1: round2(resistanceCandidates[0] || (currentPrice > 0 && directResistance1 > currentPrice ? directResistance1 : 0)),
+        oiResistance2: round2(resistanceCandidates[1] || (currentPrice > 0 && directResistance2 > currentPrice ? directResistance2 : 0))
     };
 }
 
 // ============================================================
-// MERGE PRICE + OI LEVELS
+// MERGE LEVELS
 // ============================================================
 
-function calculateSupportResistance(
-    candles,
-    oiData = null
-) {
-
-    const priceLevels =
-        calculatePriceActionLevels(
-            candles
-        );
-
-    const oiLevels =
-        calculateOILevels(
-            oiData
-        );
+function calculateSupportResistance(candles, oiData = null) {
+    const currentPrice = getCurrentPrice(candles);
+    const priceLevels = calculatePriceActionLevels(candles);
+    const oiLevels = calculateOILevels(oiData, currentPrice);
 
     return {
-
-        // ----------------------------------------------------
-        // PRICE ACTION
-        // ----------------------------------------------------
-
-        support1:
-            priceLevels.support1,
-
-        support2:
-            priceLevels.support2,
-
-        resistance1:
-            priceLevels.resistance1,
-
-        resistance2:
-            priceLevels.resistance2,
-
-        // ----------------------------------------------------
-        // OI LEVELS
-        // ----------------------------------------------------
-
-        oiSupport1:
-            oiLevels.oiSupport1,
-
-        oiSupport2:
-            oiLevels.oiSupport2,
-
-        oiResistance1:
-            oiLevels.oiResistance1,
-
-        oiResistance2:
-            oiLevels.oiResistance2
+        ...priceLevels,
+        ...oiLevels,
+        currentPrice,
+        // Explicit market-structure arrays make downstream selection safer.
+        supportLevels: uniqueSorted([priceLevels.support1, priceLevels.support2, oiLevels.oiSupport1, oiLevels.oiSupport2])
+            .filter(v => v < currentPrice).sort((a, b) => b - a),
+        resistanceLevels: uniqueSorted([priceLevels.resistance1, priceLevels.resistance2, oiLevels.oiResistance1, oiLevels.oiResistance2])
+            .filter(v => v > currentPrice).sort((a, b) => a - b)
     };
 }
 
-// ============================================================
-// GET BEST SUPPORT FOR CALL
-// ============================================================
-
-function getBestCallSupport(
-    entry,
-    levels
-) {
-
+function getBestCallSupport(entry, levels) {
     const candidates = [
-
-        Number(levels?.oiSupport1) || 0,
-        Number(levels?.oiSupport2) || 0,
-        Number(levels?.support1) || 0,
-        Number(levels?.support2) || 0
-
-    ]
-        .filter(level =>
-            level > 0 &&
-            level < entry
-        )
-        .sort(
-            (a, b) =>
-                b - a
-        );
-
+        ...(Array.isArray(levels?.supportLevels) ? levels.supportLevels : []),
+        levels?.oiSupport1, levels?.oiSupport2, levels?.support1, levels?.support2
+    ].map(toNumber).filter(v => v > 0 && v < entry).sort((a, b) => b - a);
     return candidates[0] || 0;
 }
 
-// ============================================================
-// GET BEST RESISTANCE FOR CALL
-// ============================================================
-
-function getBestCallResistance(
-    entry,
-    levels
-) {
-
+function getBestCallResistance(entry, levels) {
     const candidates = [
-
-        Number(levels?.oiResistance1) || 0,
-        Number(levels?.oiResistance2) || 0,
-        Number(levels?.resistance1) || 0,
-        Number(levels?.resistance2) || 0
-
-    ]
-        .filter(level =>
-            level > entry
-        )
-        .sort(
-            (a, b) =>
-                a - b
-        );
-
+        ...(Array.isArray(levels?.resistanceLevels) ? levels.resistanceLevels : []),
+        levels?.oiResistance1, levels?.oiResistance2, levels?.resistance1, levels?.resistance2
+    ].map(toNumber).filter(v => v > entry).sort((a, b) => a - b);
     return candidates[0] || 0;
 }
 
-// ============================================================
-// GET BEST RESISTANCE FOR PUT
-// ============================================================
-
-function getBestPutResistance(
-    entry,
-    levels
-) {
-
-    const candidates = [
-
-        Number(levels?.oiResistance1) || 0,
-        Number(levels?.oiResistance2) || 0,
-        Number(levels?.resistance1) || 0,
-        Number(levels?.resistance2) || 0
-
-    ]
-        .filter(level =>
-            level > entry
-        )
-        .sort(
-            (a, b) =>
-                a - b
-        );
-
-    return candidates[0] || 0;
+function getBestPutResistance(entry, levels) {
+    return getBestCallResistance(entry, levels);
 }
 
-// ============================================================
-// GET BEST SUPPORT FOR PUT
-// ============================================================
-
-function getBestPutSupport(
-    entry,
-    levels
-) {
-
-    const candidates = [
-
-        Number(levels?.oiSupport1) || 0,
-        Number(levels?.oiSupport2) || 0,
-        Number(levels?.support1) || 0,
-        Number(levels?.support2) || 0
-
-    ]
-        .filter(level =>
-            level > 0 &&
-            level < entry
-        )
-        .sort(
-            (a, b) =>
-                b - a
-        );
-
-    return candidates[0] || 0;
+function getBestPutSupport(entry, levels) {
+    return getBestCallSupport(entry, levels);
 }
-
-// ============================================================
-// EXPORT
-// ============================================================
 
 module.exports = {
-
     calculateSupportResistance,
-
     calculatePriceActionLevels,
-
     calculateOILevels,
-
     getBestCallSupport,
-
     getBestCallResistance,
-
     getBestPutSupport,
-
     getBestPutResistance
-
 };
