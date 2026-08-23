@@ -2,13 +2,13 @@ const axios = require("axios");
 const config = require("./config");
 
 // ============================================================
-// V5 STRATEGY SHEETS
+// V6 STRATEGY SHEETS
 // ============================================================
 // EQUITY       -> qualified stock setups / audit
 // CALL_OPTIONS -> all CALL option candidates
 // PUT_OPTIONS  -> all PUT option candidates
-// Strategy sheets are sent in ONE webhook request so Apps Script
-// uses one lock cycle and updates all three sheets together.
+// Uses only Apps Script actions supported by Code.gs:
+// replaceSheet / appendRows.
 // ============================================================
 
 const TIMEOUT = 120000;
@@ -122,18 +122,25 @@ function buildRows(rows, columns) {
     );
 }
 
-async function postStrategySheets(payload) {
+async function postSheet(sheet, headers, rows) {
     const url = getWebhookUrl();
     if (!url) throw new Error("Google Sheet webhook URL is missing.");
 
-    const response = await axios.post(url, payload, {
+    const response = await axios.post(url, {
+        action: "replaceSheet",
+        sheet,
+        clearFirst: true,
+        headers,
+        rows,
+        timestamp: new Date().toISOString()
+    }, {
         timeout: TIMEOUT,
         headers: { "Content-Type": "application/json" }
     });
 
     if (response?.data?.success === false) {
         throw new Error(
-            `Google Sheets rejected strategy sheets: ${response.data.error || "unknown error"}`
+            `Google Sheets rejected ${sheet}: ${response.data.error || "unknown error"}`
         );
     }
 
@@ -162,22 +169,20 @@ async function updateStrategySheets(scannerData, optionDecisions) {
         OPTION_COLUMNS
     );
 
-    const result = await postStrategySheets({
-        action: "replaceStrategySheets",
-        timestamp: new Date().toISOString(),
-        sheets: {
-            EQUITY: { headers: EQUITY_COLUMNS, rows: equityRows },
-            CALL_OPTIONS: { headers: OPTION_COLUMNS, rows: callRows },
-            PUT_OPTIONS: { headers: OPTION_COLUMNS, rows: putRows }
-        }
-    });
+    // IMPORTANT: sequential requests so Apps Script's script lock is never
+    // contended by three simultaneous strategy-sheet writes.
+    const equity = await postSheet("EQUITY", EQUITY_COLUMNS, equityRows);
+    const calls = await postSheet("CALL_OPTIONS", OPTION_COLUMNS, callRows);
+    const puts = await postSheet("PUT_OPTIONS", OPTION_COLUMNS, putRows);
 
     return {
         success: true,
         equityRows: equityRows.length,
         callRows: callRows.length,
         putRows: putRows.length,
-        ...result
+        equity,
+        calls,
+        puts
     };
 }
 
