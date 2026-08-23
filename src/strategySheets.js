@@ -4,18 +4,16 @@ const config = require("./config");
 // ============================================================
 // V4 STRATEGY SHEETS
 // ============================================================
-// Writes three separate strategy views through the same Google
-// Apps Script webhook used by googleSheet.js:
 //
-//   EQUITY       -> underlying stock setups / audit
-//   CALL_OPTIONS -> CE/CALL option candidates
-//   PUT_OPTIONS  -> PE/PUT option candidates
+//   EQUITY       -> qualified stock setups / audit (max 20)
+//   CALL_OPTIONS -> CALL option candidates
+//   PUT_OPTIONS  -> PUT option candidates
 //
-// No trading/filtering logic is changed here. This module only
-// separates already-prepared scanner/option results for Sheets.
+// SCANNER and ACCURACY are handled by googleSheet.js.
 // ============================================================
 
 const TIMEOUT = 30000;
+const EQUITY_MAX_ROWS = 20;
 
 const EQUITY_COLUMNS = [
     "rank", "stock", "symbol", "price", "direction", "signal",
@@ -71,6 +69,12 @@ function value(row, key, aliases = []) {
     return "";
 }
 
+function getStockKey(row) {
+    return String(value(row, "stock", ["symbol", "name"]))
+        .trim()
+        .toUpperCase();
+}
+
 function normalizeType(row) {
     const raw = String(value(row, "optionType", ["optionsType", "type", "instrument_type"]))
         .trim().toUpperCase();
@@ -89,14 +93,18 @@ function confidence(row) {
     return Number.isFinite(n) ? n : 0;
 }
 
+function scannerScore(row) {
+    const n = Number(value(row, "rankingScore", ["finalScore", "aiFinalScore", "score"]));
+    return Number.isFinite(n) ? n : 0;
+}
+
 function sortCandidates(rows) {
     return [...rows].sort((a, b) => {
         const d = decisionRank(b) - decisionRank(a);
         if (d) return d;
         const c = confidence(b) - confidence(a);
         if (c) return c;
-        const fs = Number(b.finalScore ?? b.score ?? 0) - Number(a.finalScore ?? a.score ?? 0);
-        return Number.isFinite(fs) ? fs : 0;
+        return scannerScore(b) - scannerScore(a);
     });
 }
 
@@ -131,7 +139,19 @@ async function updateStrategySheets(scannerData, optionDecisions) {
     const scannerRows = Array.isArray(scannerData) ? scannerData : [];
     const options = Array.isArray(optionDecisions) ? optionDecisions : [];
 
-    const equityRows = buildRows(scannerRows, EQUITY_COLUMNS);
+    // EQUITY must contain the same qualified stock set that feeds the
+    // option decision engine, not the complete 114-stock accuracy dataset.
+    // optionDecisions are one-per-qualified-stock, so use their stock keys
+    // to select the corresponding underlying scanner rows.
+    const qualifiedKeys = new Set(
+        options.map(getStockKey).filter(Boolean)
+    );
+
+    const qualifiedEquityRows = scannerRows
+        .filter(row => qualifiedKeys.has(getStockKey(row)))
+        .slice(0, EQUITY_MAX_ROWS);
+
+    const equityRows = buildRows(qualifiedEquityRows, EQUITY_COLUMNS);
     const callRows = buildRows(options.filter(row => normalizeType(row) === "CALL"), OPTION_COLUMNS);
     const putRows = buildRows(options.filter(row => normalizeType(row) === "PUT"), OPTION_COLUMNS);
 
