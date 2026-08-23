@@ -2,8 +2,13 @@ name: AI Smart Scanner
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: "*/30 * * * *"
+    # 09:15, 09:45, 10:15, 10:45 ... 14:45 IST
+    - cron: "15,45 3-8 * * 1-5"
+
+    # 15:15 IST
+    - cron: "45 9 * * 1-5"
 
 jobs:
   scanner:
