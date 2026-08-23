@@ -36,6 +36,52 @@ function selectDashboardRows(rows = []) {
         .slice(0, DASHBOARD_MAX_ROWS);
 }
 
+function buildScannerStatus({
+    status = "SUCCESS",
+    startedAt,
+    universe = "ALL",
+    broker = process.env.BROKER || "UPSTOX",
+    scanned = 0,
+    successfulScans = 0,
+    failedScans = 0,
+    callCandidates = 0,
+    putCandidates = 0,
+    tradeCount = 0,
+    watchCount = 0,
+    rejectCount = 0,
+    elapsedSeconds = 0
+} = {}) {
+    const completedAt = new Date();
+    const started = startedAt instanceof Date ? startedAt : new Date(startedAt || completedAt);
+    return {
+        status: String(status).toUpperCase(),
+        lastScanTime: completedAt.toISOString(),
+        lastScanTimeIST: new Intl.DateTimeFormat("en-IN", {
+            timeZone: "Asia/Kolkata",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false
+        }).format(completedAt).replace(",", ""),
+        lastScanSource: process.env.GITHUB_ACTIONS ? "GitHub Actions" : "Local",
+        broker: String(broker || "UPSTOX").toUpperCase(),
+        universe: String(universe || "ALL").toUpperCase(),
+        stocksScanned: Number(scanned) || 0,
+        successfulScans: Number(successfulScans) || 0,
+        failedScans: Number(failedScans) || 0,
+        callCandidates: Number(callCandidates) || 0,
+        putCandidates: Number(putCandidates) || 0,
+        tradeCount: Number(tradeCount) || 0,
+        watchCount: Number(watchCount) || 0,
+        rejectCount: Number(rejectCount) || 0,
+        elapsedSeconds: Number(elapsedSeconds) || 0,
+        durationMs: Math.max(0, completedAt.getTime() - started.getTime())
+    };
+}
+
 async function postToGoogleSheet(payload) {
     const url = getGoogleSheetUrl();
     if (!url) throw new Error("Google Sheet webhook URL is not configured");
@@ -53,6 +99,7 @@ module.exports = {
     selectDashboardRows,
     isValidTradeRow,
     validatedRR,
+    buildScannerStatus,
     DASHBOARD_MIN_SCORE,
     DASHBOARD_MAX_ROWS,
     MIN_CONFIDENCE,
