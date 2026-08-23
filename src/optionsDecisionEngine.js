@@ -106,10 +106,6 @@ function getBroker() {
         : brokerModule;
 }
 
-// ============================================================
-// MARKET PRICE / ENTRY
-// ============================================================
-
 function getStockPrice(data = {}) {
     return firstPositive(
         data.price,
@@ -123,8 +119,6 @@ function getStockPrice(data = {}) {
 }
 
 function getStockEntry(data = {}, price = 0) {
-    // A supplied entry is accepted only as an existing market trigger.
-    // No percentage adjustment or synthetic price is created.
     const supplied = firstPositive(
         data.marketEntry,
         data.market_entry,
@@ -136,10 +130,6 @@ function getStockEntry(data = {}, price = 0) {
     );
     return supplied || firstPositive(price);
 }
-
-// ============================================================
-// MARKET LEVEL COLLECTION
-// ============================================================
 
 const SUPPORT_KEYS = [
     "support", "support1", "support2", "support3",
@@ -191,7 +181,6 @@ function collectValues(data, keys) {
 function collectMarketLevels(data = {}, side) {
     const keys = side === "support" ? SUPPORT_KEYS : RESISTANCE_KEYS;
     const result = [];
-
     result.push(...collectValues(data, keys));
 
     const sr = data.supportResistance || data.support_resistance || data.sr || {};
@@ -219,10 +208,6 @@ function getRealResistanceLevels(data, entry) {
         .filter(level => level > entry)
         .sort((a, b) => a - b);
 }
-
-// ============================================================
-// MARKET-STRUCTURE TRADE SETUP
-// ============================================================
 
 function calculateMarketSetup(data, entry, type) {
     const supports = getRealSupportLevels(data, entry);
@@ -263,9 +248,7 @@ function calculateMarketSetup(data, entry, type) {
 
     let reason = "VALID_MARKET_STRUCTURE";
     if (!stopLoss || !target1 || !target2) reason = "MISSING_MARKET_STRUCTURE_LEVEL";
-    else if (!validGeometry) reason = type === "CALL"
-        ? "INVALID_CALL_MARKET_GEOMETRY"
-        : "INVALID_PUT_MARKET_GEOMETRY";
+    else if (!validGeometry) reason = type === "CALL" ? "INVALID_CALL_MARKET_GEOMETRY" : "INVALID_PUT_MARKET_GEOMETRY";
     else if (!(risk > 0 && reward > 0)) reason = "INVALID_MARKET_RR";
 
     return {
@@ -288,18 +271,8 @@ function calculateMarketSetup(data, entry, type) {
     };
 }
 
-// ============================================================
-// DIRECTION
-// ============================================================
-
 function calculateDirection(data = {}, price = 0) {
-    const frames = [
-        ["dailyTrend", 12],
-        ["fourHourTrend", 8],
-        ["oneHourTrend", 14],
-        ["fifteenMinTrend", 10]
-    ];
-
+    const frames = [["dailyTrend", 12], ["fourHourTrend", 8], ["oneHourTrend", 14], ["fifteenMinTrend", 10]];
     let call = 0;
     let put = 0;
     let callEvidence = 0;
@@ -367,81 +340,44 @@ function calculateDirection(data = {}, price = 0) {
     if (call > put && call >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && callEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE) optionType = "CALL";
     if (put > call && put >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && putEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE) optionType = "PUT";
 
-    return {
-        optionType,
-        callScore: call,
-        putScore: put,
-        directionDifference: difference,
-        callEvidence,
-        putEvidence,
-        dominantScore: Math.max(call, put),
-        dominantEvidence: call > put ? callEvidence : putEvidence
-    };
+    return { optionType, callScore: call, putScore: put, directionDifference: difference, callEvidence, putEvidence, dominantScore: Math.max(call, put), dominantEvidence: call > put ? callEvidence : putEvidence };
 }
 
 function calculateMTF(type, data = {}) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
-    const values = [
-        ["DAILY", data.dailyTrend],
-        ["4H", data.fourHourTrend],
-        ["1H", data.oneHourTrend],
-        ["15M", data.fifteenMinTrend]
-    ].map(([name, value]) => ({ name, value: normalizeDirection(value) }));
-
+    const values = [["DAILY", data.dailyTrend], ["4H", data.fourHourTrend], ["1H", data.oneHourTrend], ["15M", data.fifteenMinTrend]].map(([name, value]) => ({ name, value: normalizeDirection(value) }));
     const available = values.filter(v => v.value !== "UNKNOWN");
     const aligned = available.filter(v => v.value === expected);
     const opposition = available.filter(v => v.value !== expected);
     const score = available.length ? clamp(50 + ((aligned.length - opposition.length) / available.length) * 50) : 0;
-
-    return {
-        score,
-        alignment: aligned.length,
-        opposition: opposition.length,
-        available: available.length,
-        required: 3,
-        alignedTimeframes: aligned.map(v => v.name),
-        availableTimeframes: available.map(v => v.name),
-        isAligned: aligned.length >= 3,
-        fullAlignment: available.length === 4 && aligned.length === 4
-    };
+    return { score, alignment: aligned.length, opposition: opposition.length, available: available.length, required: 3, alignedTimeframes: aligned.map(v => v.name), availableTimeframes: available.map(v => v.name), isAligned: aligned.length >= 3, fullAlignment: available.length === 4 && aligned.length === 4 };
 }
 
 function calculateTrendScore(data = {}, type) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
     let score = 50;
-    const ema5 = toNumber(data.ema5);
-    const ema9 = toNumber(data.ema9);
-    const ema20 = toNumber(data.ema20);
-    const ema50 = toNumber(data.ema50);
-
+    const ema5 = toNumber(data.ema5); const ema9 = toNumber(data.ema9); const ema20 = toNumber(data.ema20); const ema50 = toNumber(data.ema50);
     if (ema5 && ema9 && ema20 && ema50) {
         const bullish = ema5 > ema9 && ema9 > ema20 && ema20 > ema50;
         const bearish = ema5 < ema9 && ema9 < ema20 && ema20 < ema50;
         if ((expected === "BULLISH" && bullish) || (expected === "BEARISH" && bearish)) score += 35;
         if ((expected === "BULLISH" && bearish) || (expected === "BEARISH" && bullish)) score -= 35;
     }
-
     const trend = normalizeDirection(data.trend);
-    if (trend === expected) score += 15;
-    else if (trend !== "UNKNOWN") score -= 15;
+    if (trend === expected) score += 15; else if (trend !== "UNKNOWN") score -= 15;
     return clamp(score);
 }
 
 function calculateMomentumScore(data = {}, type) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
     let score = 50;
-    const rsi = toNumber(data.rsi);
-    const macd = toNumber(data.macdValue ?? data.macd);
-    const signal = toNumber(data.macdSignal);
-    const histogram = toNumber(data.histogram ?? data.macdHistogram);
-
+    const rsi = toNumber(data.rsi); const macd = toNumber(data.macdValue ?? data.macd); const signal = toNumber(data.macdSignal); const histogram = toNumber(data.histogram ?? data.macdHistogram);
     if (rsi) {
         if ((expected === "BULLISH" && rsi >= 55 && rsi <= 70) || (expected === "BEARISH" && rsi >= 30 && rsi <= 45)) score += 20;
         else if ((expected === "BULLISH" && rsi < 50) || (expected === "BEARISH" && rsi > 50)) score -= 20;
     }
     if (Number.isFinite(macd) && Number.isFinite(signal)) {
-        const bullish = macd > signal && histogram >= 0;
-        const bearish = macd < signal && histogram <= 0;
+        const bullish = macd > signal && histogram >= 0; const bearish = macd < signal && histogram <= 0;
         if ((expected === "BULLISH" && bullish) || (expected === "BEARISH" && bearish)) score += 30;
         else if ((expected === "BULLISH" && bearish) || (expected === "BEARISH" && bullish)) score -= 30;
     }
@@ -459,9 +395,7 @@ function calculateVolumeScore(data = {}) {
 }
 
 function calculateBreakoutScore(data = {}, type) {
-    const breakout = text(data.breakout);
-    const breakoutType = text(data.breakoutType);
-    const expected = type === "CALL" ? "BULL" : "BEAR";
+    const breakout = text(data.breakout); const breakoutType = text(data.breakoutType); const expected = type === "CALL" ? "BULL" : "BEAR";
     if (breakout.includes(expected) || breakoutType.includes(expected)) return 100;
     if (breakout.includes("BREAK") || breakoutType.includes("BREAK")) return 65;
     return 50;
@@ -470,12 +404,7 @@ function calculateBreakoutScore(data = {}, type) {
 function calculateRRScore(rr) {
     const value = Number(rr);
     if (!Number.isFinite(value) || value <= 0) return 0;
-    if (value >= 2.5) return 100;
-    if (value >= 2) return 90;
-    if (value >= 1.5) return 80;
-    if (value >= 1.2) return 65;
-    if (value >= 1) return 50;
-    return 25;
+    if (value >= 2.5) return 100; if (value >= 2) return 90; if (value >= 1.5) return 80; if (value >= 1.2) return 65; if (value >= 1) return 50; return 25;
 }
 
 function calculateScannerScore(data = {}, direction = {}) {
@@ -486,11 +415,7 @@ function calculateScannerScore(data = {}, direction = {}) {
 }
 
 function calculateConfidence(data, direction, mtf, rr) {
-    if (!direction.optionType) return {
-        confidence: 0, scannerScore: 0, directionScore: 0, mtfScore: 0,
-        trendScore: 0, momentumScore: 0, volumeScore: 0, breakoutScore: 0, rrScore: 0
-    };
-
+    if (!direction.optionType) return { confidence: 0, scannerScore: 0, directionScore: 0, mtfScore: 0, trendScore: 0, momentumScore: 0, volumeScore: 0, breakoutScore: 0, rrScore: 0 };
     const scannerScore = calculateScannerScore(data, direction);
     const directionScore = direction.optionType === "CALL" ? direction.callScore : direction.putScore;
     const trendScore = calculateTrendScore(data, direction.optionType);
@@ -499,51 +424,20 @@ function calculateConfidence(data, direction, mtf, rr) {
     const breakoutScore = calculateBreakoutScore(data, direction.optionType);
     const rrScore = calculateRRScore(rr);
     const w = ENGINE_CONFIG.CONFIDENCE_WEIGHTS;
-
     let confidence = scannerScore * w.scanner + clamp(directionScore) * w.direction + mtf.score * w.mtf + trendScore * w.trend + momentumScore * w.momentum + volumeScore * w.volume + breakoutScore * w.breakout + rrScore * w.rr;
-
     if (direction.dominantEvidence < 3) confidence -= 15;
     if (direction.directionDifference < 10) confidence -= 15;
     if (mtf.available === 0) confidence -= 20;
     if (mtf.alignment < 2) confidence -= 8;
     if (rr < 1.2) confidence -= 10;
-
-    return {
-        confidence: Math.round(clamp(confidence)),
-        scannerScore: Math.round(scannerScore),
-        directionScore: Math.round(clamp(directionScore)),
-        mtfScore: Math.round(mtf.score),
-        trendScore: Math.round(trendScore),
-        momentumScore: Math.round(momentumScore),
-        volumeScore: Math.round(volumeScore),
-        breakoutScore: Math.round(breakoutScore),
-        rrScore: Math.round(rrScore)
-    };
+    return { confidence: Math.round(clamp(confidence)), scannerScore: Math.round(scannerScore), directionScore: Math.round(clamp(directionScore)), mtfScore: Math.round(mtf.score), trendScore: Math.round(trendScore), momentumScore: Math.round(momentumScore), volumeScore: Math.round(volumeScore), breakoutScore: Math.round(breakoutScore), rrScore: Math.round(rrScore) };
 }
 
 function evaluateQualityGates(data, direction, mtf, rr, confidence) {
     const scannerScore = calculateScannerScore(data, direction);
-    const gates = {
-        direction: !!direction.optionType,
-        directionEvidence: direction.dominantEvidence >= 3,
-        directionDifference: direction.directionDifference >= 10,
-        mtf: mtf.alignment >= 2,
-        tradeMTF: mtf.alignment >= 3,
-        riskReward: rr >= 1.2,
-        tradeRiskReward: rr >= 1.5,
-        confidence: confidence >= 65,
-        tradeConfidence: confidence >= 82,
-        scanner: scannerScore >= 55,
-        tradeScanner: scannerScore >= 70
-    };
+    const gates = { direction: !!direction.optionType, directionEvidence: direction.dominantEvidence >= 3, directionDifference: direction.directionDifference >= 10, mtf: mtf.alignment >= 2, tradeMTF: mtf.alignment >= 3, riskReward: rr >= 1.2, tradeRiskReward: rr >= 1.5, confidence: confidence >= 65, tradeConfidence: confidence >= 82, scanner: scannerScore >= 55, tradeScanner: scannerScore >= 70 };
     const failedGates = Object.entries(gates).filter(([, ok]) => !ok).map(([key]) => key);
-    return {
-        ...gates,
-        passedCount: Object.values(gates).filter(Boolean).length,
-        totalCount: Object.keys(gates).length,
-        failedGates,
-        allPassed: failedGates.length === 0
-    };
+    return { ...gates, passedCount: Object.values(gates).filter(Boolean).length, totalCount: Object.keys(gates).length, failedGates, allPassed: failedGates.length === 0 };
 }
 
 // ============================================================
@@ -567,17 +461,76 @@ function getRecommendedStrike(price, type) {
     return { strike: Math.max(interval, strike), interval };
 }
 
+// Normalize both the broker-neutral contract shape and the native
+// Upstox /v2/option/contract response shape. The latter uses:
+//   instrument_key, trading_symbol, strike_price, expiry, instrument_type
+// while the decision engine works with:
+//   instrumentKey, tradingSymbol, strike, expiry, optionType
 function normalizeOptionContract(contract, fallbackStrike = 0) {
     if (!contract || typeof contract !== "object") return null;
-    const instrumentKey = firstValue(contract.instrumentKey, contract.instrument_key, contract.instrument_token, contract.instrumentToken, contract.exchange_token, contract.exchangeToken, contract.token);
-    const tradingSymbol = firstValue(contract.tradingSymbol, contract.trading_symbol, contract.symbol, contract.name);
-    const strike = toNumber(firstValue(contract.strike, contract.strikePrice, contract.strike_price, contract.strike_price_value, fallbackStrike));
-    const expiry = firstValue(contract.expiry, contract.expiryDate, contract.expiry_date, contract.expiry_date_time);
-    const expiryDays = toNumber(firstValue(contract.expiryDays, contract.expiry_days, contract.daysToExpiry));
-    let optionType = normalizeOptionType(firstValue(contract.optionType, contract.option_type, contract.instrumentType, contract.option, ""));
+
+    const instrumentKey = firstValue(
+        contract.instrumentKey,
+        contract.instrument_key,
+        contract.instrument_token,
+        contract.instrumentToken,
+        contract.exchange_token,
+        contract.exchangeToken,
+        contract.token
+    );
+
+    const tradingSymbol = firstValue(
+        contract.tradingSymbol,
+        contract.trading_symbol,
+        contract.symbol,
+        contract.name
+    );
+
+    const strike = toNumber(firstValue(
+        contract.strike,
+        contract.strikePrice,
+        contract.strike_price,
+        contract.strike_price_value,
+        fallbackStrike
+    ));
+
+    const expiry = firstValue(
+        contract.expiry,
+        contract.expiryDate,
+        contract.expiry_date,
+        contract.expiry_date_time
+    );
+
+    const expiryDays = toNumber(firstValue(
+        contract.expiryDays,
+        contract.expiry_days,
+        contract.daysToExpiry
+    ));
+
+    let optionType = normalizeOptionType(firstValue(
+        contract.optionType,
+        contract.option_type,
+        contract.instrumentType,
+        contract.instrument_type,
+        contract.option,
+        ""
+    ));
+
     if (!optionType && tradingSymbol) optionType = normalizeOptionType(tradingSymbol);
+
     if ((!instrumentKey && !tradingSymbol) || strike <= 0) return null;
-    return { ...contract, instrumentKey, tradingSymbol, strike, expiry, expiryDays, optionType, lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize), tickSize: firstValue(contract.tickSize, contract.tick_size) };
+
+    return {
+        ...contract,
+        instrumentKey,
+        tradingSymbol,
+        strike,
+        expiry,
+        expiryDays,
+        optionType,
+        lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize),
+        tickSize: firstValue(contract.tickSize, contract.tick_size)
+    };
 }
 
 function expiryDaysFromContract(contract) {
@@ -658,23 +611,14 @@ async function resolveOptionQuote(contract) {
     return null;
 }
 
-// ============================================================
-// DECISION
-// ============================================================
-
 function getDecision(direction, mtf, rr, confidence, gates, contract, quote, marketSetup) {
     if (!direction.optionType) return { decision: "REJECT", rating: "NO DIRECTION", reason: "Directional evidence is insufficient." };
     if (!marketSetup.valid) return { decision: "REJECT", rating: marketSetup.reason, reason: "Stock setup rejected because genuine market levels do not form valid risk/reward geometry." };
     if (!contract) return { decision: "REJECT", rating: "NO CONTRACT", reason: "No valid option contract with required side and expiry." };
     if (!quote) return { decision: "REJECT", rating: "NO LTP", reason: "Real option contract found but live option LTP is unavailable." };
     if (rr < ENGINE_CONFIG.WATCH_RR) return { decision: "REJECT", rating: "LOW_RR", reason: "Underlying market-structure risk/reward is below minimum." };
-
-    if (confidence >= ENGINE_CONFIG.TRADE_CONFIDENCE && gates.tradeMTF && gates.tradeRiskReward && gates.tradeConfidence && gates.tradeScanner && gates.directionEvidence && gates.directionDifference) {
-        return { decision: "TRADE", rating: "A", reason: "Market structure, direction, MTF, risk/reward, confidence and live option data are aligned." };
-    }
-    if (confidence >= ENGINE_CONFIG.WATCH_CONFIDENCE && gates.mtf && gates.riskReward) {
-        return { decision: "WATCH", rating: "B", reason: "Valid market-structure setup but not all TRADE gates are met." };
-    }
+    if (confidence >= ENGINE_CONFIG.TRADE_CONFIDENCE && gates.tradeMTF && gates.tradeRiskReward && gates.tradeConfidence && gates.tradeScanner && gates.directionEvidence && gates.directionDifference) return { decision: "TRADE", rating: "A", reason: "Market structure, direction, MTF, risk/reward, confidence and live option data are aligned." };
+    if (confidence >= ENGINE_CONFIG.WATCH_CONFIDENCE && gates.mtf && gates.riskReward) return { decision: "WATCH", rating: "B", reason: "Valid market-structure setup but not all TRADE gates are met." };
     return { decision: "REJECT", rating: "C", reason: "Setup does not satisfy minimum quality gates." };
 }
 
@@ -682,49 +626,12 @@ async function makeOptionDecision(data = {}) {
     const symbol = firstValue(data.symbol, data.stock, data.name);
     const price = getStockPrice(data);
 
-    if (!symbol || price <= 0) {
-        return { ...data, symbol, direction: null, optionType: null, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: "INVALID_STOCK_DATA", optionsReason: "INVALID_STOCK_DATA", failedGates: ["symbol", "price"] };
-    }
+    if (!symbol || price <= 0) return { ...data, symbol, direction: null, optionType: null, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: "INVALID_STOCK_DATA", optionsReason: "INVALID_STOCK_DATA", failedGates: ["symbol", "price"] };
 
     const direction = calculateDirection(data, price);
 
     if (!direction.optionType) {
-        return {
-            ...data,
-            symbol,
-            price,
-            direction: "NO DIRECTION",
-            finalDirection: null,
-            optionType: null,
-            callScore: direction.callScore,
-            putScore: direction.putScore,
-            scoreDifference: direction.directionDifference,
-            callEvidence: direction.callEvidence,
-            putEvidence: direction.putEvidence,
-            entry: 0,
-            stopLoss: 0,
-            target1: 0,
-            target2: 0,
-            stockEntry: 0,
-            stockStopLoss: 0,
-            stockTarget1: 0,
-            stockTarget2: 0,
-            riskReward: 0,
-            stockRiskReward: 0,
-            confidence: 0,
-            optionsConfidence: 0,
-            decision: "REJECT",
-            optionsDecision: "REJECT",
-            rating: "NO DIRECTION",
-            optionsRating: "NO DIRECTION",
-            reason: "Directional evidence is insufficient.",
-            optionsReason: "Directional evidence is insufficient.",
-            contractAvailable: false,
-            optionPriceAvailable: false,
-            optionSetupAvailable: false,
-            levelsSource: "MARKET_STRUCTURE_ONLY",
-            failedGates: ["direction"]
-        };
+        return { ...data, symbol, price, direction: "NO DIRECTION", finalDirection: null, optionType: null, callScore: direction.callScore, putScore: direction.putScore, scoreDifference: direction.directionDifference, callEvidence: direction.callEvidence, putEvidence: direction.putEvidence, entry: 0, stopLoss: 0, target1: 0, target2: 0, stockEntry: 0, stockStopLoss: 0, stockTarget1: 0, stockTarget2: 0, riskReward: 0, stockRiskReward: 0, confidence: 0, optionsConfidence: 0, decision: "REJECT", optionsDecision: "REJECT", rating: "NO DIRECTION", optionsRating: "NO DIRECTION", reason: "Directional evidence is insufficient.", optionsReason: "Directional evidence is insufficient.", contractAvailable: false, optionPriceAvailable: false, optionSetupAvailable: false, levelsSource: "MARKET_STRUCTURE_ONLY", failedGates: ["direction"] };
     }
 
     const type = direction.optionType;
@@ -747,157 +654,13 @@ async function makeOptionDecision(data = {}) {
     const optionTarget2 = firstPositive(data.optionTarget2, data.optionT2, data.optionMarketTarget2);
     const optionSetupAvailable = optionEntry > 0 && optionStopLoss > 0 && optionTarget1 > 0 && optionTarget2 > 0;
 
-    return {
-        ...data,
-        symbol,
-        price,
-        direction: type,
-        finalDirection: type,
-        optionType: type,
-        callScore: direction.callScore,
-        putScore: direction.putScore,
-        scoreDifference: direction.directionDifference,
-        callEvidence: direction.callEvidence,
-        putEvidence: direction.putEvidence,
-        entry: marketSetup.entry,
-        stopLoss: marketSetup.stopLoss,
-        target1: marketSetup.target1,
-        target2: marketSetup.target2,
-        stockEntry: marketSetup.entry,
-        stockStopLoss: marketSetup.stopLoss,
-        stockTarget1: marketSetup.target1,
-        stockTarget2: marketSetup.target2,
-        riskReward: marketSetup.riskReward,
-        stockRiskReward: marketSetup.riskReward,
-        risk: marketSetup.risk,
-        reward: marketSetup.reward,
-        stopSource: marketSetup.stopSource,
-        target1Source: marketSetup.target1Source,
-        target2Source: marketSetup.target2Source,
-        levelsSource: marketSetup.levelsSource,
-        supportLevels: marketSetup.supportLevels,
-        resistanceLevels: marketSetup.resistanceLevels,
-        mtfScore: mtf.score,
-        mtfAlignment: mtf.alignment,
-        mtfAligned: mtf.isAligned,
-        alignedTimeframes: mtf.alignedTimeframes,
-        mtfAvailableTimeframes: mtf.availableTimeframes,
-        mtfAvailableCount: mtf.available,
-        confidence: confidence.confidence,
-        optionsConfidence: confidence.confidence,
-        scannerScore: confidence.scannerScore,
-        directionQuality: confidence.directionScore,
-        directionScore: confidence.directionScore,
-        trendScore: confidence.trendScore,
-        momentumScore: confidence.momentumScore,
-        volumeScore: confidence.volumeScore,
-        breakoutScore: confidence.breakoutScore,
-        rrScore: confidence.rrScore,
-        recommendedStrike: strike.strike,
-        optionStrike: contract?.strike ?? strike.strike,
-        strikeInterval: strike.interval,
-        optionStrikeDifference: contract ? Math.abs(Number(contract.strike) - strike.strike) : null,
-        contractAvailable: !!contract,
-        optionSymbol: contract?.tradingSymbol ?? null,
-        tradingSymbol: contract?.tradingSymbol ?? null,
-        instrumentKey: contract?.instrumentKey ?? null,
-        optionExpiry: contract?.expiry ?? null,
-        expiry: contract?.expiry ?? null,
-        optionExpiryDays: contract ? expiryDaysFromContract(contract) : null,
-        optionLotSize: contract?.lotSize ?? null,
-        optionTickSize: contract?.tickSize ?? null,
-        optionPriceAvailable: !!quote,
-        optionLTP: optionEntry,
-        optionEntry,
-        optionStopLoss: optionSetupAvailable ? round2(optionStopLoss) : null,
-        optionTarget1: optionSetupAvailable ? round2(optionTarget1) : null,
-        optionTarget2: optionSetupAvailable ? round2(optionTarget2) : null,
-        optionSetupAvailable,
-        optionRiskReward: null,
-        oiSupport1: firstPositive(data.oiSupport1, data.oi_support1, data.putOISupport, data.putOiSupport),
-        oiSupport2: firstPositive(data.oiSupport2, data.oi_support2, data.putOISupport2, data.putOiSupport2),
-        oiResistance1: firstPositive(data.oiResistance1, data.oi_resistance1, data.callOIResistance, data.callOiResistance),
-        oiResistance2: firstPositive(data.oiResistance2, data.oi_resistance2, data.callOIResistance2, data.callOiResistance2),
-        decision: decision.decision,
-        rating: decision.rating,
-        reason: decision.reason,
-        optionsDecision: decision.decision,
-        optionsRating: decision.rating,
-        optionsReason: decision.reason,
-        qualityGates: gates,
-        failedGates: gates.failedGates,
-        failedGateCount: gates.failedGates.length,
-        diagnostic: {
-            direction,
-            mtf,
-            confidence,
-            gates,
-            marketSetup,
-            contractFound: !!contract,
-            optionQuoteFound: !!quote,
-            optionSetupFound: optionSetupAvailable
-        }
-    };
+    return { ...data, symbol, price, direction: type, finalDirection: type, optionType: type, callScore: direction.callScore, putScore: direction.putScore, scoreDifference: direction.directionDifference, callEvidence: direction.callEvidence, putEvidence: direction.putEvidence, entry: marketSetup.entry, stopLoss: marketSetup.stopLoss, target1: marketSetup.target1, target2: marketSetup.target2, stockEntry: marketSetup.entry, stockStopLoss: marketSetup.stopLoss, stockTarget1: marketSetup.target1, stockTarget2: marketSetup.target2, riskReward: marketSetup.riskReward, stockRiskReward: marketSetup.riskReward, risk: marketSetup.risk, reward: marketSetup.reward, stopSource: marketSetup.stopSource, target1Source: marketSetup.target1Source, target2Source: marketSetup.target2Source, levelsSource: marketSetup.levelsSource, supportLevels: marketSetup.supportLevels, resistanceLevels: marketSetup.resistanceLevels, mtfScore: mtf.score, mtfAlignment: mtf.alignment, mtfAligned: mtf.isAligned, alignedTimeframes: mtf.alignedTimeframes, mtfAvailableTimeframes: mtf.availableTimeframes, mtfAvailableCount: mtf.available, confidence: confidence.confidence, optionsConfidence: confidence.confidence, scannerScore: confidence.scannerScore, directionQuality: confidence.directionScore, directionScore: confidence.directionScore, trendScore: confidence.trendScore, momentumScore: confidence.momentumScore, volumeScore: confidence.volumeScore, breakoutScore: confidence.breakoutScore, rrScore: confidence.rrScore, recommendedStrike: strike.strike, optionStrike: contract?.strike ?? strike.strike, strikeInterval: strike.interval, optionStrikeDifference: contract ? Math.abs(Number(contract.strike) - strike.strike) : null, contractAvailable: !!contract, optionPriceAvailable: !!quote, optionSetupAvailable, optionSymbol: contract?.tradingSymbol || null, optionExpiry: contract?.expiry || null, optionExpiryDays: contract ? expiryDaysFromContract(contract) : null, optionInstrumentKey: contract?.instrumentKey || null, optionEntry, optionLTP: optionEntry, optionStopLoss: optionStopLoss || null, optionTarget1: optionTarget1 || null, optionTarget2: optionTarget2 || null, decision: decision.decision, optionsDecision: decision.decision, rating: decision.rating, optionsRating: decision.rating, reason: decision.reason, optionsReason: decision.reason, tradeGates: gates, failedGates: gates.failedGates, failedGateCount: gates.failedGates.length, marketSetupValid: marketSetup.valid, marketSetupReason: marketSetup.reason, contractDetails: contract ? { instrumentKey: contract.instrumentKey, tradingSymbol: contract.tradingSymbol, strike: contract.strike, optionType: contract.optionType, expiry: contract.expiry, expiryDays: expiryDaysFromContract(contract), lotSize: contract.lotSize, tickSize: contract.tickSize } : null };
 }
 
-async function generateOptionDecisions(results = []) {
-    if (!Array.isArray(results)) return [];
-    const output = [];
-    for (const data of results) {
-        try {
-            output.push(await makeOptionDecision(data));
-        } catch (error) {
-            const symbol = firstValue(data?.symbol, data?.stock, "UNKNOWN");
-            console.log(`❌ Option decision failed: ${symbol} | ${error.message}`);
-            output.push({ ...data, symbol, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: error.message, optionsReason: error.message, failedGates: ["ENGINE_ERROR"] });
-        }
-    }
-    return output;
-}
+async function evaluateOptions(data = {}) { return makeOptionDecision(data); }
 
-function sortOptionDecisions(decisions) {
-    if (!Array.isArray(decisions)) return [];
-    const rank = { TRADE: 3, WATCH: 2, REJECT: 1 };
-    return [...decisions].sort((a, b) =>
-        (rank[text(b.decision)] || 0) - (rank[text(a.decision)] || 0) ||
-        toNumber(b.confidence) - toNumber(a.confidence) ||
-        toNumber(b.riskReward) - toNumber(a.riskReward)
-    );
-}
+async function processOptions(data = {}) { return makeOptionDecision(data); }
 
-const calculateOptionsDecisions = generateOptionDecisions;
-const evaluateOptionDecision = makeOptionDecision;
-const decideOptionTrade = makeOptionDecision;
-const runOptionDecisionEngine = generateOptionDecisions;
-const processOptionDecisions = generateOptionDecisions;
+async function analyzeOptions(data = {}) { return makeOptionDecision(data); }
 
-module.exports = {
-    calculateOptionsDecisions,
-    ENGINE_CONFIG,
-    makeOptionDecision,
-    evaluateOptionDecision,
-    decideOptionTrade,
-    generateOptionDecisions,
-    runOptionDecisionEngine,
-    processOptionDecisions,
-    sortOptionDecisions,
-    calculateDirection,
-    calculateMTF,
-    calculateTrendScore,
-    calculateMomentumScore,
-    calculateVolumeScore,
-    calculateBreakoutScore,
-    calculateRRScore,
-    calculateConfidence,
-    evaluateQualityGates,
-    getRecommendedStrike,
-    getStrikeInterval,
-    normalizeOptionContract,
-    resolveOptionContract,
-    resolveOptionQuote,
-    calculateRiskReward: (entry, stopLoss, target1, type) => {
-        const risk = type === "CALL" ? entry - stopLoss : stopLoss - entry;
-        const reward = type === "CALL" ? target1 - entry : entry - target1;
-        return risk > 0 && reward > 0 ? round2(reward / risk) : 0;
-    }
-};
+module.exports = { makeOptionDecision, evaluateOptions, processOptions, analyzeOptions, resolveOptionContract, resolveOptionQuote, calculateDirection, calculateMTF, calculateMarketSetup, getRecommendedStrike, normalizeOptionContract, ENGINE_CONFIG };
