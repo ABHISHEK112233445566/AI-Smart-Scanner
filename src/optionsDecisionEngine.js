@@ -1,12 +1,21 @@
 // ============================================================
-// OPTIONS DECISION ENGINE — V14 MARKET-STRUCTURE RISK ENGINE
+// AI SMART SCANNER — OPTIONS DECISION ENGINE
+// MARKET-STRUCTURE ONLY VERSION
 // ============================================================
-// IMPORTANT:
-// - All Entry / SL / T1 / T2 / R:R values are calculated in Node.js.
-// - Google Sheets receives values only; this file creates no formulas.
-// - Market levels are preferred over arbitrary levels.
-// - ATR is used only as a Node-side safety fallback when genuine levels
-//   are unavailable or too close to the entry.
+// HARD RULES
+// 1. Entry = actual underlying market price / supplied market trigger.
+// 2. CALL SL = real support below entry.
+// 3. PUT SL = real resistance above entry.
+// 4. CALL T1 = nearest real resistance above entry.
+// 5. PUT T1 = nearest real support below entry.
+// 6. T2 = next real market level after T1.
+// 7. R:R is calculated only from those real market levels.
+// 8. NO ATR-generated price levels.
+// 9. NO percentage-generated price levels.
+// 10. NO synthetic target/stop levels.
+// 11. If market structure is missing or invalid, REJECT.
+// 12. Option premium SL/T1/T2 are NOT manufactured. They remain empty
+//     unless genuine option-market levels are supplied by the data source.
 // ============================================================
 
 const brokerModule = require("./brokers");
@@ -24,14 +33,6 @@ const ENGINE_CONFIG = Object.freeze({
     TRADE_RR: 1.5,
     WATCH_RR: 1.2,
     MIN_EXPIRY_DAYS: 7,
-    MIN_STOP_ATR_MULTIPLIER: 0.75,
-    MIN_STOP_PERCENT: 0.004,
-    MIN_TARGET_RR: 1.5,
-    MIN_TARGET_ATR_MULTIPLIER: 1.0,
-    MAX_STOP_ATR_MULTIPLIER: 2.5,
-    OPTION_STOP_PERCENT: 0.20,
-    OPTION_TARGET1_RISK_MULTIPLIER: 1,
-    OPTION_TARGET2_RISK_MULTIPLIER: 2,
     CONFIDENCE_WEIGHTS: Object.freeze({
         scanner: 0.20,
         direction: 0.25,
@@ -44,17 +45,17 @@ const ENGINE_CONFIG = Object.freeze({
     })
 });
 
-function toNumber(v, fallback = 0) {
-    const n = Number(v);
+function toNumber(value, fallback = 0) {
+    const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
 }
 
-function clamp(v, min = 0, max = 100) {
-    return Math.max(min, Math.min(max, toNumber(v)));
+function clamp(value, min = 0, max = 100) {
+    return Math.max(min, Math.min(max, toNumber(value)));
 }
 
-function text(v) {
-    return String(v ?? "").trim().toUpperCase();
+function text(value) {
+    return String(value ?? "").trim().toUpperCase();
 }
 
 function firstValue(...values) {
@@ -72,24 +73,28 @@ function firstPositive(...values) {
     return 0;
 }
 
-function uniqueSortedLevels(values) {
-    return [...new Set(
-        (values || [])
-            .map(Number)
-            .filter(v => Number.isFinite(v) && v > 0)
-            .map(v => Number(v.toFixed(2)))
-    )].sort((a, b) => a - b);
+function round2(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Number(n.toFixed(2)) : 0;
 }
 
-function normalizeDirection(v) {
-    const s = text(v);
+function uniqueLevels(values) {
+    return [...new Set((values || [])
+        .map(Number)
+        .filter(v => Number.isFinite(v) && v > 0)
+        .map(v => round2(v)))]
+        .sort((a, b) => a - b);
+}
+
+function normalizeDirection(value) {
+    const s = text(value);
     if (["BULLISH", "BULL", "LONG", "CALL", "CE", "BUY", "BUY SIGNAL", "STRONG BUY", "UP"].includes(s)) return "BULLISH";
     if (["BEARISH", "BEAR", "SHORT", "PUT", "PE", "SELL", "SELL SIGNAL", "STRONG SELL", "DOWN"].includes(s)) return "BEARISH";
     return "UNKNOWN";
 }
 
-function normalizeOptionType(v) {
-    const s = text(v);
+function normalizeOptionType(value) {
+    const s = text(value);
     if (s === "CALL" || s === "CE" || s.includes("CALL")) return "CALL";
     if (s === "PUT" || s === "PE" || s.includes("PUT")) return "PUT";
     return "";
@@ -102,485 +107,197 @@ function getBroker() {
 }
 
 // ============================================================
-// OPTION CONTRACT HELPERS
+// MARKET PRICE / ENTRY
 // ============================================================
 
-function getStrikeInterval(price) {
-    const p = Number(price);
-    if (!Number.isFinite(p) || p <= 0) return 50;
-    if (p < 500) return 10;
-    if (p < 1000) return 20;
-    if (p < 2000) return 50;
-    return 100;
-}
-
-function getRecommendedStrike(price, type) {
-    const interval = getStrikeInterval(price);
-    let strike = Math.round(Number(price) / interval) * interval;
-    if (type === "CALL") strike -= interval;
-    if (type === "PUT") strike += interval;
-    return { strike: Math.max(interval, strike), interval };
-}
-
-function normalizeOptionContract(contract, fallbackStrike = 0) {
-    if (!contract || typeof contract !== "object") return null;
-
-    const instrumentKey = firstValue(
-        contract.instrumentKey,
-        contract.instrument_key,
-        contract.instrument_token,
-        contract.instrumentToken,
-        contract.exchange_token,
-        contract.exchangeToken,
-        contract.token
-    );
-
-    const tradingSymbol = firstValue(
-        contract.tradingSymbol,
-        contract.trading_symbol,
-        contract.symbol,
-        contract.name
-    );
-
-    const strike = toNumber(firstValue(
-        contract.strike,
-        contract.strikePrice,
-        contract.strike_price,
-        contract.strike_price_value,
-        fallbackStrike
-    ));
-
-    const expiry = firstValue(
-        contract.expiry,
-        contract.expiryDate,
-        contract.expiry_date,
-        contract.expiry_date_time
-    );
-
-    const expiryDays = toNumber(firstValue(
-        contract.expiryDays,
-        contract.expiry_days,
-        contract.daysToExpiry
-    ));
-
-    let optionType = normalizeOptionType(firstValue(
-        contract.optionType,
-        contract.option_type,
-        contract.instrumentType,
-        contract.option,
-        ""
-    ));
-
-    if (!optionType && tradingSymbol) optionType = normalizeOptionType(tradingSymbol);
-    if ((!instrumentKey && !tradingSymbol) || strike <= 0) return null;
-
-    return {
-        ...contract,
-        instrumentKey,
-        tradingSymbol,
-        strike,
-        expiry,
-        expiryDays,
-        optionType,
-        lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize),
-        tickSize: firstValue(contract.tickSize, contract.tick_size)
-    };
-}
-
-function expiryDaysFromContract(contract) {
-    if (!contract) return -Infinity;
-
-    const explicit = Number(contract.expiryDays);
-    if (Number.isFinite(explicit) && explicit > 0) return explicit;
-    if (!contract.expiry) return -Infinity;
-
-    const raw = String(contract.expiry).trim();
-    let date = new Date(raw);
-
-    if (Number.isNaN(date.getTime())) {
-        const m = raw.match(/^(\d{1,2})[-\/]([A-Za-z]{3})[-\/](\d{4})$/);
-        if (m) date = new Date(`${m[1]} ${m[2]} ${m[3]} 23:59:59`);
-    }
-
-    if (Number.isNaN(date.getTime())) {
-        const m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-        if (m) date = new Date(`${m[3]}-${m[2]}-${m[1]}T23:59:59`);
-    }
-
-    if (Number.isNaN(date.getTime())) return -Infinity;
-    return (date.getTime() - Date.now()) / 86400000;
-}
-
-function contractMatches(contract, type) {
-    const expected = normalizeOptionType(type);
-    const actual = normalizeOptionType(firstValue(
-        contract?.optionType,
-        contract?.option_type,
-        contract?.instrumentType,
-        contract?.option,
-        contract?.tradingSymbol,
-        contract?.trading_symbol
-    ));
-    return !!expected && !!actual && expected === actual;
-}
-
-function validContract(contract, type) {
-    return !!contract &&
-        contractMatches(contract, type) &&
-        expiryDaysFromContract(contract) >= ENGINE_CONFIG.MIN_EXPIRY_DAYS - 0.01 &&
-        Number(contract.strike) > 0;
-}
-
-async function searchContractsDirectly(symbol, type, requestedStrike) {
-    const broker = getBroker();
-    if (!broker || typeof broker.getOptionContracts !== "function") return null;
-
-    try {
-        const raw = await broker.getOptionContracts(symbol);
-        if (!Array.isArray(raw)) return null;
-
-        const valid = raw
-            .map(contract => normalizeOptionContract(contract))
-            .filter(contract => validContract(contract, type));
-
-        if (!valid.length) return null;
-
-        valid.sort((a, b) => {
-            const expiryDifference = expiryDaysFromContract(a) - expiryDaysFromContract(b);
-            if (Math.abs(expiryDifference) > 0.25) return expiryDifference;
-            return Math.abs(a.strike - requestedStrike) - Math.abs(b.strike - requestedStrike);
-        });
-
-        const expiry = expiryDaysFromContract(valid[0]);
-        return valid
-            .filter(contract => Math.abs(expiryDaysFromContract(contract) - expiry) <= 0.25)
-            .sort((a, b) => Math.abs(a.strike - requestedStrike) - Math.abs(b.strike - requestedStrike))[0] || null;
-    } catch (error) {
-        console.log(`⚠️ Direct option search failed: ${symbol} | ${error.message}`);
-        return null;
-    }
-}
-
-async function tryOptionContract(symbol, type, strike) {
-    const broker = getBroker();
-    if (!broker || typeof broker.getOptionContract !== "function") return null;
-
-    try {
-        const contract = normalizeOptionContract(
-            await broker.getOptionContract(
-                symbol,
-                type,
-                Number(strike),
-                ENGINE_CONFIG.MIN_EXPIRY_DAYS
-            ),
-            strike
-        );
-        return validContract(contract, type) ? contract : null;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function resolveOptionContract(symbol, type, strike, interval) {
-    if (!symbol || !type || !Number.isFinite(Number(strike))) return null;
-
-    const direct = await searchContractsDirectly(symbol, type, Number(strike));
-    if (direct) return direct;
-
-    const step = Number(interval) > 0 ? Number(interval) : getStrikeInterval(strike);
-    const strikes = [...new Set([
-        strike,
-        strike - step,
-        strike + step,
-        strike - step * 2,
-        strike + step * 2
-    ].filter(v => v > 0))];
-
-    for (const candidateStrike of strikes) {
-        const contract = await tryOptionContract(symbol, type, candidateStrike);
-        if (contract) return contract;
-    }
-
-    return null;
-}
-
-function normalizeQuoteLTP(quote) {
-    if (typeof quote === "number") return quote > 0 ? quote : 0;
-    if (!quote || typeof quote !== "object") return 0;
-    return firstPositive(
-        quote.ltp,
-        quote.lastPrice,
-        quote.last_price,
-        quote.last_traded_price,
-        quote.close,
-        quote.lp
-    );
-}
-
-async function resolveOptionQuote(contract) {
-    if (!contract) return null;
-    const broker = getBroker();
-    if (!broker) return null;
-
-    const key = firstValue(
-        contract.instrumentKey,
-        contract.instrument_key,
-        contract.instrument_token,
-        contract.tradingSymbol,
-        contract.trading_symbol
-    );
-
-    if (!key) return null;
-
-    for (const method of ["getOptionQuote", "getQuote"]) {
-        if (typeof broker[method] !== "function") continue;
-        try {
-            const quote = await broker[method](key);
-            const ltp = normalizeQuoteLTP(quote);
-            if (ltp > 0) return { ...(quote && typeof quote === "object" ? quote : {}), ltp };
-        } catch (error) {
-            console.log(`⚠️ Option quote failed: ${key} | ${error.message}`);
-        }
-    }
-
-    return null;
-}
-
-// ============================================================
-// MARKET STRUCTURE
-// ============================================================
-
-const MARKET_LEVEL_KEYS = Object.freeze({
-    support: [
-        "support", "support1", "support2", "support3",
-        "s1", "s2", "s3",
-        "pivotS1", "pivotS2", "pivotS3",
-        "cprLow", "cprLower", "lowerCpr",
-        "swingLow", "swing_low",
-        "previousLow", "prevLow", "previousDayLow", "prevDayLow",
-        "recentLow", "dayLow", "low"
-    ],
-    resistance: [
-        "resistance", "resistance1", "resistance2", "resistance3",
-        "r1", "r2", "r3",
-        "pivotR1", "pivotR2", "pivotR3",
-        "cprHigh", "cprUpper", "upperCpr",
-        "swingHigh", "swing_high",
-        "previousHigh", "prevHigh", "previousDayHigh", "prevDayHigh",
-        "recentHigh", "dayHigh", "high"
-    ]
-});
-
-function collectMarketLevels(data, side) {
-    const values = [];
-
-    for (const key of MARKET_LEVEL_KEYS[side] || []) {
-        const value = data?.[key];
-        if (Array.isArray(value)) values.push(...value);
-        else if (value && typeof value === "object") values.push(...Object.values(value).flat(Infinity));
-        else values.push(value);
-    }
-
-    const extra = data?.[side === "support" ? "supportLevels" : "resistanceLevels"];
-    if (Array.isArray(extra)) values.push(...extra.flat(Infinity));
-
-    return uniqueSortedLevels(values);
-}
-
-function getStockPrice(data) {
+function getStockPrice(data = {}) {
     return firstPositive(
         data.price,
         data.ltp,
         data.lastPrice,
+        data.last_price,
         data.close,
         data.currentPrice,
         data.current_price
     );
 }
 
-function getStockEntry(data, price) {
-    // The underlying stock entry is the current validated market price.
-    // Existing entry values are accepted only when they are close to price;
-    // this prevents stale/derived entries from creating fake R:R.
-    const p = Number(price);
-    const supplied = firstPositive(data.entry, data.stockEntry, data.underlyingEntry);
-    if (!p) return supplied;
-    if (!supplied) return p;
-    const deviation = Math.abs(supplied - p) / p;
-    return deviation <= 0.015 ? supplied : p;
-}
-
-function getATR(data) {
-    return firstPositive(
-        data.atr,
-        data.ATR,
-        data.averageTrueRange,
-        data.average_true_range
+function getStockEntry(data = {}, price = 0) {
+    // A supplied entry is accepted only as an existing market trigger.
+    // No percentage adjustment or synthetic price is created.
+    const supplied = firstPositive(
+        data.marketEntry,
+        data.market_entry,
+        data.triggerPrice,
+        data.trigger_price,
+        data.entry,
+        data.stockEntry,
+        data.underlyingEntry
     );
+    return supplied || firstPositive(price);
 }
 
-function getMinimumStopDistance(data, entry) {
-    const atr = getATR(data);
-    return Math.max(
-        atr * ENGINE_CONFIG.MIN_STOP_ATR_MULTIPLIER,
-        entry * ENGINE_CONFIG.MIN_STOP_PERCENT
-    );
+// ============================================================
+// MARKET LEVEL COLLECTION
+// ============================================================
+
+const SUPPORT_KEYS = [
+    "support", "support1", "support2", "support3",
+    "s1", "s2", "s3",
+    "pivotS1", "pivotS2", "pivotS3",
+    "cprLow", "cprLower", "lowerCpr",
+    "swingLow", "swingLow1", "swingLow2", "swing_low",
+    "previousLow", "prevLow", "previousDayLow", "prevDayLow",
+    "recentLow", "dayLow",
+    "oiSupport1", "oiSupport2", "oi_support1", "oi_support2",
+    "putOISupport", "putOiSupport", "putOISupport2", "putOiSupport2"
+];
+
+const RESISTANCE_KEYS = [
+    "resistance", "resistance1", "resistance2", "resistance3",
+    "r1", "r2", "r3",
+    "pivotR1", "pivotR2", "pivotR3",
+    "cprHigh", "cprUpper", "upperCpr",
+    "swingHigh", "swingHigh1", "swingHigh2", "swing_high",
+    "previousHigh", "prevHigh", "previousDayHigh", "prevDayHigh",
+    "recentHigh", "dayHigh",
+    "oiResistance1", "oiResistance2", "oi_resistance1", "oi_resistance2",
+    "callOIResistance", "callOiResistance", "callOIResistance2", "callOiResistance2"
+];
+
+function collectValues(data, keys) {
+    const result = [];
+    if (!data || typeof data !== "object") return result;
+
+    for (const key of keys) {
+        const value = data[key];
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                if (item && typeof item === "object") {
+                    result.push(item.value, item.level, item.price, item.close);
+                } else {
+                    result.push(item);
+                }
+            }
+        } else if (value && typeof value === "object") {
+            result.push(...Object.values(value));
+        } else {
+            result.push(value);
+        }
+    }
+    return result;
 }
 
-function getMaximumStopDistance(data, entry) {
-    const atr = getATR(data);
-    const base = Math.max(
-        atr * ENGINE_CONFIG.MAX_STOP_ATR_MULTIPLIER,
-        entry * 0.012
-    );
-    return base > 0 ? base : entry * 0.012;
+function collectMarketLevels(data = {}, side) {
+    const keys = side === "support" ? SUPPORT_KEYS : RESISTANCE_KEYS;
+    const result = [];
+
+    result.push(...collectValues(data, keys));
+
+    const sr = data.supportResistance || data.support_resistance || data.sr || {};
+    result.push(...collectValues(sr, keys));
+
+    const pivot = data.pivot || data.pivots || {};
+    result.push(...collectValues(pivot, side === "support"
+        ? ["s1", "s2", "s3", "S1", "S2", "S3", "support1", "support2", "support3"]
+        : ["r1", "r2", "r3", "R1", "R2", "R3", "resistance1", "resistance2", "resistance3"]));
+
+    const explicit = data[side === "support" ? "supportLevels" : "resistanceLevels"];
+    if (Array.isArray(explicit)) result.push(...explicit);
+
+    return uniqueLevels(result);
 }
 
-function nearestValidSupport(data, entry) {
-    const minimum = getMinimumStopDistance(data, entry);
-    const maximum = getMaximumStopDistance(data, entry);
-
-    const levels = collectMarketLevels(data, "support")
-        .filter(level => level < entry && entry - level >= minimum);
-
-    if (!levels.length) return 0;
-
-    const withinRisk = levels
-        .filter(level => entry - level <= maximum)
+function getRealSupportLevels(data, entry) {
+    return collectMarketLevels(data, "support")
+        .filter(level => level > 0 && level < entry)
         .sort((a, b) => b - a);
-
-    return withinRisk[0] || levels.sort((a, b) => b - a)[0] || 0;
 }
 
-function nearestValidResistance(data, entry) {
-    const minimum = getMinimumStopDistance(data, entry);
-    const maximum = getMaximumStopDistance(data, entry);
-
-    const levels = collectMarketLevels(data, "resistance")
-        .filter(level => level > entry && level - entry >= minimum);
-
-    if (!levels.length) return 0;
-
-    const withinRisk = levels
-        .filter(level => level - entry <= maximum)
+function getRealResistanceLevels(data, entry) {
+    return collectMarketLevels(data, "resistance")
+        .filter(level => level > entry)
         .sort((a, b) => a - b);
-
-    return withinRisk[0] || levels.sort((a, b) => a - b)[0] || 0;
 }
 
-function getStockStopLoss(data, entry, type) {
-    const minimum = getMinimumStopDistance(data, entry);
-    const atr = getATR(data);
+// ============================================================
+// MARKET-STRUCTURE TRADE SETUP
+// ============================================================
+
+function calculateMarketSetup(data, entry, type) {
+    const supports = getRealSupportLevels(data, entry);
+    const resistances = getRealResistanceLevels(data, entry);
+
+    let stopLoss = 0;
+    let target1 = 0;
+    let target2 = 0;
+    let stopSource = "MARKET_STRUCTURE_REQUIRED";
+    let target1Source = "MARKET_STRUCTURE_REQUIRED";
+    let target2Source = "MARKET_STRUCTURE_REQUIRED";
 
     if (type === "CALL") {
-        const level = nearestValidSupport(data, entry);
-        if (level > 0 && entry - level >= minimum) return Number(level.toFixed(2));
-        const fallbackDistance = Math.max(atr || 0, entry * 0.006);
-        return Number((entry - fallbackDistance).toFixed(2));
+        stopLoss = supports[0] || 0;
+        target1 = resistances[0] || 0;
+        target2 = resistances.find(level => level > target1) || 0;
+        if (stopLoss) stopSource = "MARKET_SUPPORT";
+        if (target1) target1Source = "MARKET_RESISTANCE";
+        if (target2) target2Source = "NEXT_MARKET_RESISTANCE";
+    } else if (type === "PUT") {
+        stopLoss = resistances[0] || 0;
+        target1 = supports[0] || 0;
+        target2 = supports.find(level => level < target1) || 0;
+        if (stopLoss) stopSource = "MARKET_RESISTANCE";
+        if (target1) target1Source = "MARKET_SUPPORT";
+        if (target2) target2Source = "NEXT_MARKET_SUPPORT";
     }
 
-    if (type === "PUT") {
-        const level = nearestValidResistance(data, entry);
-        if (level > 0 && level - entry >= minimum) return Number(level.toFixed(2));
-        const fallbackDistance = Math.max(atr || 0, entry * 0.006);
-        return Number((entry + fallbackDistance).toFixed(2));
-    }
+    const validGeometry = type === "CALL"
+        ? stopLoss < entry && target1 > entry && target2 > target1
+        : type === "PUT"
+            ? stopLoss > entry && target1 < entry && target2 < target1
+            : false;
 
-    return 0;
-}
-
-function getRequiredTargetDistance(data, entry, stop) {
-    const risk = Math.abs(entry - stop);
-    const atr = getATR(data);
-    return Math.max(
-        risk * ENGINE_CONFIG.MIN_TARGET_RR,
-        atr * ENGINE_CONFIG.MIN_TARGET_ATR_MULTIPLIER,
-        entry * 0.006
-    );
-}
-
-function getStockTarget1(data, entry, stop, type) {
-    if (!(entry > 0 && stop > 0)) return 0;
-
-    const required = getRequiredTargetDistance(data, entry, stop);
-    const resistance = type === "CALL" ? "resistance" : "support";
-    const levels = collectMarketLevels(data, resistance);
-
-    if (type === "CALL") {
-        const candidates = levels.filter(level => level > entry && level - entry >= required);
-        if (candidates.length) return Number(candidates.sort((a, b) => a - b)[0].toFixed(2));
-        return Number((entry + required).toFixed(2));
-    }
-
-    if (type === "PUT") {
-        const candidates = levels.filter(level => level < entry && entry - level >= required);
-        if (candidates.length) return Number(candidates.sort((a, b) => b - a)[0].toFixed(2));
-        return Number((entry - required).toFixed(2));
-    }
-
-    return 0;
-}
-
-function getStockTarget2(data, entry, target1, type) {
-    if (!(target1 > 0)) return 0;
-
-    const risk = Math.abs(entry - firstPositive(data.stopLoss, data.stockStopLoss, entry));
-    const minimumStep = Math.max(risk * 0.75, entry * 0.004, getATR(data) * 0.75);
-    const resistance = type === "CALL" ? "resistance" : "support";
-    const levels = collectMarketLevels(data, resistance);
-
-    if (type === "CALL") {
-        const candidates = levels.filter(level => level > target1 && level - target1 >= minimumStep);
-        if (candidates.length) return Number(candidates.sort((a, b) => a - b)[0].toFixed(2));
-        return Number((target1 + minimumStep).toFixed(2));
-    }
-
-    if (type === "PUT") {
-        const candidates = levels.filter(level => level < target1 && target1 - level >= minimumStep);
-        if (candidates.length) return Number(candidates.sort((a, b) => b - a)[0].toFixed(2));
-        return Number((target1 - minimumStep).toFixed(2));
-    }
-
-    return 0;
-}
-
-function calculateRiskReward(entry, stopLoss, target1, type) {
     const risk = type === "CALL" ? entry - stopLoss : stopLoss - entry;
     const reward = type === "CALL" ? target1 - entry : entry - target1;
-    if (!(risk > 0 && reward > 0)) return 0;
-    return Number((reward / risk).toFixed(2));
-}
+    const riskReward = risk > 0 && reward > 0 ? round2(reward / risk) : 0;
 
-function validateStockSetup(entry, stopLoss, target1, target2, type, rr) {
-    if (!(entry > 0 && stopLoss > 0 && target1 > 0 && target2 > 0)) {
-        return { valid: false, reason: "MISSING_MARKET_LEVEL" };
-    }
+    let reason = "VALID_MARKET_STRUCTURE";
+    if (!stopLoss || !target1 || !target2) reason = "MISSING_MARKET_STRUCTURE_LEVEL";
+    else if (!validGeometry) reason = type === "CALL"
+        ? "INVALID_CALL_MARKET_GEOMETRY"
+        : "INVALID_PUT_MARKET_GEOMETRY";
+    else if (!(risk > 0 && reward > 0)) reason = "INVALID_MARKET_RR";
 
-    if (type === "CALL" && !(stopLoss < entry && target1 > entry && target2 > target1)) {
-        return { valid: false, reason: "INVALID_CALL_LEVEL_GEOMETRY" };
-    }
-
-    if (type === "PUT" && !(stopLoss > entry && target1 < entry && target2 < target1)) {
-        return { valid: false, reason: "INVALID_PUT_LEVEL_GEOMETRY" };
-    }
-
-    if (!(Number.isFinite(rr) && rr >= ENGINE_CONFIG.WATCH_RR)) {
-        return { valid: false, reason: "LOW_RR" };
-    }
-
-    return { valid: true, reason: "VALID" };
+    return {
+        valid: validGeometry && riskReward > 0,
+        entry: round2(entry),
+        stopLoss: round2(stopLoss),
+        target1: round2(target1),
+        target2: round2(target2),
+        risk: round2(risk),
+        reward: round2(reward),
+        riskReward,
+        rr: riskReward,
+        stopSource,
+        target1Source,
+        target2Source,
+        levelsSource: "MARKET_STRUCTURE_ONLY",
+        supportLevels: supports,
+        resistanceLevels: resistances,
+        reason
+    };
 }
 
 // ============================================================
-// DIRECTION / QUALITY SCORING
+// DIRECTION
 // ============================================================
 
-function calculateDirection(data, price) {
-    const timeframes = [
+function calculateDirection(data = {}, price = 0) {
+    const frames = [
         ["dailyTrend", 12],
+        ["fourHourTrend", 8],
         ["oneHourTrend", 14],
-        ["fifteenMinTrend", 10],
-        ["fourHourTrend", 8]
+        ["fifteenMinTrend", 10]
     ];
 
     let call = 0;
@@ -588,15 +305,10 @@ function calculateDirection(data, price) {
     let callEvidence = 0;
     let putEvidence = 0;
 
-    for (const [key, weight] of timeframes) {
+    for (const [key, weight] of frames) {
         const direction = normalizeDirection(data[key]);
-        if (direction === "BULLISH") {
-            call += weight;
-            callEvidence++;
-        } else if (direction === "BEARISH") {
-            put += weight;
-            putEvidence++;
-        }
+        if (direction === "BULLISH") { call += weight; callEvidence++; }
+        if (direction === "BEARISH") { put += weight; putEvidence++; }
     }
 
     const ema5 = toNumber(data.ema5);
@@ -605,102 +317,55 @@ function calculateDirection(data, price) {
     const ema50 = toNumber(data.ema50);
 
     if (ema5 && ema9 && ema20 && ema50) {
-        if (ema5 > ema9 && ema9 > ema20 && ema20 > ema50) {
-            call += 12;
-            callEvidence++;
-        } else if (ema5 < ema9 && ema9 < ema20 && ema20 < ema50) {
-            put += 12;
-            putEvidence++;
-        }
+        if (ema5 > ema9 && ema9 > ema20 && ema20 > ema50) { call += 12; callEvidence++; }
+        if (ema5 < ema9 && ema9 < ema20 && ema20 < ema50) { put += 12; putEvidence++; }
     }
 
-    if (ema20 && ema50) {
-        if (price > ema20 && price > ema50) {
-            call += 7;
-            callEvidence++;
-        } else if (price < ema20 && price < ema50) {
-            put += 7;
-            putEvidence++;
-        }
+    if (ema20 && ema50 && price) {
+        if (price > ema20 && price > ema50) { call += 7; callEvidence++; }
+        if (price < ema20 && price < ema50) { put += 7; putEvidence++; }
     }
 
     const rsi = toNumber(data.rsi);
-    if (rsi >= 55 && rsi <= 70) {
-        call += 8;
-        callEvidence++;
-    } else if (rsi >= 30 && rsi <= 45) {
-        put += 8;
-        putEvidence++;
-    }
+    if (rsi >= 55 && rsi <= 70) { call += 8; callEvidence++; }
+    if (rsi >= 30 && rsi <= 45) { put += 8; putEvidence++; }
 
     const macd = toNumber(data.macdValue ?? data.macd);
     const macdSignal = toNumber(data.macdSignal);
     const histogram = toNumber(data.histogram ?? data.macdHistogram);
-    if (macd > macdSignal && histogram >= 0) {
-        call += 8;
-        callEvidence++;
-    } else if (macd < macdSignal && histogram <= 0) {
-        put += 8;
-        putEvidence++;
+    if (Number.isFinite(macd) && Number.isFinite(macdSignal)) {
+        if (macd > macdSignal && histogram >= 0) { call += 8; callEvidence++; }
+        if (macd < macdSignal && histogram <= 0) { put += 8; putEvidence++; }
     }
 
     const adx = toNumber(data.adx);
     const pdi = toNumber(data.pdi);
     const mdi = toNumber(data.mdi);
     if (adx >= 20) {
-        if (pdi > mdi) {
-            call += 7;
-            callEvidence++;
-        } else if (mdi > pdi) {
-            put += 7;
-            putEvidence++;
-        }
+        if (pdi > mdi) { call += 7; callEvidence++; }
+        if (mdi > pdi) { put += 7; putEvidence++; }
     }
 
     const vwap = toNumber(data.vwap);
-    if (vwap) {
-        if (price > vwap) {
-            call += 5;
-            callEvidence++;
-        } else if (price < vwap) {
-            put += 5;
-            putEvidence++;
-        }
-    }
+    if (vwap && price > vwap) { call += 5; callEvidence++; }
+    if (vwap && price < vwap) { put += 5; putEvidence++; }
 
     const supertrend = normalizeDirection(data.supertrend);
-    if (supertrend === "BULLISH") {
-        call += 5;
-        callEvidence++;
-    } else if (supertrend === "BEARISH") {
-        put += 5;
-        putEvidence++;
-    }
+    if (supertrend === "BULLISH") { call += 5; callEvidence++; }
+    if (supertrend === "BEARISH") { put += 5; putEvidence++; }
 
     const signal = normalizeDirection(data.signal);
-    if (signal === "BULLISH") {
-        call += 5;
-        callEvidence++;
-    } else if (signal === "BEARISH") {
-        put += 5;
-        putEvidence++;
-    }
+    if (signal === "BULLISH") { call += 5; callEvidence++; }
+    if (signal === "BEARISH") { put += 5; putEvidence++; }
 
     const trend = normalizeDirection(data.trend);
-    if (trend === "BULLISH") {
-        call += 3;
-        callEvidence++;
-    } else if (trend === "BEARISH") {
-        put += 3;
-        putEvidence++;
-    }
+    if (trend === "BULLISH") { call += 3; callEvidence++; }
+    if (trend === "BEARISH") { put += 3; putEvidence++; }
 
     const difference = Math.abs(call - put);
-    const optionType = call > put && call >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && callEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE
-        ? "CALL"
-        : put > call && put >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && putEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE
-            ? "PUT"
-            : null;
+    let optionType = null;
+    if (call > put && call >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && callEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE) optionType = "CALL";
+    if (put > call && put >= ENGINE_CONFIG.MIN_DIRECTION_SCORE && difference >= ENGINE_CONFIG.MIN_DIRECTION_DIFFERENCE && putEvidence >= ENGINE_CONFIG.MIN_DIRECTION_EVIDENCE) optionType = "PUT";
 
     return {
         optionType,
@@ -714,7 +379,7 @@ function calculateDirection(data, price) {
     };
 }
 
-function calculateMTF(type, data) {
+function calculateMTF(type, data = {}) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
     const values = [
         ["DAILY", data.dailyTrend],
@@ -723,12 +388,10 @@ function calculateMTF(type, data) {
         ["15M", data.fifteenMinTrend]
     ].map(([name, value]) => ({ name, value: normalizeDirection(value) }));
 
-    const available = values.filter(item => item.value !== "UNKNOWN");
-    const aligned = available.filter(item => item.value === expected);
-    const opposition = available.filter(item => item.value !== expected);
-    const score = available.length
-        ? clamp(((aligned.length - opposition.length) / available.length) * 50 + 50)
-        : 0;
+    const available = values.filter(v => v.value !== "UNKNOWN");
+    const aligned = available.filter(v => v.value === expected);
+    const opposition = available.filter(v => v.value !== expected);
+    const score = available.length ? clamp(50 + ((aligned.length - opposition.length) / available.length) * 50) : 0;
 
     return {
         score,
@@ -736,17 +399,16 @@ function calculateMTF(type, data) {
         opposition: opposition.length,
         available: available.length,
         required: 3,
-        alignedTimeframes: aligned.map(item => item.name),
-        availableTimeframes: available.map(item => item.name),
+        alignedTimeframes: aligned.map(v => v.name),
+        availableTimeframes: available.map(v => v.name),
         isAligned: aligned.length >= 3,
         fullAlignment: available.length === 4 && aligned.length === 4
     };
 }
 
-function calculateTrendScore(data, type) {
+function calculateTrendScore(data = {}, type) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
     let score = 50;
-
     const ema5 = toNumber(data.ema5);
     const ema9 = toNumber(data.ema9);
     const ema20 = toNumber(data.ema20);
@@ -756,20 +418,18 @@ function calculateTrendScore(data, type) {
         const bullish = ema5 > ema9 && ema9 > ema20 && ema20 > ema50;
         const bearish = ema5 < ema9 && ema9 < ema20 && ema20 < ema50;
         if ((expected === "BULLISH" && bullish) || (expected === "BEARISH" && bearish)) score += 35;
-        else if ((expected === "BULLISH" && bearish) || (expected === "BEARISH" && bullish)) score -= 35;
+        if ((expected === "BULLISH" && bearish) || (expected === "BEARISH" && bullish)) score -= 35;
     }
 
     const trend = normalizeDirection(data.trend);
     if (trend === expected) score += 15;
     else if (trend !== "UNKNOWN") score -= 15;
-
     return clamp(score);
 }
 
-function calculateMomentumScore(data, type) {
+function calculateMomentumScore(data = {}, type) {
     const expected = type === "CALL" ? "BULLISH" : "BEARISH";
     let score = 50;
-
     const rsi = toNumber(data.rsi);
     const macd = toNumber(data.macdValue ?? data.macd);
     const signal = toNumber(data.macdSignal);
@@ -779,18 +439,16 @@ function calculateMomentumScore(data, type) {
         if ((expected === "BULLISH" && rsi >= 55 && rsi <= 70) || (expected === "BEARISH" && rsi >= 30 && rsi <= 45)) score += 20;
         else if ((expected === "BULLISH" && rsi < 50) || (expected === "BEARISH" && rsi > 50)) score -= 20;
     }
-
     if (Number.isFinite(macd) && Number.isFinite(signal)) {
         const bullish = macd > signal && histogram >= 0;
         const bearish = macd < signal && histogram <= 0;
         if ((expected === "BULLISH" && bullish) || (expected === "BEARISH" && bearish)) score += 30;
         else if ((expected === "BULLISH" && bearish) || (expected === "BEARISH" && bullish)) score -= 30;
     }
-
     return clamp(score);
 }
 
-function calculateVolumeScore(data) {
+function calculateVolumeScore(data = {}) {
     const rvol = toNumber(data.rvol);
     if (rvol <= 0) return 50;
     if (rvol >= 2) return 100;
@@ -800,11 +458,10 @@ function calculateVolumeScore(data) {
     return 35;
 }
 
-function calculateBreakoutScore(data, type) {
+function calculateBreakoutScore(data = {}, type) {
     const breakout = text(data.breakout);
     const breakoutType = text(data.breakoutType);
     const expected = type === "CALL" ? "BULL" : "BEAR";
-
     if (breakout.includes(expected) || breakoutType.includes(expected)) return 100;
     if (breakout.includes("BREAK") || breakoutType.includes("BREAK")) return 65;
     return 50;
@@ -821,38 +478,18 @@ function calculateRRScore(rr) {
     return 25;
 }
 
-function calculateScannerScore(data, direction) {
-    const raw = firstPositive(
-        data.aiFinalScore,
-        data.finalScore,
-        data.score,
-        data.scannerScore,
-        data.rankingScore
-    );
-
-    if (raw <= 0 || !direction?.optionType) return 0;
-
-    const directionScore = direction.optionType === "CALL"
-        ? direction.callScore
-        : direction.putScore;
-
+function calculateScannerScore(data = {}, direction = {}) {
+    const raw = firstPositive(data.aiFinalScore, data.finalScore, data.score, data.scannerScore, data.rankingScore);
+    if (raw <= 0 || !direction.optionType) return 0;
+    const directionScore = direction.optionType === "CALL" ? direction.callScore : direction.putScore;
     return clamp(clamp(raw) * 0.70 + clamp(directionScore) * 0.30);
 }
 
 function calculateConfidence(data, direction, mtf, rr) {
-    if (!direction.optionType) {
-        return {
-            confidence: 0,
-            scannerScore: 0,
-            directionScore: 0,
-            mtfScore: 0,
-            trendScore: 0,
-            momentumScore: 0,
-            volumeScore: 0,
-            breakoutScore: 0,
-            rrScore: 0
-        };
-    }
+    if (!direction.optionType) return {
+        confidence: 0, scannerScore: 0, directionScore: 0, mtfScore: 0,
+        trendScore: 0, momentumScore: 0, volumeScore: 0, breakoutScore: 0, rrScore: 0
+    };
 
     const scannerScore = calculateScannerScore(data, direction);
     const directionScore = direction.optionType === "CALL" ? direction.callScore : direction.putScore;
@@ -861,17 +498,9 @@ function calculateConfidence(data, direction, mtf, rr) {
     const volumeScore = calculateVolumeScore(data);
     const breakoutScore = calculateBreakoutScore(data, direction.optionType);
     const rrScore = calculateRRScore(rr);
-    const weights = ENGINE_CONFIG.CONFIDENCE_WEIGHTS;
+    const w = ENGINE_CONFIG.CONFIDENCE_WEIGHTS;
 
-    let confidence =
-        scannerScore * weights.scanner +
-        clamp(directionScore) * weights.direction +
-        mtf.score * weights.mtf +
-        trendScore * weights.trend +
-        momentumScore * weights.momentum +
-        volumeScore * weights.volume +
-        breakoutScore * weights.breakout +
-        rrScore * weights.rr;
+    let confidence = scannerScore * w.scanner + clamp(directionScore) * w.direction + mtf.score * w.mtf + trendScore * w.trend + momentumScore * w.momentum + volumeScore * w.volume + breakoutScore * w.breakout + rrScore * w.rr;
 
     if (direction.dominantEvidence < 3) confidence -= 15;
     if (direction.directionDifference < 10) confidence -= 15;
@@ -907,11 +536,7 @@ function evaluateQualityGates(data, direction, mtf, rr, confidence) {
         scanner: scannerScore >= 55,
         tradeScanner: scannerScore >= 70
     };
-
-    const failedGates = Object.entries(gates)
-        .filter(([, value]) => !value)
-        .map(([key]) => key);
-
+    const failedGates = Object.entries(gates).filter(([, ok]) => !ok).map(([key]) => key);
     return {
         ...gates,
         passedCount: Object.values(gates).filter(Boolean).length,
@@ -921,95 +546,144 @@ function evaluateQualityGates(data, direction, mtf, rr, confidence) {
     };
 }
 
-function calculateOptionTradeSetup(type, premium, stockRR) {
-    const entry = Number(premium);
-    if (!Number.isFinite(entry) || entry <= 0) return null;
+// ============================================================
+// OPTION CONTRACTS
+// ============================================================
 
-    const risk = entry * ENGINE_CONFIG.OPTION_STOP_PERCENT;
-    const stopLoss = Math.max(0.05, entry - risk);
-    const target1 = entry + risk * ENGINE_CONFIG.OPTION_TARGET1_RISK_MULTIPLIER;
-    const target2 = entry + risk * ENGINE_CONFIG.OPTION_TARGET2_RISK_MULTIPLIER;
-
-    return {
-        optionType: type,
-        optionEntry: +entry.toFixed(2),
-        optionStopLoss: +stopLoss.toFixed(2),
-        optionTarget1: +target1.toFixed(2),
-        optionTarget2: +target2.toFixed(2),
-        optionRisk: +risk.toFixed(2),
-        optionReward: +(target2 - entry).toFixed(2),
-        optionRiskReward: risk > 0 ? +((target2 - entry) / risk).toFixed(2) : 0,
-        stockRiskReward: +toNumber(stockRR).toFixed(2)
-    };
+function getStrikeInterval(price) {
+    const p = Number(price);
+    if (!Number.isFinite(p) || p <= 0) return 50;
+    if (p < 500) return 10;
+    if (p < 1000) return 20;
+    if (p < 2000) return 50;
+    return 100;
 }
 
-function getDecision(direction, mtf, rr, confidence, gates, contract, quote) {
-    if (!direction.optionType) {
-        return { decision: "REJECT", rating: "NO DIRECTION", reason: "Directional evidence is insufficient." };
+function getRecommendedStrike(price, type) {
+    const interval = getStrikeInterval(price);
+    let strike = Math.round(Number(price) / interval) * interval;
+    if (type === "CALL") strike -= interval;
+    if (type === "PUT") strike += interval;
+    return { strike: Math.max(interval, strike), interval };
+}
+
+function normalizeOptionContract(contract, fallbackStrike = 0) {
+    if (!contract || typeof contract !== "object") return null;
+    const instrumentKey = firstValue(contract.instrumentKey, contract.instrument_key, contract.instrument_token, contract.instrumentToken, contract.exchange_token, contract.exchangeToken, contract.token);
+    const tradingSymbol = firstValue(contract.tradingSymbol, contract.trading_symbol, contract.symbol, contract.name);
+    const strike = toNumber(firstValue(contract.strike, contract.strikePrice, contract.strike_price, contract.strike_price_value, fallbackStrike));
+    const expiry = firstValue(contract.expiry, contract.expiryDate, contract.expiry_date, contract.expiry_date_time);
+    const expiryDays = toNumber(firstValue(contract.expiryDays, contract.expiry_days, contract.daysToExpiry));
+    let optionType = normalizeOptionType(firstValue(contract.optionType, contract.option_type, contract.instrumentType, contract.option, ""));
+    if (!optionType && tradingSymbol) optionType = normalizeOptionType(tradingSymbol);
+    if ((!instrumentKey && !tradingSymbol) || strike <= 0) return null;
+    return { ...contract, instrumentKey, tradingSymbol, strike, expiry, expiryDays, optionType, lotSize: firstValue(contract.lotSize, contract.lot_size, contract.lotsize), tickSize: firstValue(contract.tickSize, contract.tick_size) };
+}
+
+function expiryDaysFromContract(contract) {
+    if (!contract) return -Infinity;
+    const explicit = Number(contract.expiryDays);
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    if (!contract.expiry) return -Infinity;
+    const date = new Date(String(contract.expiry));
+    if (Number.isNaN(date.getTime())) return -Infinity;
+    return (date.getTime() - Date.now()) / 86400000;
+}
+
+function validContract(contract, type) {
+    return !!contract && normalizeOptionType(contract.optionType || contract.tradingSymbol) === type && expiryDaysFromContract(contract) >= ENGINE_CONFIG.MIN_EXPIRY_DAYS - 0.01 && Number(contract.strike) > 0;
+}
+
+async function resolveOptionContract(symbol, type, strike, interval) {
+    const broker = getBroker();
+    if (!broker) return null;
+
+    if (typeof broker.getOptionContracts === "function") {
+        try {
+            const raw = await broker.getOptionContracts(symbol);
+            if (Array.isArray(raw)) {
+                const valid = raw.map(c => normalizeOptionContract(c)).filter(c => validContract(c, type));
+                if (valid.length) {
+                    valid.sort((a, b) => {
+                        const expiryDiff = expiryDaysFromContract(a) - expiryDaysFromContract(b);
+                        if (Math.abs(expiryDiff) > 0.25) return expiryDiff;
+                        return Math.abs(a.strike - strike) - Math.abs(b.strike - strike);
+                    });
+                    const expiry = expiryDaysFromContract(valid[0]);
+                    return valid.filter(c => Math.abs(expiryDaysFromContract(c) - expiry) <= 0.25)
+                        .sort((a, b) => Math.abs(a.strike - strike) - Math.abs(b.strike - strike))[0] || null;
+                }
+            }
+        } catch (error) {
+            console.log(`⚠️ Direct option search failed: ${symbol} | ${error.message}`);
+        }
     }
 
-    if (!contract) {
-        return { decision: "REJECT", rating: "NO CONTRACT", reason: "No valid option contract with required side and expiry." };
+    if (typeof broker.getOptionContract === "function") {
+        const step = Number(interval) > 0 ? Number(interval) : getStrikeInterval(strike);
+        const candidates = [...new Set([strike, strike - step, strike + step, strike - step * 2, strike + step * 2].filter(v => v > 0))];
+        for (const candidate of candidates) {
+            try {
+                const contract = normalizeOptionContract(await broker.getOptionContract(symbol, type, candidate, ENGINE_CONFIG.MIN_EXPIRY_DAYS), candidate);
+                if (validContract(contract, type)) return contract;
+            } catch (_) {}
+        }
     }
+    return null;
+}
 
-    if (!quote) {
-        return { decision: "REJECT", rating: "NO LTP", reason: "Real option contract found but live option LTP is unavailable." };
+function normalizeQuoteLTP(quote) {
+    if (typeof quote === "number") return quote > 0 ? quote : 0;
+    if (!quote || typeof quote !== "object") return 0;
+    return firstPositive(quote.ltp, quote.lastPrice, quote.last_price, quote.last_traded_price, quote.close, quote.lp);
+}
+
+async function resolveOptionQuote(contract) {
+    if (!contract) return null;
+    const broker = getBroker();
+    if (!broker) return null;
+    const key = firstValue(contract.instrumentKey, contract.instrument_key, contract.instrument_token, contract.tradingSymbol, contract.trading_symbol);
+    if (!key) return null;
+
+    for (const method of ["getOptionQuote", "getQuote"]) {
+        if (typeof broker[method] !== "function") continue;
+        try {
+            const quote = await broker[method](key);
+            const ltp = normalizeQuoteLTP(quote);
+            if (ltp > 0) return { ...(quote && typeof quote === "object" ? quote : {}), ltp };
+        } catch (error) {
+            console.log(`⚠️ Option quote failed: ${key} | ${error.message}`);
+        }
     }
+    return null;
+}
 
-    if (rr < ENGINE_CONFIG.WATCH_RR) {
-        return { decision: "REJECT", rating: "LOW R:R", reason: "Underlying risk/reward is below minimum." };
+// ============================================================
+// DECISION
+// ============================================================
+
+function getDecision(direction, mtf, rr, confidence, gates, contract, quote, marketSetup) {
+    if (!direction.optionType) return { decision: "REJECT", rating: "NO DIRECTION", reason: "Directional evidence is insufficient." };
+    if (!marketSetup.valid) return { decision: "REJECT", rating: marketSetup.reason, reason: "Stock setup rejected because genuine market levels do not form valid risk/reward geometry." };
+    if (!contract) return { decision: "REJECT", rating: "NO CONTRACT", reason: "No valid option contract with required side and expiry." };
+    if (!quote) return { decision: "REJECT", rating: "NO LTP", reason: "Real option contract found but live option LTP is unavailable." };
+    if (rr < ENGINE_CONFIG.WATCH_RR) return { decision: "REJECT", rating: "LOW_RR", reason: "Underlying market-structure risk/reward is below minimum." };
+
+    if (confidence >= ENGINE_CONFIG.TRADE_CONFIDENCE && gates.tradeMTF && gates.tradeRiskReward && gates.tradeConfidence && gates.tradeScanner && gates.directionEvidence && gates.directionDifference) {
+        return { decision: "TRADE", rating: "A", reason: "Market structure, direction, MTF, risk/reward, confidence and live option data are aligned." };
     }
-
-    if (
-        confidence >= ENGINE_CONFIG.TRADE_CONFIDENCE &&
-        gates.tradeMTF &&
-        gates.tradeRiskReward &&
-        gates.tradeConfidence &&
-        gates.tradeScanner &&
-        gates.directionEvidence &&
-        gates.directionDifference
-    ) {
-        return {
-            decision: "TRADE",
-            rating: "A",
-            reason: "Direction, MTF, risk/reward, confidence and real option data are aligned."
-        };
-    }
-
     if (confidence >= ENGINE_CONFIG.WATCH_CONFIDENCE && gates.mtf && gates.riskReward) {
-        return {
-            decision: "WATCH",
-            rating: "B",
-            reason: "Valid setup but not all TRADE gates are met."
-        };
+        return { decision: "WATCH", rating: "B", reason: "Valid market-structure setup but not all TRADE gates are met." };
     }
-
-    return {
-        decision: "REJECT",
-        rating: "C",
-        reason: "Setup does not satisfy minimum quality gates."
-    };
+    return { decision: "REJECT", rating: "C", reason: "Setup does not satisfy minimum quality gates." };
 }
-
-// ============================================================
-// MAIN DECISION
-// ============================================================
 
 async function makeOptionDecision(data = {}) {
     const symbol = firstValue(data.symbol, data.stock, data.name);
     const price = getStockPrice(data);
 
     if (!symbol || price <= 0) {
-        return {
-            ...data,
-            symbol,
-            direction: null,
-            optionType: null,
-            decision: "REJECT",
-            confidence: 0,
-            qualityGates: "INVALID_STOCK_DATA",
-            failedGates: ["symbol", "price"]
-        };
+        return { ...data, symbol, direction: null, optionType: null, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: "INVALID_STOCK_DATA", optionsReason: "INVALID_STOCK_DATA", failedGates: ["symbol", "price"] };
     }
 
     const direction = calculateDirection(data, price);
@@ -1031,56 +705,47 @@ async function makeOptionDecision(data = {}) {
             stopLoss: 0,
             target1: 0,
             target2: 0,
+            stockEntry: 0,
+            stockStopLoss: 0,
+            stockTarget1: 0,
+            stockTarget2: 0,
             riskReward: 0,
             stockRiskReward: 0,
             confidence: 0,
-            decision: "REJECT",
-            rating: "NO DIRECTION",
-            optionsDecision: "REJECT",
-            optionsRating: "NO DIRECTION",
             optionsConfidence: 0,
+            decision: "REJECT",
+            optionsDecision: "REJECT",
+            rating: "NO DIRECTION",
+            optionsRating: "NO DIRECTION",
+            reason: "Directional evidence is insufficient.",
             optionsReason: "Directional evidence is insufficient.",
             contractAvailable: false,
             optionPriceAvailable: false,
             optionSetupAvailable: false,
-            qualityGates: "NO_DIRECTION",
+            levelsSource: "MARKET_STRUCTURE_ONLY",
             failedGates: ["direction"]
         };
     }
 
     const type = direction.optionType;
     const entry = getStockEntry(data, price);
-    const stopLoss = getStockStopLoss(data, entry, type);
-    const target1 = getStockTarget1(data, entry, stopLoss, type);
-    const target2 = getStockTarget2({ ...data, stopLoss }, entry, target1, type);
-    const riskReward = calculateRiskReward(entry, stopLoss, target1, type);
-    const marketSetup = validateStockSetup(entry, stopLoss, target1, target2, type, riskReward);
-
+    const marketSetup = calculateMarketSetup(data, entry, type);
     const mtf = calculateMTF(type, data);
-    const confidence = calculateConfidence(data, direction, mtf, riskReward);
-    const gates = evaluateQualityGates(data, direction, mtf, riskReward, confidence.confidence);
+    const confidence = calculateConfidence(data, direction, mtf, marketSetup.riskReward);
+    const gates = evaluateQualityGates(data, direction, mtf, marketSetup.riskReward, confidence.confidence);
     const strike = getRecommendedStrike(price, type);
 
     let contract = null;
-    try {
-        contract = await resolveOptionContract(symbol, type, strike.strike, strike.interval);
-    } catch (_) {}
-
+    try { contract = await resolveOptionContract(symbol, type, strike.strike, strike.interval); } catch (_) {}
     const quote = contract ? await resolveOptionQuote(contract) : null;
-    const optionSetup = quote ? calculateOptionTradeSetup(type, quote.ltp, riskReward) : null;
-    const decision = marketSetup.valid
-        ? getDecision(direction, mtf, riskReward, confidence.confidence, gates, contract, quote)
-        : {
-            decision: "REJECT",
-            rating: marketSetup.reason,
-            reason: "Stock setup rejected because genuine market levels do not form valid risk/reward geometry."
-        };
 
-    const oiSupport1 = firstPositive(data.oiSupport1, data.oi_support1, data.putOISupport, data.putOiSupport, data.putOILevel, data.putOiLevel, data.maxPutOI, data.maxPutOi);
-    const oiSupport2 = firstPositive(data.oiSupport2, data.oi_support2, data.oiSupport, data.oi_support, data.putOISupport2, data.putOiSupport2);
-    const oiResistance1 = firstPositive(data.oiResistance1, data.oi_resistance1, data.callOIResistance, data.callOiResistance, data.callOILevel, data.callOiLevel, data.maxCallOI, data.maxCallOi);
-    const oiResistance2 = firstPositive(data.oiResistance2, data.oi_resistance2, data.oiResistance, data.oi_resistance, data.callOIResistance2, data.callOiResistance2);
-    const maxPain = firstPositive(data.maxPain, data.max_pain, data.optionMaxPain, data.option_max_pain);
+    const decision = getDecision(direction, mtf, marketSetup.riskReward, confidence.confidence, gates, contract, quote, marketSetup);
+
+    const optionEntry = quote?.ltp ?? null;
+    const optionStopLoss = firstPositive(data.optionStopLoss, data.optionSL, data.optionMarketStopLoss);
+    const optionTarget1 = firstPositive(data.optionTarget1, data.optionT1, data.optionMarketTarget1);
+    const optionTarget2 = firstPositive(data.optionTarget2, data.optionT2, data.optionMarketTarget2);
+    const optionSetupAvailable = optionEntry > 0 && optionStopLoss > 0 && optionTarget1 > 0 && optionTarget2 > 0;
 
     return {
         ...data,
@@ -1094,28 +759,32 @@ async function makeOptionDecision(data = {}) {
         scoreDifference: direction.directionDifference,
         callEvidence: direction.callEvidence,
         putEvidence: direction.putEvidence,
-        entry: +entry.toFixed(2),
-        stopLoss: +stopLoss.toFixed(2),
-        target1: +target1.toFixed(2),
-        target2: +target2.toFixed(2),
-        stockEntry: +entry.toFixed(2),
-        stockStopLoss: +stopLoss.toFixed(2),
-        stockTarget1: +target1.toFixed(2),
-        stockTarget2: +target2.toFixed(2),
-        riskReward,
-        stockRiskReward: riskReward,
+        entry: marketSetup.entry,
+        stopLoss: marketSetup.stopLoss,
+        target1: marketSetup.target1,
+        target2: marketSetup.target2,
+        stockEntry: marketSetup.entry,
+        stockStopLoss: marketSetup.stopLoss,
+        stockTarget1: marketSetup.target1,
+        stockTarget2: marketSetup.target2,
+        riskReward: marketSetup.riskReward,
+        stockRiskReward: marketSetup.riskReward,
+        risk: marketSetup.risk,
+        reward: marketSetup.reward,
+        stopSource: marketSetup.stopSource,
+        target1Source: marketSetup.target1Source,
+        target2Source: marketSetup.target2Source,
+        levelsSource: marketSetup.levelsSource,
+        supportLevels: marketSetup.supportLevels,
+        resistanceLevels: marketSetup.resistanceLevels,
         mtfScore: mtf.score,
         mtfAlignment: mtf.alignment,
         mtfAligned: mtf.isAligned,
         alignedTimeframes: mtf.alignedTimeframes,
         mtfAvailableTimeframes: mtf.availableTimeframes,
         mtfAvailableCount: mtf.available,
-        mtfDiagnostic: {
-            alignment: mtf.alignment,
-            available: mtf.available,
-            opposition: mtf.opposition
-        },
         confidence: confidence.confidence,
+        optionsConfidence: confidence.confidence,
         scannerScore: confidence.scannerScore,
         directionQuality: confidence.directionScore,
         directionScore: confidence.directionScore,
@@ -1125,7 +794,7 @@ async function makeOptionDecision(data = {}) {
         breakoutScore: confidence.breakoutScore,
         rrScore: confidence.rrScore,
         recommendedStrike: strike.strike,
-        optionStrike: contract ? contract.strike : strike.strike,
+        optionStrike: contract?.strike ?? strike.strike,
         strikeInterval: strike.interval,
         optionStrikeDifference: contract ? Math.abs(Number(contract.strike) - strike.strike) : null,
         contractAvailable: !!contract,
@@ -1138,48 +807,26 @@ async function makeOptionDecision(data = {}) {
         optionLotSize: contract?.lotSize ?? null,
         optionTickSize: contract?.tickSize ?? null,
         optionPriceAvailable: !!quote,
-        optionLTP: quote?.ltp ?? null,
-        optionQuote: quote || null,
-        optionSetupAvailable: !!optionSetup,
-        optionEntry: optionSetup?.optionEntry ?? null,
-        optionStopLoss: optionSetup?.optionStopLoss ?? null,
-        optionTarget1: optionSetup?.optionTarget1 ?? null,
-        optionTarget2: optionSetup?.optionTarget2 ?? null,
-        optionRisk: optionSetup?.optionRisk ?? null,
-        optionReward: optionSetup?.optionReward ?? null,
-        optionRiskReward: optionSetup?.optionRiskReward ?? null,
-        oiSupport1,
-        oiSupport2,
-        oiResistance1,
-        oiResistance2,
-        maxPain,
-        combinedSupportLevels: uniqueSortedLevels([
-            data.support1,
-            data.support2,
-            data.pivotS1,
-            data.pivotS2,
-            oiSupport1,
-            oiSupport2
-        ]),
-        combinedResistanceLevels: uniqueSortedLevels([
-            data.resistance1,
-            data.resistance2,
-            data.pivotR1,
-            data.pivotR2,
-            oiResistance1,
-            oiResistance2
-        ]),
+        optionLTP: optionEntry,
+        optionEntry,
+        optionStopLoss: optionSetupAvailable ? round2(optionStopLoss) : null,
+        optionTarget1: optionSetupAvailable ? round2(optionTarget1) : null,
+        optionTarget2: optionSetupAvailable ? round2(optionTarget2) : null,
+        optionSetupAvailable,
+        optionRiskReward: null,
+        oiSupport1: firstPositive(data.oiSupport1, data.oi_support1, data.putOISupport, data.putOiSupport),
+        oiSupport2: firstPositive(data.oiSupport2, data.oi_support2, data.putOISupport2, data.putOiSupport2),
+        oiResistance1: firstPositive(data.oiResistance1, data.oi_resistance1, data.callOIResistance, data.callOiResistance),
+        oiResistance2: firstPositive(data.oiResistance2, data.oi_resistance2, data.callOIResistance2, data.callOiResistance2),
         decision: decision.decision,
         rating: decision.rating,
         reason: decision.reason,
         optionsDecision: decision.decision,
         optionsRating: decision.rating,
-        optionsConfidence: confidence.confidence,
         optionsReason: decision.reason,
         qualityGates: gates,
         failedGates: gates.failedGates,
         failedGateCount: gates.failedGates.length,
-        tradeGates: gates,
         diagnostic: {
             direction,
             mtf,
@@ -1188,16 +835,13 @@ async function makeOptionDecision(data = {}) {
             marketSetup,
             contractFound: !!contract,
             optionQuoteFound: !!quote,
-            optionSetupFound: !!optionSetup,
-            stopDistanceMinimum: getMinimumStopDistance(data, entry),
-            stopDistanceMaximum: getMaximumStopDistance(data, entry)
+            optionSetupFound: optionSetupAvailable
         }
     };
 }
 
 async function generateOptionDecisions(results = []) {
     if (!Array.isArray(results)) return [];
-
     const output = [];
     for (const data of results) {
         try {
@@ -1205,27 +849,15 @@ async function generateOptionDecisions(results = []) {
         } catch (error) {
             const symbol = firstValue(data?.symbol, data?.stock, "UNKNOWN");
             console.log(`❌ Option decision failed: ${symbol} | ${error.message}`);
-            output.push({
-                ...data,
-                symbol,
-                decision: "REJECT",
-                optionsDecision: "REJECT",
-                confidence: 0,
-                optionsConfidence: 0,
-                reason: error.message,
-                optionsReason: error.message,
-                failedGates: ["ENGINE_ERROR"]
-            });
+            output.push({ ...data, symbol, decision: "REJECT", optionsDecision: "REJECT", confidence: 0, optionsConfidence: 0, reason: error.message, optionsReason: error.message, failedGates: ["ENGINE_ERROR"] });
         }
     }
-
     return output;
 }
 
 function sortOptionDecisions(decisions) {
     if (!Array.isArray(decisions)) return [];
     const rank = { TRADE: 3, WATCH: 2, REJECT: 1 };
-
     return [...decisions].sort((a, b) =>
         (rank[text(b.decision)] || 0) - (rank[text(a.decision)] || 0) ||
         toNumber(b.confidence) - toNumber(a.confidence) ||
@@ -1233,9 +865,9 @@ function sortOptionDecisions(decisions) {
     );
 }
 
+const calculateOptionsDecisions = generateOptionDecisions;
 const evaluateOptionDecision = makeOptionDecision;
 const decideOptionTrade = makeOptionDecision;
-const calculateOptionsDecisions = generateOptionDecisions;
 const runOptionDecisionEngine = generateOptionDecisions;
 const processOptionDecisions = generateOptionDecisions;
 
@@ -1258,11 +890,14 @@ module.exports = {
     calculateRRScore,
     calculateConfidence,
     evaluateQualityGates,
-    calculateOptionTradeSetup,
     getRecommendedStrike,
     getStrikeInterval,
     normalizeOptionContract,
     resolveOptionContract,
     resolveOptionQuote,
-    calculateRiskReward
+    calculateRiskReward: (entry, stopLoss, target1, type) => {
+        const risk = type === "CALL" ? entry - stopLoss : stopLoss - entry;
+        const reward = type === "CALL" ? target1 - entry : entry - target1;
+        return risk > 0 && reward > 0 ? round2(reward / risk) : 0;
+    }
 };
