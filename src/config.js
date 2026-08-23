@@ -1,27 +1,11 @@
 require("dotenv").config();
 
 module.exports = {
-
-    // ========================================================
-    // BROKER CONFIGURATION
-    // ========================================================
-
-    BROKER: (
-        process.env.BROKER || "UPSTOX"
-    ).trim().toUpperCase(),
-
-    // ========================================================
-    // UPSTOX
-    // ========================================================
+    BROKER: (process.env.BROKER || "UPSTOX").trim().toUpperCase(),
 
     UPSTOX: {
-        ACCESS_TOKEN:
-            process.env.UPSTOX_ACCESS_TOKEN || ""
+        ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN || ""
     },
-
-    // ========================================================
-    // ANGEL ONE
-    // ========================================================
 
     ANGELONE: {
         API_KEY: process.env.API_KEY || "",
@@ -36,70 +20,49 @@ module.exports = {
     MPIN: process.env.MPIN || "",
     TOTP_SECRET: process.env.TOTP_SECRET || "",
 
-    // ========================================================
-    // GOOGLE SHEET
-    // ========================================================
+    GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || "",
 
-    GOOGLE_SHEET_URL:
-        process.env.GOOGLE_SHEET_URL || "",
-
-    // ========================================================
-    // STOCK UNIVERSE
-    // ========================================================
-    // NIFTY50 / NIFTY100 / BANKNIFTY / CUSTOM use maintained
-    // universe files. ALL_NSE uses the active broker instrument
-    // master and therefore is not limited to a hard-coded list.
-
-    SCANNER_UNIVERSE: (
-        process.env.SCANNER_UNIVERSE || "NIFTY100"
-    ).trim().toUpperCase(),
-
-    SCANNER_INTERVAL: 60,
-
-    // 0 = no artificial stock-count limit.
-    // The scanner may still be constrained by broker/API rate limits.
+    // Universe is resolved from the symbols directory. No hard-coded
+    // stock-count cap is applied here.
+    SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "NIFTY100").trim().toUpperCase(),
     MAX_STOCKS: 0,
 
-    // ========================================================
-    // TECHNICAL INDICATORS
-    // ========================================================
-
+    // Technical indicators
     EMA_PERIODS: [5, 9, 20, 50, 100, 200],
     EMA_SHORT: 20,
     EMA_LONG: 200,
     RSI_PERIOD: 14,
-
-    MACD: {
-        FAST: 12,
-        SLOW: 26,
-        SIGNAL: 9
-    },
-
+    MACD: { FAST: 12, SLOW: 26, SIGNAL: 9 },
     ADX_PERIOD: 14,
     ATR_PERIOD: 14,
+    SUPERTREND: { ATR_PERIOD: 10, MULTIPLIER: 3 },
+    BOLLINGER: { PERIOD: 20, STD_DEV: 2 },
 
-    SUPERTREND: {
-        ATR_PERIOD: 10,
-        MULTIPLIER: 3
+    // Single source of truth for scanner quality thresholds.
+    THRESHOLDS: {
+        AI_BUY_SCORE: 80,
+        AI_WATCH_SCORE: 60,
+        DASHBOARD_MIN_SCORE: 90,
+        DASHBOARD_MAX_ROWS: 10,
+        MIN_CONFIDENCE: 70,
+        MIN_RR: 1.5
     },
 
-    BOLLINGER: {
-        PERIOD: 20,
-        STD_DEV: 2
-    },
-
-    // ========================================================
-    // AI / SCANNER SCORE THRESHOLDS
-    // ========================================================
-
+    // Backward-compatible aliases. New code should read THRESHOLDS.
     AI_BUY_SCORE: 80,
     AI_WATCH_SCORE: 60,
-
-    // ========================================================
-    // DASHBOARD
-    // ========================================================
-
     DASHBOARD_MIN_SCORE: 90,
-    DASHBOARD_MAX_ROWS: 10
+    DASHBOARD_MAX_ROWS: 10,
 
+    // Scheduler configuration is centralized here so scheduler.js
+    // does not maintain a second set of market-hour constants.
+    SCHEDULER: {
+        TIMEZONE: "Asia/Kolkata",
+        START_HOUR: 9,
+        START_MINUTE: 15,
+        END_HOUR: 15,
+        END_MINUTE: 30,
+        INTERVAL_MINUTES: 5,
+        TIMEOUT_MINUTES: 10
+    }
 };
