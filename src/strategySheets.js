@@ -2,17 +2,22 @@ const axios = require("axios");
 const config = require("./config");
 
 // ============================================================
-// V6 STRATEGY SHEETS
+// AI SMART SCANNER — STRATEGY SHEETS
 // ============================================================
-// EQUITY       -> qualified stock setups / audit
-// CALL_OPTIONS -> all CALL option candidates
-// PUT_OPTIONS  -> all PUT option candidates
-// Uses only Apps Script actions supported by Code.gs:
-// replaceSheet / appendRows.
+// RULES
+// 1. EQUITY is independent of option decisions.
+// 2. CALL_OPTIONS receives every CALL candidate returned by the
+//    options engine, including WATCH/REJECT/NO CONTRACT.
+// 3. PUT_OPTIONS receives every PUT candidate returned by the
+//    options engine, including WATCH/REJECT/NO CONTRACT.
+// 4. Sheets must record scanner output; they must not silently
+//    discard rows because an option contract is unavailable.
+// 5. CALL/PUT/CE/PE and common field aliases are normalized here.
+// 6. Writes are sequential because Apps Script uses a script lock.
 // ============================================================
 
 const TIMEOUT = 120000;
-const EQUITY_MAX_ROWS = 20;
+const EQUITY_MAX_ROWS = 50;
 
 const EQUITY_COLUMNS = [
     "rank", "stock", "symbol", "price", "direction", "signal",
@@ -64,36 +69,54 @@ function clean(value) {
 
 function value(row, key, aliases = []) {
     if (!row || typeof row !== "object") return "";
+
     for (const k of [key, ...aliases]) {
-        if (row[k] !== undefined && row[k] !== null && row[k] !== "") return row[k];
+        if (row[k] !== undefined && row[k] !== null && row[k] !== "") {
+            return row[k];
+        }
     }
+
     return "";
 }
 
 function getStockKey(row) {
-    return String(value(row, "stock", ["symbol", "name"]))
-        .trim()
-        .toUpperCase();
+    return String(value(row, "stock", [
+        "symbol", "tradingSymbol", "name", "stockSymbol"
+    ])).trim().toUpperCase();
 }
 
 function normalizeType(row) {
     const raw = String(value(row, "optionType", [
-        "optionsType", "option_type", "type", "instrument_type"
+        "optionsType",
+        "option_type",
+        "optiontype",
+        "type",
+        "instrument_type",
+        "side",
+        "direction"
     ])).trim().toUpperCase();
 
-    if (raw === "CALL" || raw === "CE" || raw === "CALL_OPTION") return "CALL";
-    if (raw === "PUT" || raw === "PE" || raw === "PUT_OPTION") return "PUT";
+    if (raw === "CALL" || raw === "CE" || raw.includes("CALL")) return "CALL";
+    if (raw === "PUT" || raw === "PE" || raw.includes("PUT")) return "PUT";
+
     return "";
 }
 
+function normalizeDecision(row) {
+    return String(value(row, "optionsDecision", [
+        "decision", "optionDecision", "tradeDecision"
+    ])).trim().toUpperCase();
+}
+
 function decisionRank(row) {
-    const d = String(value(row, "optionsDecision", ["decision"]))
-        .trim().toUpperCase();
+    const d = normalizeDecision(row);
     return ({ TRADE: 3, WATCH: 2, REJECT: 1 }[d] || 0);
 }
 
 function confidence(row) {
-    const n = Number(value(row, "optionsConfidence", ["confidence", "optionConfidence"]));
+    const n = Number(value(row, "optionsConfidence", [
+        "confidence", "optionConfidence"
+    ]));
     return Number.isFinite(n) ? n : 0;
 }
 
@@ -108,18 +131,79 @@ function sortCandidates(rows) {
     return [...rows].sort((a, b) => {
         const d = decisionRank(b) - decisionRank(a);
         if (d) return d;
+
         const c = confidence(b) - confidence(a);
         if (c) return c;
+
         return scannerScore(b) - scannerScore(a);
     });
 }
 
 function buildRows(rows, columns) {
-    return sortCandidates(rows).map((row, index) =>
-        columns.map(column => clean(
-            column === "rank" ? index + 1 : value(row, column)
-        ))
-    );
+    return rows.map((row, index) => columns.map(column => {
+        if (column === "rank") return index + 1;
+        return clean(value(row, column, aliasesFor(column)));
+    }));
+}
+
+function aliasesFor(column) {
+    const aliases = {
+        stock: ["symbol", "tradingSymbol", "name", "stockSymbol"],
+        symbol: ["stock", "tradingSymbol", "stockSymbol"],
+        price: ["ltp", "lastPrice", "last_price", "close", "currentPrice", "current_price"],
+        direction: ["stockDirection", "technicalDirection", "optionDirection"],
+        signal: ["scannerSignal", "tradeSignal"],
+        entry: ["stockEntry", "marketEntry", "underlyingEntry", "triggerPrice", "trigger_price"],
+        stopLoss: ["stockStopLoss"],
+        target1: ["stockTarget1"],
+        target2: ["stockTarget2"],
+        riskReward: ["rr"],
+        confidence: ["optionsConfidence", "optionConfidence"],
+        optionType: ["optionsType", "option_type", "type", "side"],
+        optionSymbol: ["tradingsymbol", "tradingSymbol", "optionTradingSymbol"],
+        optionExpiry: ["expiry", "expiryDate", "optionExpiryDate"],
+        recommendedStrike: ["strike", "strikePrice", "recommended_strike"],
+        optionStrike: ["strike", "strikePrice", "recommendedStrike"],
+        optionsDecision: ["decision", "optionDecision", "tradeDecision"],
+        optionsRating: ["rating", "optionRating"],
+        optionsConfidence: ["confidence", "optionConfidence"],
+        optionsReason: ["reason", "optionReason"],
+        tradeGates: ["gates"],
+        failedGates: ["failedGateList"],
+        failedGateCount: ["failedGatesCount"],
+        contractAvailable: ["hasContract", "optionContractAvailable"],
+        optionPriceAvailable: ["hasOptionPrice", "optionLtpAvailable"],
+        optionSetupAvailable: ["hasOptionSetup"],
+        mtfAlignment: ["mtfAligned", "alignment"],
+        volumeConfirmed: ["volumeConfirmation", "volumeConfirm"],
+        support1: ["support", "s1"],
+        resistance1: ["resistance", "r1"],
+        timestamp: ["time", "scanTime", "lastScanTime"]
+    };
+
+    return aliases[column] || [];
+}
+
+function dedupeRows(rows) {
+    const seen = new Set();
+    const result = [];
+
+    for (const row of rows) {
+        const stock = getStockKey(row);
+        const type = normalizeType(row);
+        const optionSymbol = String(value(row, "optionSymbol", ["tradingsymbol", "tradingSymbol"]))
+            .trim()
+            .toUpperCase();
+        const key = `${stock}|${type}|${optionSymbol}`;
+
+        if (!stock && !optionSymbol) continue;
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+        result.push(row);
+    }
+
+    return result;
 }
 
 async function postSheet(sheet, headers, rows) {
@@ -148,29 +232,39 @@ async function postSheet(sheet, headers, rows) {
 }
 
 async function updateStrategySheets(scannerData, optionDecisions) {
-    const scannerRows = Array.isArray(scannerData) ? scannerData : [];
-    const options = Array.isArray(optionDecisions) ? optionDecisions : [];
+    const scannerRows = Array.isArray(scannerData) ? scannerData.filter(Boolean) : [];
+    const options = Array.isArray(optionDecisions) ? optionDecisions.filter(Boolean) : [];
 
-    const qualifiedKeys = new Set(
-        options.map(getStockKey).filter(Boolean)
-    );
-
-    const qualifiedEquityRows = scannerRows
-        .filter(row => qualifiedKeys.has(getStockKey(row)))
+    // ------------------------------------------------------------
+    // EQUITY
+    // IMPORTANT: Do NOT depend on optionDecisions.
+    // The equity sheet must still populate when the option engine
+    // has no contract, no premium, or no option decision.
+    // ------------------------------------------------------------
+    const equityRowsSource = scannerRows
+        .filter(row => getStockKey(row))
         .slice(0, EQUITY_MAX_ROWS);
 
-    const equityRows = buildRows(qualifiedEquityRows, EQUITY_COLUMNS);
-    const callRows = buildRows(
-        options.filter(row => normalizeType(row) === "CALL"),
-        OPTION_COLUMNS
-    );
-    const putRows = buildRows(
-        options.filter(row => normalizeType(row) === "PUT"),
-        OPTION_COLUMNS
+    // ------------------------------------------------------------
+    // OPTIONS
+    // Keep every option decision. REJECT / NO CONTRACT is useful
+    // audit information and must not make the row disappear.
+    // ------------------------------------------------------------
+    const uniqueOptions = dedupeRows(options);
+
+    const callsSource = sortCandidates(
+        uniqueOptions.filter(row => normalizeType(row) === "CALL")
     );
 
-    // IMPORTANT: sequential requests so Apps Script's script lock is never
-    // contended by three simultaneous strategy-sheet writes.
+    const putsSource = sortCandidates(
+        uniqueOptions.filter(row => normalizeType(row) === "PUT")
+    );
+
+    const equityRows = buildRows(equityRowsSource, EQUITY_COLUMNS);
+    const callRows = buildRows(callsSource, OPTION_COLUMNS);
+    const putRows = buildRows(putsSource, OPTION_COLUMNS);
+
+    // Sequential writes: Apps Script has one script lock.
     const equity = await postSheet("EQUITY", EQUITY_COLUMNS, equityRows);
     const calls = await postSheet("CALL_OPTIONS", OPTION_COLUMNS, callRows);
     const puts = await postSheet("PUT_OPTIONS", OPTION_COLUMNS, putRows);
