@@ -400,40 +400,108 @@ function getStockPrice(d) {
     return firstPositive(d.price, d.ltp, d.lastPrice, d.close, d.currentPrice);
 }
 
+// ============================================================
+// MARKET-STRUCTURE LEVELS ONLY
+// ============================================================
+// No artificial percentage/ATR SL or targets are allowed here.
+// Entry may fall back to the real current market price. SL/T1/T2
+// must come from actual market-derived support/resistance/swing
+// levels already present in scanner data. Missing levels => 0,
+// which is intentionally rejected later instead of manufactured.
+// ============================================================
+
+const MARKET_LEVEL_KEYS = Object.freeze({
+    support: [
+        "support", "support1", "support2", "support3",
+        "s1", "s2", "s3", "pivotS1", "pivotS2", "pivotS3",
+        "swingLow", "swing_low", "previousLow", "prevLow",
+        "recentLow", "dayLow", "low"
+    ],
+    resistance: [
+        "resistance", "resistance1", "resistance2", "resistance3",
+        "r1", "r2", "r3", "pivotR1", "pivotR2", "pivotR3",
+        "swingHigh", "swing_high", "previousHigh", "prevHigh",
+        "recentHigh", "dayHigh", "high"
+    ]
+});
+
+function collectMarketLevels(d, side) {
+    const keys = MARKET_LEVEL_KEYS[side] || [];
+    const values = [];
+
+    for (const key of keys) {
+        const value = d?.[key];
+        if (Array.isArray(value)) values.push(...value);
+        else if (value && typeof value === "object") {
+            for (const nested of Object.values(value)) {
+                if (Array.isArray(nested)) values.push(...nested);
+                else values.push(nested);
+            }
+        } else values.push(value);
+    }
+
+    // Also accept explicit scanner level collections when available.
+    const collection = d?.[side === "support" ? "supportLevels" : "resistanceLevels"];
+    if (Array.isArray(collection)) values.push(...collection);
+
+    return uniqueSortedLevels(values);
+}
+
+function nearestBelow(levels, price) {
+    return levels.filter(v => v < price).sort((a, b) => b - a)[0] || 0;
+}
+
+function nearestAbove(levels, price) {
+    return levels.filter(v => v > price).sort((a, b) => a - b)[0] || 0;
+}
+
 function getStockEntry(d, price, type) {
     const supplied = firstPositive(d.entry, d.stockEntry, d.underlyingEntry);
     if (supplied) return supplied;
-    const atr = firstPositive(d.atr);
-    return atr ? (type === "CALL" ? price + atr * 0.10 : price - atr * 0.10) : price;
+    // This is the real current underlying market price, not a synthetic level.
+    return firstPositive(price);
 }
 
 function getStockStopLoss(d, entry, type) {
-    const supplied = firstPositive(d.stopLoss, d.stockStopLoss, d.underlyingStopLoss);
-    if (supplied) return supplied;
-    const atr = firstPositive(d.atr);
-    const support = firstPositive(d.support1, d.pivotS1);
-    const resistance = firstPositive(d.resistance1, d.pivotR1);
-    if (type === "CALL") return support > 0 && support < entry ? support : (atr ? entry - atr : entry * 0.98);
-    return resistance > entry ? resistance : (atr ? entry + atr : entry * 1.02);
+    if (!Number.isFinite(entry) || entry <= 0) return 0;
+
+    if (type === "CALL") {
+        return nearestBelow(collectMarketLevels(d, "support"), entry);
+    }
+
+    if (type === "PUT") {
+        return nearestAbove(collectMarketLevels(d, "resistance"), entry);
+    }
+
+    return 0;
 }
 
 function getStockTarget1(d, entry, type) {
-    const supplied = firstPositive(d.target1, d.stockTarget1, d.underlyingTarget1);
-    if (supplied) return supplied;
-    const atr = firstPositive(d.atr);
-    const resistance = firstPositive(d.resistance1, d.pivotR1);
-    const support = firstPositive(d.support1, d.pivotS1);
-    if (type === "CALL") return resistance > entry ? resistance : (atr ? entry + atr : entry * 1.03);
-    return support > 0 && support < entry ? support : (atr ? entry - atr : entry * 0.97);
+    if (!Number.isFinite(entry) || entry <= 0) return 0;
+
+    if (type === "CALL") {
+        return nearestAbove(collectMarketLevels(d, "resistance"), entry);
+    }
+
+    if (type === "PUT") {
+        return nearestBelow(collectMarketLevels(d, "support"), entry);
+    }
+
+    return 0;
 }
 
 function getStockTarget2(d, entry, target1, type) {
-    const supplied = firstPositive(d.target2, d.stockTarget2, d.underlyingTarget2);
-    if (supplied) return supplied;
-    const atr = firstPositive(d.atr);
-    const distance = Math.abs(target1 - entry);
-    const extra = atr ? atr * 2 : distance * 2;
-    return type === "CALL" ? Math.max(target1, entry + extra) : Math.min(target1, entry - extra);
+    if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(target1) || target1 <= 0) return 0;
+
+    if (type === "CALL") {
+        return nearestAbove(collectMarketLevels(d, "resistance"), target1);
+    }
+
+    if (type === "PUT") {
+        return nearestBelow(collectMarketLevels(d, "support"), target1);
+    }
+
+    return 0;
 }
 
 function calculateRiskReward(entry, stopLoss, target1, type) {
