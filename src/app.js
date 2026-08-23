@@ -12,6 +12,7 @@ const { createAccuracyRecord } = require("./accuracyTracker");
 
 const DASHBOARD_MIN_CONFIDENCE = 85;
 const FINAL_TOP_COUNT = 5;
+const SCANNER_TOP_COUNT = 50;
 const OPTION_CANDIDATE_LIMIT = 20;
 const RECOVERY_MIN_SCORE = 55;
 
@@ -37,7 +38,7 @@ function getConfidence(row) {
 }
 
 function getScannerScore(row) {
-    return safeNumber(row?.finalScore ?? row?.aiFinalScore ?? row?.scannerScore ?? row?.score, 0);
+    return safeNumber(row?.rankingScore ?? row?.finalScore ?? row?.aiFinalScore ?? row?.scannerScore ?? row?.score, 0);
 }
 
 function getScannerDirection(row) {
@@ -69,8 +70,20 @@ function recoverOptionCandidates(allScannerResults) {
             return safeNumber(b?.riskReward) - safeNumber(a?.riskReward);
         })
         .slice(0, OPTION_CANDIDATE_LIMIT);
-
     return candidates;
+}
+
+function selectTopScannerRows(rows, limit = SCANNER_TOP_COUNT) {
+    const list = Array.isArray(rows) ? [...rows] : [];
+    return list
+        .sort((a, b) => {
+            const scoreDiff = getScannerScore(b) - getScannerScore(a);
+            if (scoreDiff !== 0) return scoreDiff;
+            const confidenceDiff = getConfidence(b) - getConfidence(a);
+            if (confidenceDiff !== 0) return confidenceDiff;
+            return safeNumber(b?.riskReward) - safeNumber(a?.riskReward);
+        })
+        .slice(0, limit);
 }
 
 function mergeScannerAndOptionData(stocks, decisions) {
@@ -79,7 +92,6 @@ function mergeScannerAndOptionData(stocks, decisions) {
         const key = getStockKey(decision);
         if (key) optionMap.set(key, decision);
     }
-
     return (Array.isArray(stocks) ? stocks : []).map(stock => {
         const option = optionMap.get(getStockKey(stock));
         if (!option) return stock;
@@ -163,12 +175,16 @@ async function main() {
     const scannerQualified = Array.isArray(scanResult) ? scanResult : [];
     const allScannerResults = Array.isArray(scanResult?.allResults) ? scanResult.allResults : scannerQualified;
     const rejectedResults = Array.isArray(scanResult?.rejected) ? scanResult.rejected : allScannerResults.filter(row => row?.qualified === false);
-
     const rejectionSummary = getScannerSummary(allScannerResults);
 
     console.log("\n========== STOCK QUALIFICATION ==========");
     console.log(`Complete universe scanned: ${allScannerResults.length}`);
     console.log(`Qualified shortlist: ${scannerQualified.length}`);
+
+    // SCANNER sheet is intentionally a broad ranked view of the universe.
+    // It is independent from the stricter option/dashboard qualification gates.
+    const topScannerRows = selectTopScannerRows(allScannerResults, SCANNER_TOP_COUNT);
+    console.log(`Top scanner rows for SCANNER sheet: ${topScannerRows.length}`);
 
     if (scannerQualified.length === 0) {
         console.log("⚠️ Scanner shortlist is empty. Starting candidate-recovery layer.");
@@ -184,7 +200,6 @@ async function main() {
 
     console.log("\n========== OPTIONS DECISION ENGINE ==========");
     let optionDecisions = [];
-
     try {
         const decisions = await calculateOptionsDecisions(optionInputStocks);
         optionDecisions = Array.isArray(decisions) ? decisions : [];
@@ -204,6 +219,9 @@ async function main() {
         console.log(`${index + 1}. ${option?.stock || option?.symbol || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Entry: ${entry.toFixed(2)} | SL: ${stopLoss.toFixed(2)} | T1: ${target1.toFixed(2)} | T2: ${target2.toFixed(2)} | R:R: ${rr.toFixed(2)} | Confidence: ${confidence} | ${normalizeDecision(option) || "N/A"}`);
     });
 
+    // Merge option information only into the 50 rows shown on SCANNER.
+    const scannerSheetData = mergeScannerAndOptionData(topScannerRows, optionDecisions);
+    // Keep the full universe for accuracy tracking so no prediction is lost.
     const completeScannerData = mergeScannerAndOptionData(allScannerResults, optionDecisions);
     const accuracyData = buildAccuracyData(completeScannerData);
     const finalTop5 = getFinalCandidates(optionDecisions);
@@ -214,13 +232,15 @@ async function main() {
         console.log(`${index + 1}. ${option?.stock || option?.symbol || "N/A"} | ${option?.optionType || "N/A"} | Strike: ${option?.recommendedStrike ?? "N/A"} | Confidence: ${getConfidence(option)} | ${normalizeDecision(option) || "N/A"}`);
     });
 
-    // Core Google update. A successful HTTP response is required before the
-    // scan is reported as SUCCESS to the dashboard/status payload.
     let coreSheetUpdated = false;
     try {
-        await updateGoogleSheet({ scannerData: completeScannerData, dashboardData: optionDecisions, accuracyData });
+        // dashboardData is the STRICT dashboard result, not all option decisions.
+        const dashboardPayload = finalTop5;
+        await updateGoogleSheet({ scannerData: scannerSheetData, dashboardData: dashboardPayload, accuracyData });
         coreSheetUpdated = true;
         console.log(`📈 Accuracy records prepared: ${accuracyData.length}`);
+        console.log(`📋 SCANNER sheet rows prepared: ${scannerSheetData.length}`);
+        console.log(`📊 Dashboard rows prepared: ${dashboardPayload.length}`);
     } catch (error) {
         console.error(`⚠️ Google Sheet core update failed: ${error?.message || error}`);
     }
@@ -253,8 +273,6 @@ async function main() {
     const successfulScans = Math.max(0, allScannerResults.length - rejectedResults.filter(x => String(x?.rejectionReason || "").toUpperCase() === "ERROR").length);
     const failedScans = Math.max(0, allScannerResults.length - successfulScans);
 
-    // Status is written LAST. It is SUCCESS only when the core sheet update
-    // and strategy sheet update both completed successfully.
     const scannerStatus = buildScannerStatus({
         status: coreSheetUpdated && strategySheetUpdated ? "SUCCESS" : "PARTIAL_FAILURE",
         startedAt: scanStartedAt,
@@ -275,8 +293,8 @@ async function main() {
         await updateGoogleSheet({
             action: "scanner_status",
             scannerStatus,
-            scannerData: completeScannerData,
-            dashboardData: optionDecisions,
+            scannerData: scannerSheetData,
+            dashboardData: finalTop5,
             accuracyData
         });
         console.log(`🟢 Scanner Status: ${scannerStatus.status} | Last Scan: ${scannerStatus.lastScanTimeIST} IST | Source: ${scannerStatus.lastScanSource}`);
@@ -288,6 +306,7 @@ async function main() {
     console.log(`Universe: ${universe.name}`);
     console.log(`Universe size: ${symbols.length}`);
     console.log(`Complete scanner rows: ${completeScannerData.length}`);
+    console.log(`SCANNER top rows: ${scannerSheetData.length}`);
     console.log(`Accuracy records: ${accuracyData.length}`);
     console.log(`Scanner qualified: ${scannerQualified.length}`);
     console.log(`Options candidate input: ${optionInputStocks.length}`);
@@ -298,14 +317,13 @@ async function main() {
     console.log(`Scanner Status: ${scannerStatus.status}`);
     console.log("========================================\n");
 
-    if (scannerStatus.status !== "SUCCESS") {
-        throw new Error("Scanner completed with partial Google Sheets update failure");
-    }
+    if (scannerStatus.status !== "SUCCESS") throw new Error("Scanner completed with partial Google Sheets update failure");
 
     return {
         universe: universe.name,
         scanned: symbols.length,
         allScannerResults,
+        scannerSheetData,
         qualifiedStocks: scannerQualified,
         optionInputStocks,
         completeScannerData,
