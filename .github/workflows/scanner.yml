@@ -30,6 +30,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Google Sheet V9 webhook
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
+            echo "ERROR: GOOGLE_SHEET_WEBHOOK_URL GitHub secret is empty or missing."
+            exit 1
+          fi
+
+          echo "Checking Google Sheet webhook..."
+
+          RESPONSE=$(curl -L --fail --silent --show-error \
+            --max-time 30 \
+            "$GOOGLE_SHEET_WEBHOOK_URL")
+
+          echo "Google Sheet API response:"
+          echo "$RESPONSE"
+
+          if ! echo "$RESPONSE" | jq -e '.success == true and .version == "V9" and .status == "RUNNING"' >/dev/null; then
+            echo "ERROR: Google Sheet webhook is reachable but is NOT the expected V9 API."
+            echo "Update the GOOGLE_SHEET_WEBHOOK_URL GitHub secret to the current V9 Web App URL."
+            exit 1
+          fi
+
+          echo "Google Sheet V9 webhook verified successfully."
+
       - name: Run scanner every 30 minutes during market session
         shell: bash
         run: |
