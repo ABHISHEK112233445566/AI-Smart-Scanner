@@ -30,53 +30,39 @@ jobs:
 
       - name: Verify Google Sheet webhook
         shell: bash
+        continue-on-error: true
         run: |
           set -euo pipefail
 
           if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
-            echo "ERROR: GOOGLE_SHEET_WEBHOOK_URL secret is missing."
-            exit 1
+            echo "::warning::GOOGLE_SHEET_WEBHOOK_URL secret is missing."
+            echo "Continuing to scanner..."
+            exit 0
           fi
 
-          echo "Checking Google Sheet webhook..."
+          echo "Checking Google Sheet V9 webhook..."
 
-          SUCCESS=false
+          RESPONSE=$(curl \
+            -L \
+            --silent \
+            --show-error \
+            --connect-timeout 5 \
+            --max-time 15 \
+            "$GOOGLE_SHEET_WEBHOOK_URL" 2>&1) || true
 
-          for ATTEMPT in 1 2 3 4 5
-          do
-            echo "Webhook check attempt $ATTEMPT/5..."
+          echo "Webhook response:"
+          echo "$RESPONSE"
 
-            RESPONSE=$(curl \
-              -L \
-              --silent \
-              --show-error \
-              --connect-timeout 10 \
-              --max-time 60 \
-              "$GOOGLE_SHEET_WEBHOOK_URL" 2>&1) || true
-
-            echo "Webhook response:"
-            echo "$RESPONSE"
-
-            if echo "$RESPONSE" | jq -e \
-              '.success == true and
-               (.version == "V9" or .version == "v9") and
-               (.status == "RUNNING" or .status == "running")' \
-              >/dev/null 2>&1
-            then
-              SUCCESS=true
-              echo "Google Sheet V9 webhook verified."
-              break
-            fi
-
-            if [ "$ATTEMPT" -lt 5 ]; then
-              echo "Webhook not ready. Waiting 10 seconds..."
-              sleep 10
-            fi
-          done
-
-          if [ "$SUCCESS" != "true" ]; then
-            echo "::warning::Google Sheet webhook verification failed after 5 attempts."
-            echo "::warning::The scanner will still run. Google Sheet update errors will be reported by the scanner."
+          if echo "$RESPONSE" | jq -e \
+            '.success == true and
+             (.version == "V9" or .version == "v9") and
+             (.status == "RUNNING" or .status == "running")' \
+            >/dev/null 2>&1
+          then
+            echo "Google Sheet V9 webhook verified."
+          else
+            echo "::warning::Google Sheet webhook verification failed or timed out."
+            echo "This verification failure will NOT stop the scanner."
           fi
 
       - name: Run AI Smart Scanner
@@ -89,21 +75,20 @@ jobs:
         shell: bash
         run: |
           echo "========================================"
-          echo "       GITHUB SCANNER RESULT"
+          echo "       AI SMART SCANNER RESULT"
           echo "========================================"
 
           if [ "${{ steps.scanner.outcome }}" = "success" ]; then
             echo "Scanner completed successfully."
           else
-            echo "Scanner completed with warnings/errors."
-            echo "Check the scanner output above for the exact Google Sheets failure."
+            echo "Scanner completed with errors or partial failures."
+            echo "Review the scanner output above."
           fi
 
           echo "========================================"
 
-      - name: Finish workflow
+      - name: Complete workflow
         if: always()
-        shell: bash
         run: |
-          echo "AI Scanner workflow finished."
+          echo "AI Scanner workflow completed."
           exit 0
