@@ -1,17 +1,15 @@
-name: AI Smart Scanner
+name: AI Scanner
 
 on:
   workflow_dispatch:
   schedule:
-    # One trigger at 09:10 IST. The job then controls the market-session
-    # scans itself every 30 minutes. This avoids relying on many separate
-    # GitHub scheduled events being delivered on time.
-    - cron: "40 3 * * 1-5"
+    - cron: '40 3 * * 1-5'
 
 jobs:
   scanner:
+    name: Run AI Smart Scanner
     runs-on: ubuntu-latest
-    timeout-minutes: 420
+    timeout-minutes: 30
 
     env:
       UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
@@ -36,64 +34,19 @@ jobs:
           set -euo pipefail
 
           if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
-            echo "ERROR: GOOGLE_SHEET_WEBHOOK_URL GitHub secret is empty or missing."
+            echo "ERROR: GOOGLE_SHEET_WEBHOOK_URL secret is missing."
             exit 1
           fi
 
-          echo "Checking Google Sheet webhook..."
-
-          RESPONSE=$(curl -L --fail --silent --show-error \
-            --max-time 30 \
-            "$GOOGLE_SHEET_WEBHOOK_URL")
-
-          echo "Google Sheet API response:"
+          RESPONSE=$(curl -L --fail --silent --show-error --max-time 30 "$GOOGLE_SHEET_WEBHOOK_URL")
           echo "$RESPONSE"
 
           if ! echo "$RESPONSE" | jq -e '.success == true and .version == "V9" and .status == "RUNNING"' >/dev/null; then
-            echo "ERROR: Google Sheet webhook is reachable but is NOT the expected V9 API."
-            echo "Update the GOOGLE_SHEET_WEBHOOK_URL GitHub secret to the current V9 Web App URL."
+            echo "ERROR: Google Sheet V9 webhook verification failed."
             exit 1
           fi
 
-          echo "Google Sheet V9 webhook verified successfully."
+          echo "Google Sheet V9 webhook verified."
 
-      - name: Run scanner every 30 minutes during market session
-        shell: bash
-        run: |
-          set -e
-
-          # Market session: 09:15-15:15 IST = 03:45-09:45 UTC.
-          # Start slightly before the first scan and wait for each exact
-          # 30-minute slot. The scanner itself performs one complete scan.
-          while true; do
-            NOW=$(date -u +%H:%M)
-            H=$(date -u +%H)
-            M=$(date -u +%M)
-            MINUTES=$((10#$H * 60 + 10#$M))
-
-            # Stop after the 15:15 IST session endpoint (09:45 UTC).
-            if [ "$MINUTES" -gt 585 ]; then
-              echo "Market session complete: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-              break
-            fi
-
-            # Run at/after the half-hour slots: 03:45, 04:15, ... 09:45 UTC.
-            if [ "$MINUTES" -ge 225 ]; then
-              echo "Starting scanner: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-              npm start
-            else
-              echo "Waiting for first scan slot. Current UTC: $NOW"
-            fi
-
-            # Wait until the next 15/45 minute boundary.
-            CURRENT=$((10#$H * 60 + 10#$M))
-            NEXT=$(( ((CURRENT / 30) + 1) * 30 ))
-            if [ "$NEXT" -gt 585 ]; then
-              NEXT=585
-            fi
-            WAIT=$((NEXT * 60 - CURRENT * 60 - 10#$(( $(date -u +%S) ))))
-            if [ "$WAIT" -le 0 ]; then WAIT=60; fi
-
-            echo "Next scan check in ${WAIT}s"
-            sleep "$WAIT"
-          done
+      - name: Run AI Smart Scanner
+        run: npm start
