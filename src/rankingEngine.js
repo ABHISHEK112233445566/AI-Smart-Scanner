@@ -34,7 +34,6 @@ function getValidatedRR(stock) {
     const marketSource = source.includes("MARKET") || source.includes("STRUCTURE");
     if (rr <= 0 || !Number.isFinite(rr)) return 0;
     if (validFlag || marketSource) return rr;
-    // Legacy rows without explicit provenance are not trusted.
     return 0;
 }
 
@@ -111,6 +110,15 @@ function calculateFinalRank(stock) {
 
     let finalScore = aiScore * 0.35 + mtfScore * 0.20 + breakoutScore + volumeScore + adxScore + rrScore;
     finalScore = Math.round(Math.max(0, Math.min(100, finalScore)));
+
+    // IMPORTANT FLOW FIX:
+    // The options engine consumes aiFinalScore when calculating its scanner
+    // gate. After ranking, aiFinalScore must represent the validated scanner
+    // rank, not the upstream AI-only score. Keep aiScore unchanged so the
+    // original AI score remains available for diagnostics.
+    stock.aiFinalScore = finalScore;
+    stock.rankingScore = finalScore;
+    stock.finalScore = finalScore;
 
     return {
         finalScore,
