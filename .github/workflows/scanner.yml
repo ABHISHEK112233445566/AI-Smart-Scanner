@@ -2,17 +2,16 @@ name: AI Smart Scanner
 
 on:
   workflow_dispatch:
-
   schedule:
-    # 09:15, 09:45, 10:15, 10:45 ... 14:45 IST
-    - cron: "15,45 3-8 * * 1-5"
-
-    # 15:15 IST
-    - cron: "45 9 * * 1-5"
+    # One trigger at 09:10 IST. The job then controls the market-session
+    # scans itself every 30 minutes. This avoids relying on many separate
+    # GitHub scheduled events being delivered on time.
+    - cron: "40 3 * * 1-5"
 
 jobs:
   scanner:
     runs-on: ubuntu-latest
+    timeout-minutes: 420
 
     env:
       UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
@@ -31,5 +30,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run AI Smart Scanner
-        run: npm start
+      - name: Run scanner every 30 minutes during market session
+        shell: bash
+        run: |
+          set -e
+
+          # Market session: 09:15-15:15 IST = 03:45-09:45 UTC.
+          # Start slightly before the first scan and wait for each exact
+          # 30-minute slot. The scanner itself performs one complete scan.
+          while true; do
+            NOW=$(date -u +%H:%M)
+            H=$(date -u +%H)
+            M=$(date -u +%M)
+            MINUTES=$((10#$H * 60 + 10#$M))
+
+            # Stop after the 15:15 IST session endpoint (09:45 UTC).
+            if [ "$MINUTES" -gt 585 ]; then
+              echo "Market session complete: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+              break
+            fi
+
+            # Run at/after the half-hour slots: 03:45, 04:15, ... 09:45 UTC.
+            if [ "$MINUTES" -ge 225 ]; then
+              echo "Starting scanner: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+              npm start
+            else
+              echo "Waiting for first scan slot. Current UTC: $NOW"
+            fi
+
+            # Wait until the next 15/45 minute boundary.
+            CURRENT=$((10#$H * 60 + 10#$M))
+            NEXT=$(( ((CURRENT / 30) + 1) * 30 ))
+            if [ "$NEXT" -gt 585 ]; then
+              NEXT=585
+            fi
+            WAIT=$((NEXT * 60 - CURRENT * 60 - 10#$(( $(date -u +%S) ))))
+            if [ "$WAIT" -le 0 ]; then WAIT=60; fi
+
+            echo "Next scan check in ${WAIT}s"
+            sleep "$WAIT"
+          done
