@@ -104,9 +104,10 @@ function confidence(row){return n(row,["optionsConfidence","confidence","optionC
 function riskReward(row){return n(row,["optionRiskReward","riskReward","rr","stockRiskReward"]);}
 function failedGateCount(row){const explicit=n(row,["failedGateCount","failedGatesCount"],NaN);if(Number.isFinite(explicit))return explicit;if(Array.isArray(row?.failedGates))return row.failedGates.length;return 0;}
 
-// Strategy sheets are opportunity sheets, not only final-trade sheets.
-// TRADE and WATCH with a real contract + live premium are shown so the user
-// can see valid option setups. REJECT/no-contract rows are excluded.
+// Strategy sheets are opportunity sheets. Show TRADE/WATCH when a real
+// option contract and live premium exist. Do NOT apply the trade RR gate here;
+// the options engine remains responsible for rejecting low-RR trades. This
+// prevents valid CALL/PUT opportunities from disappearing from the sheets.
 function optionBuyCandidate(row){
   const type=optionType(row);if(!type)return false;
   const d=decision(row);if(d!=="TRADE"&&d!=="WATCH")return false;
@@ -114,7 +115,6 @@ function optionBuyCandidate(row){
   if(!yes(row,["optionPriceAvailable","hasOptionPrice","optionLtpAvailable"]))return false;
   if(!(n(row,["optionLTP","optionEntry","optionPrice","optionLastPrice"])>0))return false;
   if(row.marketSetupValid!==true&&String(row.marketSetupValid).toLowerCase()!=="true")return false;
-  if(!(riskReward(row)>=1.2))return false;
   return true;
 }
 
@@ -138,7 +138,7 @@ function optionValue(row,col){
 function optionSort(rows){return [...rows].sort((a,b)=>confidence(b)-confidence(a)||riskReward(b)-riskReward(a)||n(b,["mtfScore"])-n(a,["mtfScore"]));}
 function optionRows(rows){const seen=new Set(),out=[];for(const row of rows){if(!optionBuyCandidate(row))continue;const key=`${stock(row)}|${optionType(row)}|${String(optionValue(row,"optionSymbol")).toUpperCase()}`;if(seen.has(key))continue;seen.add(key);out.push(row);}return optionSort(out).slice(0,OPTIONS_MAX_ROWS);}
 
-async function postSheet(sheet,headers,rows){const url=webhook();if(!url)throw new Error("Google Sheet webhook URL is missing.");const res=await axios.post(url,{action:"replaceSheet",sheet,clearFirst:true,headers,rows,timestamp:new Date().toISOString()},{timeout:TIMEOUT,headers:{"Content-Type":"application/json"}});if(res?.data?.success===false)throw new Error(`Google Sheets rejected ${sheet}: ${res.data.error||"unknown error"}`);return res?.data||{};}
+async function postSheet(sheet,headers,rows){const url=webhook();if(!url)throw new Error("Google Sheet webhook URL is missing.");const res=await axios.post(url,{action:"replaceSheet",sheet,clearFirst:true,headers,rows,timestamp:new Date().toISOString()},{timeout:TIMEOUT,headers:{"Content-Type":"application/json"}});if(res?.data?.success!==true)throw new Error(`Google Sheets rejected ${sheet}: ${res?.data?.error||"invalid success response"}`);if(String(res?.data?.sheet||"")!==sheet)throw new Error(`Google Sheets response sheet mismatch: expected ${sheet}, received ${res?.data?.sheet||""}`);if(Number(res?.data?.rowCount||0)!==rows.length)throw new Error(`Google Sheets row-count mismatch for ${sheet}: sent ${rows.length}, received ${res?.data?.rowCount}`);return res.data;}
 
 async function updateStrategySheets(scannerData,optionDecisions){
   const scanner=Array.isArray(scannerData)?scannerData.filter(Boolean):[],options=Array.isArray(optionDecisions)?optionDecisions.filter(Boolean):[];
