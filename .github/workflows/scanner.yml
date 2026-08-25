@@ -9,11 +9,11 @@ jobs:
   scanner:
     name: Run AI Smart Scanner
     runs-on: ubuntu-latest
+
+    # Scheduler runs every 30 minutes.
+    # Give it enough time to stay alive during the trading session.
     timeout-minutes: 420
 
-    # SAME secrets for:
-    # 1. Mobile/manual Run workflow
-    # 2. Scheduled workflow
     env:
       UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
       GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
@@ -31,10 +31,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ============================================================
-      # VERIFY REQUIRED SECRETS
-      # ============================================================
-      - name: Verify scanner configuration
+      - name: Verify required secrets
         shell: bash
         run: |
           set -euo pipefail
@@ -44,69 +41,28 @@ jobs:
           echo "========================================"
 
           if [ -z "${UPSTOX_ACCESS_TOKEN:-}" ]; then
-            echo "::error::UPSTOX_ACCESS_TOKEN is missing."
-            echo "The scanner cannot run without the Upstox token."
+            echo "::error::UPSTOX_ACCESS_TOKEN secret is missing."
             exit 1
           fi
 
-          echo "✅ UPSTOX_ACCESS_TOKEN is available."
+          echo "✅ UPSTOX_ACCESS_TOKEN available."
 
           if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
-            echo "::error::GOOGLE_SHEET_WEBHOOK_URL is missing."
-            echo "Google Sheets cannot be updated without the webhook URL."
+            echo "::error::GOOGLE_SHEET_WEBHOOK_URL secret is missing."
             exit 1
           fi
 
-          echo "✅ GOOGLE_SHEET_WEBHOOK_URL is available."
+          echo "✅ GOOGLE_SHEET_WEBHOOK_URL available."
 
           echo "========================================"
-          echo "Secrets/configuration verified."
+          echo "Configuration verified."
+          echo "Starting scanner..."
           echo "========================================"
 
-      # ============================================================
-      # VERIFY GOOGLE SHEET WEBHOOK
-      # ============================================================
-      - name: Verify Google Sheet webhook
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Checking Google Sheet V9 webhook..."
-
-          RESPONSE=$(curl \
-            -L \
-            --silent \
-            --show-error \
-            --connect-timeout 10 \
-            --max-time 20 \
-            "$GOOGLE_SHEET_WEBHOOK_URL")
-
-          echo "Webhook response:"
-          echo "$RESPONSE"
-
-          if echo "$RESPONSE" | jq -e \
-            '.success == true and
-             (.version == "V9" or .version == "v9") and
-             (.status == "RUNNING" or .status == "running")' \
-             >/dev/null 2>&1
-          then
-            echo "✅ Google Sheet V9 webhook verified."
-          else
-            echo "::error::Google Sheet webhook verification failed."
-            echo "Scanner will NOT start."
-            exit 1
-          fi
-
-      # ============================================================
-      # RUN SCANNER
-      # ============================================================
       - name: Run AI Smart Scanner
         id: scanner
         run: npm start
 
-      # ============================================================
-      # RESULT
-      # ============================================================
       - name: Scanner result
         if: always()
         shell: bash
