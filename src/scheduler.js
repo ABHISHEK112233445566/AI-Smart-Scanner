@@ -1,104 +1,76 @@
 // ============================================================
-// AI SMART SCANNER - MARKET HOURS SCHEDULER
+// AI SMART SCANNER - 24-HOUR SCHEDULER
 // ============================================================
-// Configuration is owned by config.js. This file only schedules app.js.
+// Runs app.js immediately and then every 30 minutes, 24/7.
+// No market-hours restriction. One scan at a time only.
 
 const { spawn } = require("child_process");
 const path = require("path");
-const config = require("./config");
 
-const schedule = config.SCHEDULER || {};
-const START_HOUR = Number(schedule.START_HOUR ?? 9);
-const START_MINUTE = Number(schedule.START_MINUTE ?? 15);
-const END_HOUR = Number(schedule.END_HOUR ?? 15);
-const END_MINUTE = Number(schedule.END_MINUTE ?? 30);
-const INTERVAL_MINUTES = Number(schedule.INTERVAL_MINUTES ?? 5);
-const TIMEOUT_MINUTES = Number(schedule.TIMEOUT_MINUTES ?? 10);
+const INTERVAL_MINUTES = 30;
+const INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000;
+const appPath = path.join(__dirname, "app.js");
 
 let scannerRunning = false;
 let scannerProcess = null;
-let nextScanTimer = null;
 
-function getIndiaTime() {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
-    }).formatToParts(now);
-    const get = type => parts.find(p => p.type === type)?.value;
-    return new Date(`${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`);
+function formatTime(date = new Date()) {
+    return date.toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+    });
 }
-
-function timeToMinutes(date) { return date.getHours() * 60 + date.getMinutes(); }
-function isTradingDay(date) { const day = date.getDay(); return day !== 0 && day !== 6; }
-function isMarketHours(date) {
-    if (!isTradingDay(date)) return false;
-    const now = timeToMinutes(date);
-    return now >= START_HOUR * 60 + START_MINUTE && now <= END_HOUR * 60 + END_MINUTE;
-}
-function formatTime(date) { return date.toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false }); }
 
 function runScanner() {
-    if (scannerRunning) return;
+    if (scannerRunning) {
+        console.log(`[${formatTime()}] ⚠️ Previous scan is still running. Skipping this cycle.`);
+        return;
+    }
+
     scannerRunning = true;
-    const appPath = path.join(__dirname, "app.js");
-    console.log(`\n[${formatTime(getIndiaTime())}] Starting scanner...`);
-    scannerProcess = spawn(process.execPath, [appPath], { stdio: "inherit", env: process.env });
-    const timeout = setTimeout(() => {
-        if (scannerProcess && !scannerProcess.killed) {
-            console.error("⚠️ Scanner timeout reached; terminating current scan.");
-            scannerProcess.kill();
-        }
-    }, Math.max(1, TIMEOUT_MINUTES) * 60 * 1000);
-    scannerProcess.on("close", code => {
-        clearTimeout(timeout);
-        scannerRunning = false;
-        scannerProcess = null;
-        console.log(`[${formatTime(getIndiaTime())}] Scanner finished with code ${code}.`);
+    console.log(`\n[${formatTime()}] 🚀 Starting scanner...`);
+
+    scannerProcess = spawn(process.execPath, [appPath], {
+        stdio: "inherit",
+        env: process.env
     });
+
     scannerProcess.on("error", error => {
-        clearTimeout(timeout);
+        console.error(`[${formatTime()}] ❌ Scanner process error: ${error.message}`);
         scannerRunning = false;
         scannerProcess = null;
-        console.error("❌ Scanner process error:", error.message);
+    });
+
+    scannerProcess.on("close", code => {
+        scannerRunning = false;
+        scannerProcess = null;
+        console.log(`[${formatTime()}] ✅ Scanner finished with code ${code}.`);
+        console.log(`[${formatTime()}] 🔁 Scheduler remains active. Next scan in ${INTERVAL_MINUTES} minutes.`);
     });
 }
 
-function scheduleNext() {
-    if (nextScanTimer) clearTimeout(nextScanTimer);
-    const now = getIndiaTime();
-    if (!isMarketHours(now)) return;
-    const intervalMs = Math.max(1, INTERVAL_MINUTES) * 60 * 1000;
-    const elapsedFromHour = now.getMinutes() % Math.max(1, INTERVAL_MINUTES);
-    const seconds = now.getSeconds() * 1000 + now.getMilliseconds();
-    let delay = (Math.max(1, INTERVAL_MINUTES) - elapsedFromHour) * 60 * 1000 - seconds;
-    if (delay <= 0) delay = intervalMs;
-    nextScanTimer = setTimeout(() => {
-        const current = getIndiaTime();
-        if (isMarketHours(current)) runScanner();
-        scheduleNext();
-    }, delay);
-}
+console.log("============================================================");
+console.log("🚀 AI SMART SCANNER — PERMANENT 24-HOUR MODE");
+console.log(`🔁 Scan interval: EVERY ${INTERVAL_MINUTES} MINUTES`);
+console.log("🕐 Market-hours restriction: DISABLED");
+console.log("🛡️ Overlapping scans: BLOCKED");
+console.log("============================================================");
 
-function startScheduler() {
-    const now = getIndiaTime();
-    console.log(`🕘 Scheduler started | NSE ${String(START_HOUR).padStart(2,"0")}:${String(START_MINUTE).padStart(2,"0")}–${String(END_HOUR).padStart(2,"0")}:${String(END_MINUTE).padStart(2,"0")} IST | every ${INTERVAL_MINUTES} min`);
-    if (isMarketHours(now)) runScanner();
-    scheduleNext();
-}
+// First scan immediately when the service starts.
+runScanner();
 
-function stopScheduler() {
-    if (nextScanTimer) clearTimeout(nextScanTimer);
-    nextScanTimer = null;
+// Continue forever every 30 minutes, including outside market hours.
+const interval = setInterval(runScanner, INTERVAL_MS);
+
+function shutdown(signal) {
+    console.log(`\n[${formatTime()}] 🛑 Scheduler received ${signal}. Shutting down.`);
+    clearInterval(interval);
     if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
-    scannerProcess = null;
-    scannerRunning = false;
+    process.exit(0);
 }
 
-if (require.main === module) {
-    startScheduler();
-    process.on("SIGINT", () => { stopScheduler(); process.exit(0); });
-    process.on("SIGTERM", () => { stopScheduler(); process.exit(0); });
-}
-
-module.exports = { startScheduler, stopScheduler, runScanner, isMarketHours, getIndiaTime };
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
