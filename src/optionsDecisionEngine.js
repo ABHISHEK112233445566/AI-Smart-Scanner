@@ -78,7 +78,7 @@ function direction(data,p) {
     const rsi=num(data.rsi); if(rsi>=55&&rsi<=70){call+=8;ce++;} if(rsi>=30&&rsi<=45){put+=8;pe++;}
     const macd=num(data.macdValue??data.macd),sig=num(data.macdSignal),hist=num(data.histogram??data.macdHistogram); if(macd>sig&&hist>=0){call+=8;ce++;} if(macd<sig&&hist<=0){put+=8;pe++;}
     const adx=num(data.adx),pdi=num(data.pdi),mdi=num(data.mdi); if(adx>=20&&pdi>mdi){call+=7;ce++;} if(adx>=20&&mdi>pdi){put+=7;pe++;}
-    const vwap=num(data.vwap); if(vwap&&p>vwap){call+=5;ce++;} if(vwap&&p<vwap){put+=5;pe++;}
+    const vwap=num(data.vwap); if(vwap&&p>vwap){call+=5;ce++;} if(vwap&&p<vwap){put+=5;ce++;}
     const st=normalizeDirection(data.supertrend?.trend??data.supertrend); if(st==="BULLISH"){call+=5;ce++;} if(st==="BEARISH"){put+=5;pe++;}
     const signal=normalizeDirection(data.signal),trend=normalizeDirection(data.trend); if(signal==="BULLISH"){call+=5;ce++;} if(signal==="BEARISH"){put+=5;pe++;} if(trend==="BULLISH"){call+=3;ce++;} if(trend==="BEARISH"){put+=3;pe++;}
     const diff=Math.abs(call-put), type=call>put&&call>=C.MIN_DIRECTION_SCORE&&diff>=C.MIN_DIRECTION_DIFFERENCE&&ce>=C.MIN_DIRECTION_EVIDENCE?"CALL":put>call&&put>=C.MIN_DIRECTION_SCORE&&diff>=C.MIN_DIRECTION_DIFFERENCE&&pe>=C.MIN_DIRECTION_EVIDENCE?"PUT":null;
@@ -88,7 +88,6 @@ function direction(data,p) {
 function mtf(type,data){const expected=type==="CALL"?"BULLISH":"BEARISH";const values=[["DAILY",data.dailyTrend],["4H",data.fourHourTrend],["1H",data.oneHourTrend],["15M",data.fifteenMinTrend]].map(([name,value])=>({name,value:normalizeDirection(value)}));const available=values.filter(x=>x.value!=="UNKNOWN"),aligned=available.filter(x=>x.value===expected),opposition=available.filter(x=>x.value!==expected);const score=available.length?clamp(50+((aligned.length-opposition.length)/available.length)*50):0;return {score,alignment:aligned.length,opposition:opposition.length,available:available.length,required:3,alignedTimeframes:aligned.map(x=>x.name),availableTimeframes:available.map(x=>x.name),isAligned:aligned.length>=3};}
 
 function confidence(data,dir,m,rr) {
-    // Preserve the original scanner score. Do not overwrite it with a second scanner calculation.
     const scanner=clamp(first(data.rankingScore,data.finalScore,data.aiFinalScore,data.aiScore,data.scannerScore,data.score)||0);
     const direction=clamp(dir.optionType==="CALL"?dir.callScore:dir.putScore);
     const trend=clamp(50+(normalizeDirection(data.trend)===(dir.optionType==="CALL"?"BULLISH":"BEARISH")?15:0));
@@ -105,15 +104,17 @@ function gates(dir,m,rr,conf,scanner) {
     return {base,trade,failedBase:Object.keys(base).filter(k=>!base[k]),failedTrade:Object.keys(trade).filter(k=>!trade[k]),basePassed:Object.values(base).every(Boolean),tradePassed:Object.values(trade).every(Boolean)};
 }
 
+function strikeValue(c) { return positive(c?.strike,c?.strike_price,c?.strikePrice,c?.strike_price_value); }
+function expiryValue(c) { return String(c?.expiry??c?.expiry_date??c?.expiryDate??"").trim().slice(0,10); }
+
 function recommendedStrike(contracts,spot,type) {
-    const valid=(contracts||[]).filter(c=>c&&Number(c.strike)>0);
+    const valid=(contracts||[]).filter(c=>strikeValue(c)>0);
     if(!valid.length) return null;
-    const strikes=[...new Set(valid.map(c=>Number(c.strike)).filter(Number.isFinite))].sort((a,b)=>a-b);
+    const strikes=[...new Set(valid.map(strikeValue).filter(Number.isFinite))].sort((a,b)=>a-b);
     const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]);
     const index=strikes.indexOf(atm);
-    // CALL: one strike ITM; PUT: one strike ITM. This is based on actual available strikes.
     const target=type==="CALL"?strikes[Math.max(0,index-1)]:strikes[Math.min(strikes.length-1,index+1)];
-    return {strike:target,atmStrike:atm,strikeInterval:index>0?Math.abs(strikes[index]-strikes[index-1]):0};
+    return {strike:target,atmStrike:atm,strikeInterval:index>0?Math.abs(strikes[index]-strikes[index-1]):(strikes.length>1?Math.abs(strikes[1]-strikes[0]):0)};
 }
 
 async function resolveContract(symbol,type,spot) {
@@ -126,10 +127,16 @@ async function resolveContract(symbol,type,spot) {
         const expiry=typeof broker.getValidOptionExpiry==="function"?await broker.getValidOptionExpiry(symbol,C.MIN_EXPIRY_DAYS):null;
         if(!expiry) return {contract:null,reason:"NO_VALID_EXPIRY"};
         const normalizedType=typeof broker.normalizeOptionType==="function"?broker.normalizeOptionType(type):(type==="CALL"?"CE":"PE");
-        const sideContracts=contracts.filter(c=>String(c.optionType||c.option_type||c.instrument_type||"").toUpperCase()===normalizedType || (typeof broker.getOptionType==="function"&&broker.getOptionType(c)===normalizedType));
-        const usable=sideContracts.filter(c=>String(c.expiry||"").slice(0,10)===String(expiry).slice(0,10));
+        const sideContracts=contracts.filter(c=>{
+            const direct=text(c.optionType??c.option_type??c.optionTypeName??"");
+            if(direct===normalizedType) return true;
+            if(typeof broker.getOptionType==="function" && broker.getOptionType(c)===normalizedType) return true;
+            const symbolText=text(c.trading_symbol??c.tradingsymbol??"");
+            return normalizedType==="CE"?symbolText.endsWith("CE"):symbolText.endsWith("PE");
+        });
+        const usable=sideContracts.filter(c=>expiryValue(c)===String(expiry).slice(0,10));
         const rec=recommendedStrike(usable,spot,type);
-        if(!rec) return {contract:null,reason:"NO_VALID_STRIKES"};
+        if(!rec) return {contract:null,reason:"NO_VALID_STRIKES",expiry,availableContractCount:contracts.length,sideContractCount:sideContracts.length};
         let contract=null;
         if(typeof broker.getOptionContractBySymbol==="function") contract=await broker.getOptionContractBySymbol(symbol,type,rec.strike,expiry,C.MIN_EXPIRY_DAYS);
         if(!contract&&typeof broker.getOptionContract==="function") contract=await broker.getOptionContract(symbol,type,rec.strike,expiry,C.MIN_EXPIRY_DAYS);
@@ -150,7 +157,6 @@ async function resolveQuote(contract) {
 
 function optionPremiumLevels(ltp) {
     const entry=round2(ltp); if(entry<=0) return {valid:false};
-    // Premium risk levels are deliberately conservative and separate from underlying levels.
     const stopLoss=round2(entry*0.70), target1=round2(entry*1.30), target2=round2(entry*1.60);
     return {valid:true,entry,stopLoss,target1,target2,risk:round2(entry-stopLoss),reward:round2(target1-entry),riskReward:round2((target1-entry)/(entry-stopLoss))};
 }
@@ -159,7 +165,7 @@ async function makeOptionDecision(data={}) {
     const symbol=first(data.symbol,data.stock,data.name), price=stockPrice(data);
     if(!symbol||price<=0) return {...data,symbol,decision:"REJECT",optionsDecision:"REJECT",reason:"INVALID_STOCK_DATA",optionsReason:"INVALID_STOCK_DATA",confidence:0,optionsConfidence:0};
     const dir=direction(data,price);
-    if(!dir.optionType) return {...data,symbol,price,direction:"NO DIRECTION",optionType:null,callScore:dir.callScore,putScore:dir.putScore,scoreDifference:dir.directionDifference,callEvidence:dir.callEvidence,putEvidence:dir.putEvidence,decision:"REJECT",optionsDecision:"REJECT",rating:"NO DIRECTION",optionsRating:"NO DIRECTION",reason:"Directional evidence is insufficient.",optionsReason:"Directional evidence is insufficient.",failedGates:["direction"],failedGateCount:1,marketSetupValid:false,contractAvailable:false,optionPriceAvailable:false};
+    if(!dir.optionType) return {...data,symbol,price,direction:"NO DIRECTION",optionType:null,callScore:dir.callScore,putScore:dir.putScore,scoreDifference:dir.directionDifference,callEvidence:dir.callEvidence,putEvidence:dir.putEvidence,decision:"REJECT",optionsDecision:"REJECT",rating:"NO DIRECTION",optionsRating:"NO DIRECTION",reason:"Directional evidence is insufficient.",optionsReason:"Directional evidence is insufficient.",failedGates:["direction"],failedGateCount:1,marketSetupValid:false,contractAvailable:false,optionPriceAvailable:false,optionSetupAvailable:false,tradeGates:{},tradeEligible:false};
     const type=dir.optionType, entry=stockEntry(data,price), setup=marketSetup(data,entry,type), m=mtf(type,data), pre=confidence(data,dir,m,setup.riskReward);
     const contractResult=await resolveContract(symbol,type,price), contract=contractResult.contract;
     const quote=await resolveQuote(contract); const premium=optionPremiumLevels(quote?.ltp||0);
@@ -173,13 +179,14 @@ async function makeOptionDecision(data={}) {
     else if(pre.confidence>=C.WATCH_CONFIDENCE&&g.basePassed) {decision="WATCH";reason="Valid setup and option contract, but TRADE gates are not all satisfied.";}
     else reason="Setup does not satisfy minimum quality gates.";
     const rating=decision==="TRADE"?"A":decision==="WATCH"?"B":!setup.valid?"LOW_RR":!contract?"NO CONTRACT":!quote?"NO LTP":"C";
-    return {...data,symbol,price,direction:type,finalDirection:type,optionType:type,callScore:dir.callScore,putScore:dir.putScore,scoreDifference:dir.directionDifference,callEvidence:dir.callEvidence,putEvidence:dir.putEvidence,entry:setup.entry,stopLoss:setup.stopLoss,target1:setup.target1,target2:setup.target2,stockEntry:setup.entry,stockStopLoss:setup.stopLoss,stockTarget1:setup.target1,stockTarget2:setup.target2,risk:setup.risk,reward:setup.reward,riskReward:setup.riskReward,stockRiskReward:setup.riskReward,stopSource:setup.stopSource,target1Source:setup.target1Source,target2Source:setup.target2Source,levelsSource:setup.levelsSource,supportLevels:setup.supportLevels,resistanceLevels:setup.resistanceLevels,mtfScore:m.score,mtfAlignment:m.alignment,mtfAligned:m.isAligned,alignedTimeframes:m.alignedTimeframes,mtfAvailableTimeframes:m.availableTimeframes,mtfAvailableCount:m.available,optionsConfidence:pre.confidence,confidence:pre.confidence,directionQuality:pre.directionScore,directionScore:pre.directionScore,trendScore:pre.trendScore,momentumScore:pre.momentumScore,volumeScore:pre.volumeScore,rrScore:pre.rrScore,scannerScore:pre.scannerScore,recommendedStrike:contractResult.recommended?.strike??null,atmStrike:contractResult.recommended?.atmStrike??null,optionStrike:contract?.strike??null,strikeInterval:contractResult.recommended?.strikeInterval??null,optionStrikeDifference:contract?.strike!=null&&contractResult.recommended?.strike!=null?Math.abs(num(contract.strike)-num(contractResult.recommended.strike)):null,contractAvailable:!!contract,optionPriceAvailable:!!quote?.ltp,optionSetupAvailable:!!premium.valid,optionSymbol:contract?.tradingSymbol||null,optionExpiry:contract?.expiry||contractResult.expiry||null,optionExpiryDays:contract?.expiryDays||null,optionInstrumentKey:contract?.instrumentKey||null,optionEntry:premium.entry||null,optionLTP:quote?.ltp||null,optionStopLoss:premium.stopLoss||null,optionTarget1:premium.target1||null,optionTarget2:premium.target2||null,optionRisk:premium.risk||null,optionReward:premium.reward||null,optionRiskReward:premium.riskReward||null,decision,optionsDecision:decision,rating,optionsRating:rating,reason,optionsReason:reason,contractLookupReason:contractResult.reason||null,failedGates:g.tradePassed?[]:g.failedTrade,failedGateCount:g.tradePassed?0:g.failedTrade.length,baseGates:g.base,tradeGates:g.trade,marketSetupValid:setup.valid,tradeEligible:g.tradePassed};
+    const contractStrike=contract?strikeValue(contract):null;
+    return {...data,symbol,price,direction:type,stockDirection:type==="CALL"?"BULLISH":"BEARISH",technicalDirection:type==="CALL"?"BULLISH":"BEARISH",finalDirection:type,optionType:type,callScore:dir.callScore,putScore:dir.putScore,scoreDifference:dir.directionDifference,callEvidence:dir.callEvidence,putEvidence:dir.putEvidence,entry:setup.entry,stopLoss:setup.stopLoss,target1:setup.target1,target2:setup.target2,stockEntry:setup.entry,stockStopLoss:setup.stopLoss,stockTarget1:setup.target1,stockTarget2:setup.target2,risk:setup.risk,reward:setup.reward,riskReward:setup.riskReward,stockRiskReward:setup.riskReward,stopSource:setup.stopSource,target1Source:setup.target1Source,target2Source:setup.target2Source,levelsSource:setup.levelsSource,supportLevels:setup.supportLevels,resistanceLevels:setup.resistanceLevels,mtfScore:m.score,mtfAlignment:m.alignment,mtfAligned:m.isAligned,alignedTimeframes:m.alignedTimeframes,mtfAvailableTimeframes:m.availableTimeframes,mtfAvailableCount:m.available,optionsConfidence:pre.confidence,confidence:pre.confidence,directionQuality:pre.directionScore,directionScore:pre.directionScore,trendScore:pre.trendScore,momentumScore:pre.momentumScore,volumeScore:pre.volumeScore,rrScore:pre.rrScore,scannerScore:pre.scannerScore,recommendedStrike:contractResult.recommended?.strike??null,atmStrike:contractResult.recommended?.atmStrike??null,optionStrike:contractStrike, strikeInterval:contractResult.recommended?.strikeInterval??null,optionStrikeDifference:contractStrike!=null&&contractResult.recommended?.strike!=null?Math.abs(contractStrike-num(contractResult.recommended.strike)):null,contractAvailable:!!contract,optionPriceAvailable:!!quote?.ltp,optionSetupAvailable:!!premium.valid,optionSymbol:contract?.tradingSymbol||contract?.trading_symbol||contract?.tradingsymbol||null,optionExpiry:contract?.expiry||contractResult.expiry||null,optionExpiryDays:contract?.expiryDays||null,optionInstrumentKey:contract?.instrumentKey||contract?.instrument_key||null,optionEntry:premium.entry||null,optionLTP:quote?.ltp||null,optionStopLoss:premium.stopLoss||null,optionTarget1:premium.target1||null,optionTarget2:premium.target2||null,optionRisk:premium.risk||null,optionReward:premium.reward||null,optionRiskReward:premium.riskReward||null,decision,optionsDecision:decision,rating,optionsRating:rating,reason,optionsReason:reason,contractLookupReason:contractResult.reason||null,failedGates:g.tradePassed?[]:g.failedTrade,failedGateCount:g.tradePassed?0:g.failedTrade.length,baseGates:g.base,tradeGates:{...g.trade,allPassed:g.tradePassed,tradePassed:g.tradePassed},marketSetupValid:setup.valid,tradeEligible:g.tradePassed};
 }
 
 async function calculateOptionsDecisions(stocks=[]) {
     if(!Array.isArray(stocks)) return [];
     const results=[];
-    for(const stock of stocks) { try { results.push(await makeOptionDecision(stock)); } catch(error) { results.push({...stock,decision:"REJECT",optionsDecision:"REJECT",reason:error?.message||"OPTIONS_ENGINE_ERROR",optionsReason:error?.message||"OPTIONS_ENGINE_ERROR",confidence:0,optionsConfidence:0}); } }
+    for(const stock of stocks) { try { results.push(await makeOptionDecision(stock)); } catch(error) { results.push({...stock,decision:"REJECT",optionsDecision:"REJECT",reason:error?.message||"OPTIONS_ENGINE_ERROR",optionsReason:error?.message||"OPTIONS_ENGINE_ERROR",confidence:0,optionsConfidence:0,contractAvailable:false,optionPriceAvailable:false,optionSetupAvailable:false,tradeEligible:false}); } }
     return results;
 }
 
