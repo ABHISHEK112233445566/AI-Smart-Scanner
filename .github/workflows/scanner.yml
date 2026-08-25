@@ -9,10 +9,11 @@ jobs:
   scanner:
     name: Run AI Smart Scanner
     runs-on: ubuntu-latest
-
-    # Allow the scheduler to remain active throughout the trading session.
     timeout-minutes: 420
 
+    # SAME secrets for:
+    # 1. Mobile/manual Run workflow
+    # 2. Scheduled workflow
     env:
       UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
       GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
@@ -30,17 +31,45 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify Google Sheet webhook
+      # ============================================================
+      # VERIFY REQUIRED SECRETS
+      # ============================================================
+      - name: Verify scanner configuration
         shell: bash
-        continue-on-error: true
         run: |
           set -euo pipefail
 
-          if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
-            echo "::warning::GOOGLE_SHEET_WEBHOOK_URL secret is missing."
-            echo "Continuing to scanner..."
-            exit 0
+          echo "========================================"
+          echo "     VERIFY SCANNER CONFIGURATION"
+          echo "========================================"
+
+          if [ -z "${UPSTOX_ACCESS_TOKEN:-}" ]; then
+            echo "::error::UPSTOX_ACCESS_TOKEN is missing."
+            echo "The scanner cannot run without the Upstox token."
+            exit 1
           fi
+
+          echo "✅ UPSTOX_ACCESS_TOKEN is available."
+
+          if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
+            echo "::error::GOOGLE_SHEET_WEBHOOK_URL is missing."
+            echo "Google Sheets cannot be updated without the webhook URL."
+            exit 1
+          fi
+
+          echo "✅ GOOGLE_SHEET_WEBHOOK_URL is available."
+
+          echo "========================================"
+          echo "Secrets/configuration verified."
+          echo "========================================"
+
+      # ============================================================
+      # VERIFY GOOGLE SHEET WEBHOOK
+      # ============================================================
+      - name: Verify Google Sheet webhook
+        shell: bash
+        run: |
+          set -euo pipefail
 
           echo "Checking Google Sheet V9 webhook..."
 
@@ -48,9 +77,9 @@ jobs:
             -L \
             --silent \
             --show-error \
-            --connect-timeout 5 \
-            --max-time 15 \
-            "$GOOGLE_SHEET_WEBHOOK_URL" 2>&1) || true
+            --connect-timeout 10 \
+            --max-time 20 \
+            "$GOOGLE_SHEET_WEBHOOK_URL")
 
           echo "Webhook response:"
           echo "$RESPONSE"
@@ -59,19 +88,25 @@ jobs:
             '.success == true and
              (.version == "V9" or .version == "v9") and
              (.status == "RUNNING" or .status == "running")' \
-            >/dev/null 2>&1
+             >/dev/null 2>&1
           then
-            echo "Google Sheet V9 webhook verified."
+            echo "✅ Google Sheet V9 webhook verified."
           else
-            echo "::warning::Google Sheet webhook verification failed or timed out."
-            echo "This verification failure will NOT stop the scanner."
+            echo "::error::Google Sheet webhook verification failed."
+            echo "Scanner will NOT start."
+            exit 1
           fi
 
+      # ============================================================
+      # RUN SCANNER
+      # ============================================================
       - name: Run AI Smart Scanner
         id: scanner
-        continue-on-error: true
         run: npm start
 
+      # ============================================================
+      # RESULT
+      # ============================================================
       - name: Scanner result
         if: always()
         shell: bash
@@ -81,9 +116,9 @@ jobs:
           echo "========================================"
 
           if [ "${{ steps.scanner.outcome }}" = "success" ]; then
-            echo "Scanner completed successfully."
+            echo "✅ Scanner completed successfully."
           else
-            echo "Scanner completed with errors or partial failures."
+            echo "❌ Scanner failed."
             echo "Review the scanner output above."
           fi
 
@@ -93,4 +128,3 @@ jobs:
         if: always()
         run: |
           echo "AI Scanner workflow completed."
-          exit 0
