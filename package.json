@@ -4,14 +4,16 @@
   "description": "AI Smart Stock Scanner using Angel One SmartAPI",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "node src/app.js",
+    "start": "node src/scheduler.js",
+    "dev": "node src/scheduler.js",
+    "scan-once": "node src/app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "stock",
     "scanner",
     "angelone",
+    "upstox",
     "technical-analysis",
     "ai"
   ],
