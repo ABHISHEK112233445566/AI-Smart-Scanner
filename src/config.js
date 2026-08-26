@@ -46,7 +46,16 @@ module.exports = {
         DASHBOARD_MIN_SCORE: 85,
         DASHBOARD_MAX_ROWS: 10,
         MIN_CONFIDENCE: 70,
-        MIN_RR: 1.5
+        MIN_RR: 1.5,
+
+        // Do not reject a valid directional stock before MTF/options analysis.
+        // Final qualification still requires MTF + trade setup + ranking gates.
+        PRE_SCORE_MIN: 0,
+
+        // Upstox can legitimately return fewer than 220 daily candles for newer
+        // listings. EMA50/MACD/ADX remain available with 50+ valid daily candles.
+        DAILY_CANDLE_MIN: 50,
+        MAX_QUALIFIED_STOCKS: 20
     },
 
     AI_BUY_SCORE: 85,
