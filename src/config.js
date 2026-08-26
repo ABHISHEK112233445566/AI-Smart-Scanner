@@ -32,7 +32,8 @@ module.exports = {
     THRESHOLDS: {
         AI_BUY_SCORE: 80,
         AI_WATCH_SCORE: 60,
-        DASHBOARD_MIN_SCORE: 90,
+        // Dashboard minimum SCORE is 85. Confidence remains a separate quality gate.
+        DASHBOARD_MIN_SCORE: 85,
         DASHBOARD_MAX_ROWS: 10,
         MIN_CONFIDENCE: 70,
         MIN_RR: 1.5
@@ -40,7 +41,7 @@ module.exports = {
 
     AI_BUY_SCORE: 80,
     AI_WATCH_SCORE: 60,
-    DASHBOARD_MIN_SCORE: 90,
+    DASHBOARD_MIN_SCORE: 85,
     DASHBOARD_MAX_ROWS: 10,
 
     // Single scheduler source of truth: scanner.js is run by scheduler.js every 30 minutes.
