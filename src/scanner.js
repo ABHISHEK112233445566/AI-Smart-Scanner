@@ -1,9 +1,10 @@
 // ============================================================
 // STOCK SCANNER V6 — OI MOOD PIPELINE FIX
 // ============================================================
-// OI mood is carried through every scanner result. The scanner never
-// fabricates OI: when broker OI fields are unavailable it explicitly
-// reports UNKNOWN. Google Sheets can then enforce a non-blank mood.
+// Scanner pipeline fix:
+// 1) Valid directional stocks are not rejected merely because AI score is low.
+// 2) Daily history requirement is configurable and supports newer listings.
+// 3) Final qualification remains protected by MTF, trade setup and ranking.
 // ============================================================
 
 const { getHistoricalData, getInstrument } = require("./brokers");
@@ -21,9 +22,9 @@ const config = require("./config");
 
 const DASHBOARD_MIN_SCORE = Number(config.THRESHOLDS?.DASHBOARD_MIN_SCORE ?? config.DASHBOARD_MIN_SCORE ?? 85);
 const PIPELINE_CONFIG = Object.freeze({
-    PRE_SCORE_MIN: Number(config.THRESHOLDS?.PRE_SCORE_MIN ?? 55),
+    PRE_SCORE_MIN: Number(config.THRESHOLDS?.PRE_SCORE_MIN ?? 0),
     MAX_QUALIFIED_STOCKS: Number(config.THRESHOLDS?.MAX_QUALIFIED_STOCKS ?? 20),
-    DAILY_CANDLE_MIN: Number(config.THRESHOLDS?.DAILY_CANDLE_MIN ?? 220)
+    DAILY_CANDLE_MIN: Number(config.THRESHOLDS?.DAILY_CANDLE_MIN ?? 50)
 });
 
 function toNumber(v, f = 0) { const n = Number(v); return Number.isFinite(n) ? n : f; }
@@ -128,11 +129,8 @@ function buildTradeInput(price, indicators, sr, pivot, direction) {
 function buildOIMood(stock, price, previousPrice) {
     const source = { ...safeObject(stock), price, currentPrice:price };
     if (previousPrice !== undefined && previousPrice !== null) source.previousPrice = previousPrice;
-    try {
-        return safeObject(calculateOIMoodForStock(source));
-    } catch (_) {
-        return { mood:"UNKNOWN", sentiment:"UNKNOWN", dataAvailable:false, priceChangePercent:0, oiChangePercent:0 };
-    }
+    try { return safeObject(calculateOIMoodForStock(source)); }
+    catch (_) { return { mood:"UNKNOWN", sentiment:"UNKNOWN", dataAvailable:false, priceChangePercent:0, oiChangePercent:0 }; }
 }
 
 function buildStockAnalysis(x) {
@@ -185,7 +183,11 @@ async function scanStock(stock) {
 
         const momentumScore = calculateMomentumScore(indicators, breakout, stockDirection);
         const rawScore = clampSignedScore(scoreData.finalScore ?? scoreData.score);
-        if (Math.abs(rawScore) < PIPELINE_CONFIG.PRE_SCORE_MIN) {
+        // IMPORTANT: low AI score is no longer a hard pre-filter. Directional
+        // stocks continue to MTF/trade/ranking, where the real quality gates live.
+        // This fixes rows such as HCLTECH/TRENT/APOLLOHOSP/BAJAJFINSV showing
+        // LOW_SCORE while their technical direction was already known.
+        if (PIPELINE_CONFIG.PRE_SCORE_MIN > 0 && Math.abs(rawScore) < PIPELINE_CONFIG.PRE_SCORE_MIN) {
             return { stock:stockSymbol, symbol:stockSymbol, tradingSymbol:stockSymbol, instrumentKey, price, direction:stockDirection, stockDirection, technicalDirection, score:clampSignedScore(scoreData.score), scannerScore:clampSignedScore(scoreData.score), aiScore:clampSignedScore(scoreData.score), aiFinalScore:rawScore, signal:scoreData.signal || "NO SIGNAL", oiMood:oiMood.mood || "UNKNOWN", oiSentiment:oiMood.sentiment || "UNKNOWN", oiDataAvailable:oiMood.dataAvailable === true, oiPriceChangePercent:toNumber(oiMood.priceChangePercent), oiChangePercent:toNumber(oiMood.oiChangePercent), qualified:false, rejectionReason:"LOW_SCORE", momentumScore, support1:toNumber(sr.support1), support2:toNumber(sr.support2), resistance1:toNumber(sr.resistance1), resistance2:toNumber(sr.resistance2), pipeline:{preFilter:"LOW_SCORE",momentumScore,mtfChecked:false,optionsChecked:false} };
         }
 
@@ -195,8 +197,8 @@ async function scanStock(stock) {
         const analysis = buildStockAnalysis({stockSymbol,instrumentKey,latestPrice:price,indicators,scoreData,trade,sr,breakout,mtf,pivot,cpr,stockDirection,technicalDirection,momentumScore,oiMood});
 
         const aligned = toNumber(mtf.mtfAlignment ?? mtf.alignedTimeframes);
-        if (aligned <= 0) return {...analysis, qualified:false, rejectionReason:"MTF_NO_ALIGNMENT", pipeline:{...analysis.pipeline,preFilter:"MTF_NO_ALIGNMENT"}};
-        if (!(analysis.entry > 0 && analysis.stopLoss > 0 && analysis.target1 > 0 && analysis.riskReward > 0)) return {...analysis, qualified:false, rejectionReason:trade.reason || "INVALID_MARKET_SETUP", pipeline:{...analysis.pipeline,preFilter:trade.reason || "INVALID_MARKET_SETUP"}};
+        if (aligned <= 0) return {...analysis, qualified:false, rejectionReason:"MTF_NO_ALIGNMENT", pipeline:{...analysis.pipeline,preFilter:"MTF_NO_ALIGNMENT",mtfChecked:true}};
+        if (!(analysis.entry > 0 && analysis.stopLoss > 0 && analysis.target1 > 0 && analysis.riskReward > 0)) return {...analysis, qualified:false, rejectionReason:trade.reason || "INVALID_MARKET_SETUP", pipeline:{...analysis.pipeline,preFilter:trade.reason || "INVALID_MARKET_SETUP",mtfChecked:true}};
 
         let ranking = {};
         try { ranking = safeObject(calculateFinalRank(analysis)); } catch (_) {}
