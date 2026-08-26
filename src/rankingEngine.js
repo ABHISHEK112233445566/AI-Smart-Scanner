@@ -1,5 +1,5 @@
 // ============================================================
-// RANKING ENGINE V4 — SIGNED MARKET RANKING
+// RANKING ENGINE V5 — SIGNED MARKET RANKING
 // ============================================================
 
 function toNumber(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
@@ -57,14 +57,14 @@ function getRating(score, direction) {
     direction = normalizeDirection(direction);
     if (direction === "BULLISH") {
         if (magnitude >= 90) return "⭐⭐⭐⭐⭐ ELITE BUY";
-        if (magnitude >= 80) return "⭐⭐⭐⭐ STRONG BUY";
+        if (magnitude >= 85) return "⭐⭐⭐⭐ STRONG BUY";
         if (magnitude >= 70) return "⭐⭐⭐ BUY";
         if (magnitude >= 60) return "⭐⭐ WATCH";
         return "❌ AVOID";
     }
     if (direction === "BEARISH") {
         if (magnitude >= 90) return "⭐⭐⭐⭐⭐ ELITE SELL";
-        if (magnitude >= 80) return "⭐⭐⭐⭐ STRONG SELL";
+        if (magnitude >= 85) return "⭐⭐⭐⭐ STRONG SELL";
         if (magnitude >= 70) return "⭐⭐⭐ SELL";
         if (magnitude >= 60) return "⭐⭐ WATCH";
         return "❌ AVOID";
@@ -75,23 +75,44 @@ function getRating(score, direction) {
     return "❌ AVOID";
 }
 function calculateFinalRank(stock) {
-    if (!stock || typeof stock !== "object") return { finalScore:0, rating:"❌ AVOID", direction:"SIDEWAYS", aiScore:0, mtfScore:0, breakoutScore:0, volumeScore:0, adxScore:0, rrScore:0, validatedRR:0, is90Plus:false };
+    if (!stock || typeof stock !== "object") return { finalScore:0, rating:"❌ AVOID", direction:"SIDEWAYS", aiScore:0, mtfScore:0, breakoutScore:0, volumeScore:0, adxScore:0, rrScore:0, validatedRR:0, is85Plus:false };
     const direction = normalizeDirection(stock.direction ?? stock.trend ?? stock.optionType ?? stock.signalDirection);
     const rawAi = normalizeSignedScore(stock.score ?? stock.aiScore);
+    const aiStrength = Math.abs(rawAi);
     const mtfScore = calculateMtfScore(stock);
     const breakoutScore = calculateBreakoutScore(stock);
     const volumeScore = calculateVolumeScore(stock);
     const adxScore = calculateAdxScore(stock);
     const validatedRR = getValidatedRR(stock);
     const rrScore = calculateRiskRewardScore(stock);
-    let magnitude = rawAi * 0.35 + mtfScore * 0.20 + breakoutScore + volumeScore + adxScore + rrScore;
+
+    // Score strength is always positive during magnitude calculation.
+    // Direction is applied exactly once at the end.
+    let magnitude = aiStrength * 0.35 + mtfScore * 0.20 + breakoutScore + volumeScore + adxScore + rrScore;
     magnitude = Math.round(clamp(magnitude, 0, 100));
+
     const aiDirection = rawAi > 0 ? "BULLISH" : rawAi < 0 ? "BEARISH" : "SIDEWAYS";
     const finalDirection = direction !== "SIDEWAYS" ? direction : aiDirection;
     const finalScore = finalDirection === "BULLISH" ? magnitude : finalDirection === "BEARISH" ? -magnitude : 0;
+
     stock.aiFinalScore = finalScore;
     stock.rankingScore = finalScore;
     stock.finalScore = finalScore;
-    return { finalScore, rating:getRating(finalScore, finalDirection), direction:finalDirection, aiScore:Number(rawAi.toFixed(2)), mtfScore:Number(mtfScore.toFixed(2)), breakoutScore, volumeScore, adxScore, rrScore, validatedRR, rrValidated:validatedRR > 0, is90Plus:Math.abs(finalScore) >= 90 };
+
+    return {
+        finalScore,
+        rating:getRating(finalScore, finalDirection),
+        direction:finalDirection,
+        aiScore:Number(rawAi.toFixed(2)),
+        aiStrength:Number(aiStrength.toFixed(2)),
+        mtfScore:Number(mtfScore.toFixed(2)),
+        breakoutScore,
+        volumeScore,
+        adxScore,
+        rrScore,
+        validatedRR,
+        rrValidated:validatedRR > 0,
+        is85Plus:Math.abs(finalScore) >= 85
+    };
 }
 module.exports = { calculateFinalRank };
