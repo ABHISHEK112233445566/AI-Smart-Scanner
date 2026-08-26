@@ -1,4 +1,19 @@
-// BankNifty is an index, not an equity universe.
-// Keep this list empty for equity scanner mode; BANKNIFTY options are
-// handled by the options/index-symbol integration rather than NSE_EQ stock scanning.
-module.exports = [];
+// NIFTY BANK — current 14 constituents used by the equity scanner.
+// These are NSE equity trading symbols. BANKNIFTY itself remains an index
+// underlying and is handled separately by the options/index integration.
+module.exports = [
+    "HDFCBANK",
+    "ICICIBANK",
+    "SBIN",
+    "KOTAKBANK",
+    "AXISBANK",
+    "UNIONBANK",
+    "PNB",
+    "BANKBARODA",
+    "CANBK",
+    "FEDERALBNK",
+    "AUBANK",
+    "INDUSINDBK",
+    "IDFCFIRSTB",
+    "YESBANK"
+];
