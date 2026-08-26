@@ -14,7 +14,7 @@ async function readAccuracyRows() {
   if (!url) throw new Error('Google Sheet webhook URL is not configured');
   const response = await axios.post(url, { action: 'getAccuracyRows', limit: MAX_ROWS }, { timeout: 120000, headers: { 'Content-Type': 'application/json' } });
   if (response?.data?.success === false) throw new Error(response.data.error || 'Google Sheets rejected getAccuracyRows');
-  return response?.data?.rows && Array.isArray(response.data.rows) ? response.data.rows : [];
+  return Array.isArray(response?.data?.rows) ? response.data.rows : [];
 }
 
 function rowToRecord(row) {
@@ -40,22 +40,28 @@ function rowToRecord(row) {
 function updatePayload(record) {
   return {
     recordId: record.recordId,
-    actualHigh: record.highestStockPriceReached,
-    actualLow: record.lowestStockPriceReached,
+    highestStockPriceReached: record.highestStockPriceReached,
+    highestStockPriceDate: record.highestStockPriceDate,
+    highestStockPriceTime: record.highestStockPriceTime,
+    lowestStockPriceReached: record.lowestStockPriceReached,
+    lowestStockPriceDate: record.lowestStockPriceDate,
+    lowestStockPriceTime: record.lowestStockPriceTime,
     maxFavorableMove: record.maxFavorableMove,
+    maxFavorableMovePercent: record.maxFavorableMovePercent,
     maxAdverseMove: record.maxAdverseMove,
-    maxFavorablePercent: record.maxFavorableMovePercent,
-    maxAdversePercent: record.maxAdverseMovePercent,
+    maxAdverseMovePercent: record.maxAdverseMovePercent,
     target1Reached: record.target1Reached,
+    target1ReachedDate: record.target1ReachedDate,
+    target1ReachedTime: record.target1ReachedTime,
     target2Reached: record.target2Reached,
+    target2ReachedDate: record.target2ReachedDate,
+    target2ReachedTime: record.target2ReachedTime,
     stopLossReached: record.stopLossReached,
-    target1Time: record.target1ReachedTime ? `${record.target1ReachedDate}T${record.target1ReachedTime}` : '',
-    target2Time: record.target2ReachedTime ? `${record.target2ReachedDate}T${record.target2ReachedTime}` : '',
-    stopLossTime: record.stopLossReachedTime ? `${record.stopLossReachedDate}T${record.stopLossReachedTime}` : '',
-    finalOutcome: record.evaluationStatus,
-    completedTime: record.evaluationDate,
+    stopLossReachedDate: record.stopLossReachedDate,
+    stopLossReachedTime: record.stopLossReachedTime,
     accuracyPercent: record.accuracyPercent,
-    livePrice: record.highestStockPriceReached
+    evaluationStatus: record.evaluationStatus,
+    evaluationDate: record.evaluationDate
   };
 }
 
@@ -73,26 +79,21 @@ async function evaluateLiveAccuracy() {
   if (!rows.length) return { found: 0, evaluated: 0, updated: 0, skipped: 0 };
   const broker = getBroker();
   if (!broker?.getHistoricalData) throw new Error('Active broker does not implement getHistoricalData()');
-
-  const cache = new Map();
-  const updates = [];
+  const cache = new Map(), updates = [];
   let skipped = 0;
-
   for (const raw of rows) {
     const record = rowToRecord(raw);
-    if (!record.recordId || !record.symbol || !['CALL', 'PUT'].includes(record.direction)) { skipped++; continue; }
+    if (!record.recordId || !record.symbol || !['CALL','PUT'].includes(record.direction)) { skipped++; continue; }
     if (String(record.evaluationStatus).toUpperCase() === 'T2_REACHED') { skipped++; continue; }
     try {
       if (!cache.has(record.symbol)) cache.set(record.symbol, await broker.getHistoricalData(record.symbol, TIMEFRAME));
-      const candles = cache.get(record.symbol);
-      const evaluated = evaluateAccuracy(record, candles, new Date());
+      const evaluated = evaluateAccuracy(record, cache.get(record.symbol), new Date());
       updates.push(updatePayload(evaluated));
     } catch (e) {
       console.log(`⚠️ Accuracy live evaluation failed ${record.symbol}: ${e.message}`);
       skipped++;
     }
   }
-
   const result = await writeAccuracyUpdates(updates);
   return { found: rows.length, evaluated: updates.length, updated: Number(result.updated || 0), notFound: Number(result.notFound || 0), skipped };
 }
