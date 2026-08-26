@@ -1,329 +1,94 @@
-const brokerModule = require("./brokers");
+const brokerModule = require('./brokers');
 
 const C = Object.freeze({
-    MIN_DIRECTION_SCORE: 35,
-    MIN_DIRECTION_DIFFERENCE: 10,
-    MIN_DIRECTION_EVIDENCE: 3,
-    WATCH_CONFIDENCE: 65,
-    TRADE_CONFIDENCE: 85,
-    WATCH_RR: 1.2,
-    TRADE_RR: 1.5,
-    MIN_EXPIRY_DAYS: 7
+  MIN_DIRECTION_SCORE: 35,
+  MIN_DIRECTION_DIFFERENCE: 10,
+  MIN_DIRECTION_EVIDENCE: 3,
+  WATCH_CONFIDENCE: 65,
+  TRADE_CONFIDENCE: 85,
+  WATCH_RR: 1.2,
+  TRADE_RR: 1.5,
+  MIN_EXPIRY_DAYS: 7,
+  TRADE_SCANNER_SCORE: 85
 });
 
-const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
-const positive = (...values) => { for (const v of values) { const n = num(v); if (n > 0) return n; } return 0; };
-const clamp = v => Math.max(0, Math.min(100, num(v)));
-const round2 = v => Number.isFinite(Number(v)) ? Number(Number(v).toFixed(2)) : 0;
-const text = v => String(v ?? "").trim().toUpperCase();
-
-function getBroker() { return brokerModule.getBroker ? brokerModule.getBroker() : brokerModule; }
-function normalizeDirection(value) {
-    const s = text(value);
-    if (["BULLISH","BULL","LONG","CALL","CE","BUY","UP"].includes(s) || s.includes("BULLISH")) return "BULLISH";
-    if (["BEARISH","BEAR","SHORT","PUT","PE","SELL","DOWN"].includes(s) || s.includes("BEARISH")) return "BEARISH";
-    return "UNKNOWN";
+const num = v => Number.isFinite(Number(v)) ? Number(v) : null;
+const positive = (...v) => v.map(num).find(x => x !== null && x > 0) || 0;
+const clamp = v => Math.max(0, Math.min(100, num(v) ?? 0));
+const round2 = v => num(v) === null ? 0 : Number(Number(v).toFixed(2));
+const text = v => String(v ?? '').trim().toUpperCase();
+function getBroker() { return typeof brokerModule.getBroker === 'function' ? brokerModule.getBroker() : brokerModule; }
+function normalizeDirection(v) {
+  const s = text(v);
+  if (s === 'BULLISH' || s === 'BULL' || s === 'LONG' || s === 'CALL' || s === 'CE' || s === 'BUY' || s === 'UP' || s.includes('BULLISH')) return 'BULLISH';
+  if (s === 'BEARISH' || s === 'BEAR' || s === 'SHORT' || s === 'PUT' || s === 'PE' || s === 'SELL' || s === 'DOWN' || s.includes('BEARISH')) return 'BEARISH';
+  return 'UNKNOWN';
 }
-function stockPrice(d) { return positive(d?.price, d?.ltp, d?.lastPrice, d?.last_price, d?.close, d?.currentPrice); }
-function stockEntry(d, price) { return positive(d?.marketEntry, d?.triggerPrice, d?.entry, d?.stockEntry, d?.underlyingEntry, price); }
+function stockPrice(d) { return positive(d?.price,d?.ltp,d?.lastPrice,d?.last_price,d?.close,d?.currentPrice); }
+function stockEntry(d,p) { return positive(d?.marketEntry,d?.triggerPrice,d?.entry,d?.stockEntry,d?.underlyingEntry,p); }
 
-const SUPPORT_KEYS = ["support","support1","support2","support3","s1","s2","s3","pivotS1","pivotS2","pivotS3","oiSupport1","oiSupport2","oiSupport3","swingLow","previousLow","recentLow","dayLow"];
-const RESISTANCE_KEYS = ["resistance","resistance1","resistance2","resistance3","r1","r2","r3","pivotR1","pivotR2","pivotR3","oiResistance1","oiResistance2","oiResistance3","swingHigh","previousHigh","recentHigh","dayHigh"];
-
-function collectLevels(source, keys) {
-    if (!source || typeof source !== "object") return [];
-    const result = [];
-    for (const key of keys) {
-        const value = source[key];
-        if (Array.isArray(value)) {
-            for (const item of value) {
-                if (item && typeof item === "object") result.push(item.value, item.level, item.price, item.close);
-                else result.push(item);
-            }
-        } else if (value && typeof value === "object") {
-            result.push(...Object.values(value));
-        } else result.push(value);
-    }
-    return result.map(num).filter(v => v > 0);
+const SUPPORT_KEYS=['support','support1','support2','support3','s1','s2','s3','pivotS1','pivotS2','pivotS3','oiSupport1','oiSupport2','oiSupport3','swingLow','previousLow','recentLow','dayLow'];
+const RESISTANCE_KEYS=['resistance','resistance1','resistance2','resistance3','r1','r2','r3','pivotR1','pivotR2','pivotR3','oiResistance1','oiResistance2','oiResistance3','swingHigh','previousHigh','recentHigh','dayHigh'];
+function collectLevels(source,keys){
+  if(!source||typeof source!=='object')return[]; const out=[];
+  for(const k of keys){const v=source[k]; if(Array.isArray(v)) for(const x of v) out.push(x&&typeof x==='object'?(x.value??x.level??x.price??x.close):x); else if(v&&typeof v==='object') out.push(...Object.values(v)); else out.push(v);}
+  return out.map(num).filter(x=>x!==null&&x>0);
 }
-
-function getLevels(data, side) {
-    const keys = side === "support" ? SUPPORT_KEYS : RESISTANCE_KEYS;
-    const sr = data?.supportResistance || data?.support_resistance || data?.sr || {};
-    const pivot = data?.pivot || data?.pivots || {};
-    const pivotKeys = side === "support" ? ["s1","s2","s3","S1","S2","S3"] : ["r1","r2","r3","R1","R2","R3"];
-    const values = [
-        ...collectLevels(data, keys),
-        ...collectLevels(sr, keys),
-        ...collectLevels(pivot, pivotKeys),
-        ...(Array.isArray(data?.[side + "Levels"]) ? data[side + "Levels"] : [])
-    ];
-    return [...new Set(values.map(round2).filter(v => v > 0))].sort((a, b) => a - b);
+function getLevels(d,side){
+  const keys=side==='support'?SUPPORT_KEYS:RESISTANCE_KEYS; const sr=d?.supportResistance||d?.support_resistance||d?.sr||{}; const p=d?.pivot||d?.pivots||{};
+  const pk=side==='support'?['s1','s2','s3','S1','S2','S3']:['r1','r2','r3','R1','R2','R3'];
+  return [...new Set([...collectLevels(d,keys),...collectLevels(sr,keys),...collectLevels(p,pk),...(Array.isArray(d?.[side+'Levels'])?d[side+'Levels']:[])].map(num).filter(x=>x!==null&&x>0).map(round2))].sort((a,b)=>a-b);
+}
+function marketSetup(d,entry,type){
+  const supports=getLevels(d,'support').filter(x=>x<entry).sort((a,b)=>b-a), resistances=getLevels(d,'resistance').filter(x=>x>entry).sort((a,b)=>a-b);
+  const sl=type==='CALL'?(supports[0]||0):(resistances[0]||0), targets=type==='CALL'?resistances:supports;
+  const risk=type==='CALL'?entry-sl:sl-entry;
+  if(entry<=0||sl<=0||risk<=0||!targets.length)return {valid:false,entry:round2(entry),stopLoss:round2(sl),target1:0,target2:0,risk:round2(Math.max(0,risk)),reward:0,riskReward:0,reason:'INVALID_MARKET_SETUP',supportLevels:supports,resistanceLevels:resistances};
+  const rr=t=>risk>0?((type==='CALL'?t-entry:entry-t)/risk):0; const validTargets=targets.filter(t=>rr(t)>0); const t1=validTargets[0]||0; const t2=validTargets.find(t=>t!==t1&&rr(t)>rr(t1))||0; const reward=t1>0?Math.max(0,type==='CALL'?t1-entry:entry-t1):0;
+  return {valid:t1>0&&risk>0,riskReward:round2(reward/risk),entry:round2(entry),stopLoss:round2(sl),target1:round2(t1),target2:round2(t2),risk:round2(risk),reward:round2(reward),supportLevels:supports,resistanceLevels:resistances,stopSource:type==='CALL'?'MARKET_SUPPORT':'MARKET_RESISTANCE',target1Source:'MARKET_STRUCTURE',target2Source:t2?'NEXT_MARKET_STRUCTURE':'NONE',reason:rr(t1)>=C.TRADE_RR?'VALID_MARKET_STRUCTURE_RR':'LOW_MARKET_RR'};
 }
 
-function marketSetup(data, entry, type) {
-    const supports = getLevels(data, "support").filter(x => x < entry).sort((a, b) => b - a);
-    const resistances = getLevels(data, "resistance").filter(x => x > entry).sort((a, b) => a - b);
-
-    const stopLoss = type === "CALL" ? (supports[0] || 0) : (resistances[0] || 0);
-    const targets = type === "CALL" ? resistances : supports;
-    const risk = type === "CALL" ? entry - stopLoss : stopLoss - entry;
-
-    if (entry <= 0 || stopLoss <= 0 || risk <= 0 || !targets.length) {
-        return { valid: false, entry: round2(entry), stopLoss: round2(stopLoss), target1: 0, target2: 0, risk: round2(Math.max(0, risk)), reward: 0, riskReward: 0, reason: "INVALID_MARKET_SETUP", supportLevels: supports, resistanceLevels: resistances };
-    }
-
-    const rrFor = target => risk > 0 ? ((type === "CALL" ? target - entry : entry - target) / risk) : 0;
-    const validTargets = targets.filter(target => rrFor(target) > 0);
-    const target1 = validTargets[0] || 0;
-    const target2 = validTargets.find(target => target !== target1 && rrFor(target) > rrFor(target1)) || 0;
-    const reward = target1 > 0 ? Math.max(0, type === "CALL" ? target1 - entry : entry - target1) : 0;
-    const riskReward = risk > 0 && reward > 0 ? round2(reward / risk) : 0;
-
-    return {
-        valid: stopLoss > 0 && target1 > 0 && riskReward > 0,
-        entry: round2(entry),
-        stopLoss: round2(stopLoss),
-        target1: round2(target1),
-        target2: round2(target2),
-        risk: round2(risk),
-        reward: round2(reward),
-        riskReward,
-        supportLevels: supports,
-        resistanceLevels: resistances,
-        stopSource: type === "CALL" ? "MARKET_SUPPORT" : "MARKET_RESISTANCE",
-        target1Source: "MARKET_STRUCTURE",
-        target2Source: target2 > 0 ? "NEXT_MARKET_STRUCTURE" : "NONE",
-        reason: riskReward >= C.TRADE_RR ? "VALID_MARKET_STRUCTURE_RR" : "LOW_MARKET_RR"
-    };
+function direction(d,price){
+  let callScore=0,putScore=0,callEvidence=0,putEvidence=0;
+  // Must match mtfScanner: Daily + 1H + 30M + 15M. No 4H dependency.
+  for(const [k,w] of [['dailyTrend',12],['oneHourTrend',14],['thirtyMinTrend',8],['fifteenMinTrend',10]]){const x=normalizeDirection(d?.[k]);if(x==='BULLISH'){callScore+=w;callEvidence++;}else if(x==='BEARISH'){putScore+=w;putEvidence++;}}
+  const e5=num(d?.ema5),e9=num(d?.ema9),e20=num(d?.ema20),e50=num(d?.ema50);
+  if([e5,e9,e20,e50].every(x=>x!==null&&x>0)){if(e5>e9&&e9>e20&&e20>e50){callScore+=12;callEvidence++;}if(e5<e9&&e9<e20&&e20<e50){putScore+=12;putEvidence++;}}
+  if(e20!==null&&e50!==null&&price>0){if(price>e20&&price>e50){callScore+=7;callEvidence++;}if(price<e20&&price<e50){putScore+=7;putEvidence++;}}
+  const rsi=num(d?.rsi);if(rsi!==null){if(rsi>=55&&rsi<=70){callScore+=8;callEvidence++;}if(rsi>=30&&rsi<=45){putScore+=8;putEvidence++;}}
+  const m=d?.macd&&typeof d.macd==='object'?d.macd:{};const macd=num(d?.macdValue??d?.macd??m.MACD),signal=num(d?.macdSignal??m.signal),hist=num(d?.histogram??d?.macdHistogram??m.histogram);if(macd!==null&&signal!==null&&hist!==null){if(macd>signal&&hist>=0){callScore+=8;callEvidence++;}if(macd<signal&&hist<=0){putScore+=8;putEvidence++;}}
+  const a=d?.adx&&typeof d.adx==='object'?d.adx:{};const adx=num(d?.adxValue??a.adx??d?.adx),pdi=num(d?.pdi??a.pdi),mdi=num(d?.mdi??a.mdi);if(adx!==null&&pdi!==null&&mdi!==null&&adx>=20){if(pdi>mdi){callScore+=7;callEvidence++;}if(mdi>pdi){putScore+=7;putEvidence++;}}
+  const vwap=num(d?.vwap);if(vwap!==null&&price>vwap){callScore+=5;callEvidence++;}else if(vwap!==null&&price<vwap){putScore+=5;putEvidence++;}
+  const st=normalizeDirection(d?.supertrend?.trend??d?.supertrend);if(st==='BULLISH'){callScore+=5;callEvidence++;}else if(st==='BEARISH'){putScore+=5;putEvidence++;}
+  const sd=normalizeDirection(d?.signal),td=normalizeDirection(d?.trend);if(sd==='BULLISH'){callScore+=5;callEvidence++;}else if(sd==='BEARISH'){putScore+=5;putEvidence++;}if(td==='BULLISH'){callScore+=3;callEvidence++;}else if(td==='BEARISH'){putScore+=3;putEvidence++;}
+  const diff=Math.abs(callScore-putScore);let optionType=null;if(callScore>putScore&&callScore>=C.MIN_DIRECTION_SCORE&&diff>=C.MIN_DIRECTION_DIFFERENCE&&callEvidence>=C.MIN_DIRECTION_EVIDENCE)optionType='CALL';else if(putScore>callScore&&putScore>=C.MIN_DIRECTION_SCORE&&diff>=C.MIN_DIRECTION_DIFFERENCE&&putEvidence>=C.MIN_DIRECTION_EVIDENCE)optionType='PUT';
+  return {optionType,callScore,putScore,directionDifference:diff,callEvidence,putEvidence,dominantEvidence:optionType==='CALL'?callEvidence:optionType==='PUT'?putEvidence:0};
 }
 
-function direction(data, price) {
-    let callScore = 0, putScore = 0, callEvidence = 0, putEvidence = 0;
-    for (const [key, weight] of [["dailyTrend",12],["fourHourTrend",8],["oneHourTrend",14],["fifteenMinTrend",10]]) {
-        const d = normalizeDirection(data?.[key]);
-        if (d === "BULLISH") { callScore += weight; callEvidence++; }
-        if (d === "BEARISH") { putScore += weight; putEvidence++; }
-    }
-
-    const e5=num(data?.ema5), e9=num(data?.ema9), e20=num(data?.ema20), e50=num(data?.ema50);
-    if (e5 && e9 && e20 && e50) {
-        if (e5 > e9 && e9 > e20 && e20 > e50) { callScore += 12; callEvidence++; }
-        if (e5 < e9 && e9 < e20 && e20 < e50) { putScore += 12; putEvidence++; }
-    }
-    if (e20 && e50 && price) {
-        if (price > e20 && price > e50) { callScore += 7; callEvidence++; }
-        if (price < e20 && price < e50) { putScore += 7; putEvidence++; }
-    }
-
-    const rsi = num(data?.rsi);
-    if (rsi >= 55 && rsi <= 70) { callScore += 8; callEvidence++; }
-    if (rsi >= 30 && rsi <= 45) { putScore += 8; putEvidence++; }
-
-    const macd=num(data?.macdValue ?? data?.macd), signal=num(data?.macdSignal), hist=num(data?.histogram ?? data?.macdHistogram);
-    if (macd > signal && hist >= 0) { callScore += 8; callEvidence++; }
-    if (macd < signal && hist <= 0) { putScore += 8; putEvidence++; }
-
-    const adx=num(data?.adx), pdi=num(data?.pdi), mdi=num(data?.mdi);
-    if (adx >= 20 && pdi > mdi) { callScore += 7; callEvidence++; }
-    if (adx >= 20 && mdi > pdi) { putScore += 7; putEvidence++; }
-
-    const vwap=num(data?.vwap);
-    if (vwap && price > vwap) { callScore += 5; callEvidence++; }
-    if (vwap && price < vwap) { putScore += 5; putEvidence++; }
-
-    const st=normalizeDirection(data?.supertrend?.trend ?? data?.supertrend);
-    if (st === "BULLISH") { callScore += 5; callEvidence++; }
-    if (st === "BEARISH") { putScore += 5; putEvidence++; }
-
-    const signalDirection=normalizeDirection(data?.signal), trendDirection=normalizeDirection(data?.trend);
-    if (signalDirection === "BULLISH") { callScore += 5; callEvidence++; }
-    if (signalDirection === "BEARISH") { putScore += 5; putEvidence++; }
-    if (trendDirection === "BULLISH") { callScore += 3; callEvidence++; }
-    if (trendDirection === "BEARISH") { putScore += 3; putEvidence++; }
-
-    const difference=Math.abs(callScore-putScore);
-    const optionType = callScore > putScore && callScore >= C.MIN_DIRECTION_SCORE && difference >= C.MIN_DIRECTION_DIFFERENCE && callEvidence >= C.MIN_DIRECTION_EVIDENCE
-        ? "CALL"
-        : putScore > callScore && putScore >= C.MIN_DIRECTION_SCORE && difference >= C.MIN_DIRECTION_DIFFERENCE && putEvidence >= C.MIN_DIRECTION_EVIDENCE
-            ? "PUT" : null;
-
-    return { optionType, callScore, putScore, directionDifference:difference, callEvidence, putEvidence, dominantEvidence: optionType === "CALL" ? callEvidence : optionType === "PUT" ? putEvidence : 0 };
+function mtf(type,d){
+  const expected=type==='CALL'?'BULLISH':'BEARISH'; const values=[['DAILY',d?.dailyTrend],['1H',d?.oneHourTrend],['30M',d?.thirtyMinTrend],['15M',d?.fifteenMinTrend]].map(([name,v])=>({name,value:normalizeDirection(v)}));
+  const available=values.filter(x=>x.value!=='UNKNOWN'),aligned=available.filter(x=>x.value===expected),opposition=available.filter(x=>x.value!==expected); const score=available.length?Math.round(clamp(50+((aligned.length-opposition.length)/available.length)*50)):0;
+  return {score,alignment:aligned.length,opposition:opposition.length,available:available.length,alignedTimeframes:aligned.map(x=>x.name),isAligned:aligned.length>=3,complete:available.length===4};
 }
-
-function mtf(type, data) {
-    const expected = type === "CALL" ? "BULLISH" : "BEARISH";
-    const values = [["DAILY",data?.dailyTrend],["4H",data?.fourHourTrend],["1H",data?.oneHourTrend],["15M",data?.fifteenMinTrend]].map(([name,value]) => ({name,value:normalizeDirection(value)}));
-    const available=values.filter(x=>x.value!=="UNKNOWN");
-    const aligned=available.filter(x=>x.value===expected);
-    const opposition=available.filter(x=>x.value!==expected);
-    const score=available.length ? clamp(50 + ((aligned.length-opposition.length)/available.length)*50) : 0;
-    return { score, alignment:aligned.length, opposition:opposition.length, available:available.length, alignedTimeframes:aligned.map(x=>x.name), isAligned:aligned.length>=3 };
+function confidence(d,dir,m,rr){
+  const scanner=clamp(d?.rankingScore??d?.finalScore??d?.aiFinalScore??d?.aiScore??d?.scannerScore??d?.score);const ds=clamp(dir.optionType==='CALL'?dir.callScore:dir.putScore);const expected=dir.optionType==='CALL'?'BULLISH':'BEARISH';const trend=normalizeDirection(d?.trend)===expected?100:50;const rsi=num(d?.rsi);const momentum=((dir.optionType==='CALL'&&rsi>=55&&rsi<=70)||(dir.optionType==='PUT'&&rsi>=30&&rsi<=45))?100:50;const rv=num(d?.rvol);const volume=rv>=2?100:rv>=1.5?85:rv>=1.2?70:rv>=1?55:35;const rrScore=rr>=2.5?100:rr>=2?90:rr>=1.5?80:rr>=1.2?65:0;const value=scanner*.25+ds*.22+m.score*.15+trend*.12+momentum*.10+volume*.06+rrScore*.10;return {confidence:Math.round(clamp(value)),scannerScore:Math.round(scanner),directionScore:Math.round(ds),trendScore:trend,momentumScore:momentum,volumeScore:volume,rrScore};
 }
+function gates(dir,m,rr,conf,scanner){const base={direction:!!dir.optionType,directionEvidence:dir.dominantEvidence>=3,directionDifference:dir.directionDifference>=10,mtf:m.alignment>=2,riskReward:rr>=C.WATCH_RR,confidence:conf>=C.WATCH_CONFIDENCE,scanner:scanner>=55};const trade={...base,tradeMTF:m.alignment>=3&&m.complete,tradeRiskReward:rr>=C.TRADE_RR,tradeConfidence:conf>=C.TRADE_CONFIDENCE,tradeScanner:scanner>=C.TRADE_SCANNER_SCORE};return {base,trade,basePassed:Object.values(base).every(Boolean),tradePassed:Object.values(trade).every(Boolean),failedBase:Object.keys(base).filter(k=>!base[k]),failedTrade:Object.keys(trade).filter(k=>!trade[k])};}
+function strikeValue(c){return positive(c?.strike,c?.strike_price,c?.strikePrice,c?.strike_price_value);}
+function expiryValue(c){return c?.expiry??c?.expiry_date??c?.expiryDate??'';}
+function normalizeExpiry(v){const s=String(v??'').trim();if(!s)return '';if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;const d=new Date(s);return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
+function optionType(c){const s=text(c?.option_type??c?.optionType??c?.instrument_type??c?.option_type_name),t=text(c?.trading_symbol??c?.tradingsymbol);if(s.endsWith('CE')||t.endsWith('CE'))return 'CE';if(s.endsWith('PE')||t.endsWith('PE'))return 'PE';return null;}
+async function resolveContract(symbol,type,spot){const broker=getBroker();if(!broker||typeof broker.getOptionContracts!=='function')return {contract:null,reason:'BROKER_OPTION_CONTRACT_API_MISSING'};try{const all=await broker.getOptionContracts(symbol);if(!Array.isArray(all)||!all.length)return {contract:null,reason:'NO_OPTION_CONTRACTS'};const target=type==='CALL'?'CE':'PE';const today=new Date();today.setHours(0,0,0,0);const usable=all.filter(c=>{const ex=normalizeExpiry(expiryValue(c)),d=ex?new Date(ex+'T00:00:00'):null,days=d&&!Number.isNaN(d.getTime())?Math.ceil((d-today)/86400000):-1;return strikeValue(c)>0&&optionType(c)===target&&days>=C.MIN_EXPIRY_DAYS&&(c?.instrument_key||c?.instrumentKey);});if(!usable.length)return {contract:null,reason:'NO_VALID_EXPIRY_OR_SIDE_CONTRACTS'};const strikes=[...new Set(usable.map(strikeValue))].sort((a,b)=>a-b);const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]);const idx=strikes.indexOf(atm);const recommended=type==='CALL'?strikes[Math.max(0,idx-1)]:strikes[Math.min(strikes.length-1,idx+1)];const selected=usable.reduce((best,c)=>!best||Math.abs(strikeValue(c)-recommended)<Math.abs(strikeValue(best)-recommended)?c:best,null);return {contract:selected,atmStrike:atm,recommendedStrike:strikeValue(selected),expiry:normalizeExpiry(expiryValue(selected)),reason:'OK'};}catch(e){return {contract:null,reason:'OPTION_CONTRACT_LOOKUP_ERROR'};}}
+async function getOptionQuote(c){const broker=getBroker();const key=c?.instrument_key||c?.instrumentKey;if(!broker||!key)return null;try{if(typeof broker.getOptionLTP==='function'){const q=await broker.getOptionLTP(key);return typeof q==='object'?q:{ltp:q};}if(typeof broker.getLTP==='function'){const q=await broker.getLTP(key);return typeof q==='object'?q:{ltp:q};}}catch(e){console.log(`⚠️ Option quote failed ${key}: ${e.message}`);}return null;}
+function premiumLevels(q){const entry=positive(q?.ltp,q?.last_price,q?.price);if(entry<=0)return {valid:false,entry:0,stopLoss:0,target1:0,target2:0,risk:0,reward:0,riskReward:0};const sl=round2(entry*.70),t1=round2(entry*1.30),t2=round2(entry*1.60),risk=round2(entry-sl),reward=round2(t1-entry);return {valid:true,entry:round2(entry),stopLoss:sl,target1:t1,target2:t2,risk,reward,riskReward:round2(reward/risk)};}
 
-function confidence(data, dir, mtfResult, rr) {
-    const scanner=clamp(data?.rankingScore ?? data?.finalScore ?? data?.aiFinalScore ?? data?.aiScore ?? data?.scannerScore ?? data?.score);
-    const directionScore=clamp(dir.optionType === "CALL" ? dir.callScore : dir.putScore);
-    const expected=dir.optionType === "CALL" ? "BULLISH" : "BEARISH";
-    const trendScore=normalizeDirection(data?.trend)===expected ? 100 : 50;
-    const rsi=num(data?.rsi);
-    const momentumScore=((dir.optionType === "CALL" && rsi>=55 && rsi<=70) || (dir.optionType === "PUT" && rsi>=30 && rsi<=45)) ? 100 : 50;
-    const rvol=num(data?.rvol);
-    const volumeScore=rvol>=2?100:rvol>=1.5?85:rvol>=1.2?70:rvol>=1?55:35;
-    const rrScore=rr>=2.5?100:rr>=2?90:rr>=1.5?80:rr>=1.2?65:0;
-    const value=clamp(scanner*.25 + directionScore*.22 + mtfResult.score*.15 + trendScore*.12 + momentumScore*.10 + volumeScore*.06 + 50*.04 + rrScore*.06);
-    return { confidence:Math.round(value), scannerScore:Math.round(scanner), directionScore:Math.round(directionScore), trendScore, momentumScore, volumeScore, rrScore };
+async function calculateOptionsDecision(data){
+  if(!data||typeof data!=='object')return null;const price=stockPrice(data);if(price<=0)return {stock:data?.stock||data?.symbol,optionType:null,optionsDecision:'REJECT',decision:'REJECT',reason:'INVALID_STOCK_PRICE'};
+  const dir=direction(data,price);if(!dir.optionType)return {...data,stock:data.stock||data.symbol,symbol:data.symbol||data.stock,price,optionType:null,optionsDecision:'REJECT',decision:'REJECT',reason:'DIRECTION_NOT_CLEAR',callScore:dir.callScore,putScore:dir.putScore};
+  const entry=stockEntry(data,price),setup=marketSetup(data,entry,dir.optionType),m=mtf(dir.optionType,data),scanner=clamp(data.rankingScore??data.finalScore??data.aiFinalScore??data.aiScore??data.scannerScore??data.score),conf=confidence(data,dir,m,setup.riskReward),gate=gates(dir,m,setup.riskReward,conf.confidence,scanner);
+  let cr={contract:null,reason:'NOT_LOOKED_UP'};if(setup.valid)cr=await resolveContract(data.stock||data.symbol,dir.optionType,price);const quote=cr.contract?await getOptionQuote(cr.contract):null,premium=premiumLevels(quote);
+  let decision='REJECT';if(gate.basePassed)decision=gate.tradePassed&&cr.contract&&premium.valid?'TRADE':'WATCH';const reasons=[];if(!setup.valid)reasons.push(setup.reason||'INVALID_MARKET_SETUP');if(!gate.basePassed)reasons.push(...gate.failedBase);if(decision!=='TRADE')reasons.push(...gate.failedTrade);if(!cr.contract)reasons.push(cr.reason);const unique=[...new Set(reasons.filter(Boolean))];
+  return {...data,stock:data.stock||data.symbol,symbol:data.symbol||data.stock,price,optionType:dir.optionType,callScore:dir.callScore,putScore:dir.putScore,directionDifference:dir.directionDifference,directionEvidence:dir.dominantEvidence,entry:setup.entry,stopLoss:setup.stopLoss,target1:setup.target1,target2:setup.target2,risk:setup.risk,reward:setup.reward,riskReward:setup.riskReward,stockEntry:setup.entry,stockStopLoss:setup.stopLoss,stockTarget1:setup.target1,stockTarget2:setup.target2,stockRiskReward:setup.riskReward,optionSymbol:cr.contract?.trading_symbol||cr.contract?.tradingsymbol||'',recommendedStrike:cr.recommendedStrike||strikeValue(cr.contract)||null,atmStrike:cr.atmStrike||null,optionExpiry:cr.expiry||null,optionInstrumentKey:cr.contract?.instrument_key||cr.contract?.instrumentKey||'',optionPremiumEntry:premium.entry,optionPremiumStopLoss:premium.stopLoss,optionPremiumTarget1:premium.target1,optionPremiumTarget2:premium.target2,optionPremiumRisk:premium.risk,optionPremiumReward:premium.reward,optionPremiumRiskReward:premium.riskReward,optionsConfidence:conf.confidence,confidence:conf.confidence,scannerScore:conf.scannerScore,directionScore:conf.directionScore,mtfScore:m.score,mtfAlignment:m.alignment,mtfAlignedTimeframes:m.alignedTimeframes,mtfAvailableTimeframes:m.available,optionsDecision:decision,decision,gates:gate,decisionReason:unique.join(',')||'VALID_SETUP',contractLookupReason:cr.reason||'OK',marketSetup:setup,optionPremiumSetup:premium,pipeline:{...(data.pipeline||{}),optionsChecked:true}};
 }
-
-function gates(dir, mtfResult, rr, conf, scanner) {
-    const base={ direction:!!dir.optionType, directionEvidence:dir.dominantEvidence>=3, directionDifference:dir.directionDifference>=10, mtf:mtfResult.alignment>=2, riskReward:rr>=C.WATCH_RR, confidence:conf>=C.WATCH_CONFIDENCE, scanner:scanner>=55 };
-    const trade={...base, tradeMTF:mtfResult.alignment>=3, tradeRiskReward:rr>=C.TRADE_RR, tradeConfidence:conf>=C.TRADE_CONFIDENCE, tradeScanner:scanner>=70};
-    return { base, trade, basePassed:Object.values(base).every(Boolean), tradePassed:Object.values(trade).every(Boolean), failedBase:Object.keys(base).filter(k=>!base[k]), failedTrade:Object.keys(trade).filter(k=>!trade[k]) };
-}
-
-function strikeValue(c) { return positive(c?.strike, c?.strike_price, c?.strikePrice, c?.strike_price_value); }
-function expiryValue(c) { return String(c?.expiry ?? c?.expiry_date ?? c?.expiryDate ?? "").trim().slice(0,10); }
-function normalizeExpiry(value) { const s=String(value ?? "").trim(); if (!s) return ""; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; const d=new Date(s); return Number.isNaN(d.getTime()) ? s.slice(0,10) : d.toISOString().slice(0,10); }
-function optionType(c) { return text(c?.option_type ?? c?.optionType ?? c?.instrument_type ?? c?.option_type_name).endsWith("CE") || text(c?.trading_symbol ?? c?.tradingsymbol).endsWith("CE") ? "CE" : text(c?.option_type ?? c?.optionType ?? c?.instrument_type ?? c?.option_type_name).endsWith("PE") || text(c?.trading_symbol ?? c?.tradingsymbol).endsWith("PE") ? "PE" : null; }
-
-async function resolveContract(symbol, type, spot) {
-    const broker=getBroker();
-    if (!broker || typeof broker.getOptionContracts !== "function") return {contract:null,reason:"BROKER_OPTION_CONTRACT_API_MISSING"};
-    try {
-        const contracts=await broker.getOptionContracts(symbol);
-        if (!Array.isArray(contracts) || !contracts.length) return {contract:null,reason:"NO_OPTION_CONTRACTS"};
-        const targetType=type === "CALL" ? "CE" : "PE";
-        const today=new Date(); today.setHours(0,0,0,0);
-        const usable=contracts.filter(c => {
-            const strike=strikeValue(c), expiry=normalizeExpiry(expiryValue(c));
-            const d=expiry ? new Date(`${expiry}T00:00:00`) : null;
-            const days=d && !Number.isNaN(d.getTime()) ? Math.ceil((d-today)/86400000) : -1;
-            return strike>0 && optionType(c)===targetType && days>=C.MIN_EXPIRY_DAYS && Boolean(c?.instrument_key || c?.instrumentKey);
-        });
-        if (!usable.length) return {contract:null,reason:"NO_VALID_EXPIRY_OR_SIDE_CONTRACTS"};
-        const strikes=[...new Set(usable.map(strikeValue))].sort((a,b)=>a-b);
-        const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]);
-        const index=strikes.indexOf(atm);
-        const recommendedStrike=type === "CALL" ? strikes[Math.max(0,index-1)] : strikes[Math.min(strikes.length-1,index+1)];
-        const selected=usable.reduce((best,c)=>!best || Math.abs(strikeValue(c)-recommendedStrike)<Math.abs(strikeValue(best)-recommendedStrike) ? c : best,null);
-        if (!selected) return {contract:null,reason:"NO_VALID_STRIKE"};
-        return { contract:selected, recommendedStrike:strikeValue(selected), atmStrike:atm, expiry:normalizeExpiry(expiryValue(selected)), reason:null };
-    } catch(error) { return {contract:null,reason:error?.message || "CONTRACT_LOOKUP_FAILED"}; }
-}
-
-async function getOptionQuote(contract) {
-    const broker=getBroker();
-    if (!broker || !contract) return null;
-    const key=contract.instrument_key || contract.instrumentKey;
-    if (!key) return null;
-    try {
-        if (typeof broker.getOptionQuote === "function") return await broker.getOptionQuote(key);
-        if (typeof broker.getOptionLTP === "function") return { ltp: await broker.getOptionLTP(key) };
-    } catch(error) { console.log(`⚠️ Option quote failed ${key}: ${error.message}`); }
-    return null;
-}
-
-function premiumLevels(quote) {
-    const entry=round2(quote?.ltp ?? quote?.last_price ?? quote?.price);
-    if (entry<=0) return {valid:false,entry:0,stopLoss:0,target1:0,target2:0,risk:0,reward:0,riskReward:0};
-    const stopLoss=round2(entry*0.70), target1=round2(entry*1.30), target2=round2(entry*1.60);
-    const risk=round2(entry-stopLoss), reward=round2(target1-entry);
-    return {valid:true,entry,stopLoss,target1,target2,risk,reward,riskReward:round2(reward/risk)};
-}
-
-async function calculateOptionsDecision(data) {
-    if (!data || typeof data !== "object") return null;
-    const price=stockPrice(data);
-    if (price<=0) return { stock:data.stock || data.symbol, optionType:null, optionsDecision:"REJECT", reason:"INVALID_STOCK_PRICE" };
-
-    const dir=direction(data,price);
-    if (!dir.optionType) return { stock:data.stock || data.symbol, symbol:data.symbol || data.stock, price, optionType:null, optionsDecision:"REJECT", reason:"DIRECTION_NOT_CLEAR", callScore:dir.callScore, putScore:dir.putScore };
-
-    const entry=stockEntry(data,price);
-    const setup=marketSetup(data,entry,dir.optionType);
-    const mtfResult=mtf(dir.optionType,data);
-    const scannerScore=clamp(data.rankingScore ?? data.finalScore ?? data.aiFinalScore ?? data.aiScore ?? data.scannerScore ?? data.score);
-    const conf=confidence(data,dir,mtfResult,setup.riskReward);
-    const gate=gates(dir,mtfResult,setup.riskReward,conf.confidence,scannerScore);
-
-    let contractResult={contract:null,reason:"NOT_LOOKED_UP"};
-    if (setup.valid) contractResult=await resolveContract(data.stock || data.symbol,dir.optionType,price);
-    const optionQuote=contractResult.contract ? await getOptionQuote(contractResult.contract) : null;
-    const premium=premiumLevels(optionQuote);
-
-    let decision="REJECT";
-    if (gate.basePassed) decision=gate.tradePassed && contractResult.contract && premium.valid ? "TRADE" : "WATCH";
-    const reasons=[];
-    if (!setup.valid) reasons.push(setup.reason || "INVALID_MARKET_SETUP");
-    if (!gate.basePassed) reasons.push(...gate.failedBase);
-    if (decision !== "TRADE") reasons.push(...gate.failedTrade);
-    if (!contractResult.contract) reasons.push(contractResult.reason);
-    if (setup.riskReward < C.TRADE_RR) reasons.push("LOW_MARKET_RR");
-    const uniqueReasons=[...new Set(reasons.filter(Boolean))];
-
-    return {
-        ...data,
-        stock:data.stock || data.symbol,
-        symbol:data.symbol || data.stock,
-        optionType:dir.optionType,
-        callScore:dir.callScore,
-        putScore:dir.putScore,
-        directionDifference:dir.directionDifference,
-        directionEvidence:dir.dominantEvidence,
-        entry:setup.entry,
-        stopLoss:setup.stopLoss,
-        target1:setup.target1,
-        target2:setup.target2,
-        risk:setup.risk,
-        reward:setup.reward,
-        riskReward:setup.riskReward,
-        stockEntry:setup.entry,
-        stockStopLoss:setup.stopLoss,
-        stockTarget1:setup.target1,
-        stockTarget2:setup.target2,
-        stockRiskReward:setup.riskReward,
-        optionSymbol:contractResult.contract?.trading_symbol || contractResult.contract?.tradingsymbol || "",
-        recommendedStrike:contractResult.recommendedStrike || strikeValue(contractResult.contract) || null,
-        atmStrike:contractResult.atmStrike || null,
-        optionExpiry:contractResult.expiry || null,
-        optionInstrumentKey:contractResult.contract?.instrument_key || contractResult.contract?.instrumentKey || "",
-        optionPremiumEntry:premium.entry,
-        optionPremiumStopLoss:premium.stopLoss,
-        optionPremiumTarget1:premium.target1,
-        optionPremiumTarget2:premium.target2,
-        optionPremiumRisk:premium.risk,
-        optionPremiumReward:premium.reward,
-        optionPremiumRiskReward:premium.riskReward,
-        optionsConfidence:conf.confidence,
-        confidence:conf.confidence,
-        scannerScore:conf.scannerScore,
-        directionScore:conf.directionScore,
-        mtfScore:mtfResult.score,
-        mtfAlignment:mtfResult.alignment,
-        mtfAlignedTimeframes:mtfResult.alignedTimeframes,
-        optionsDecision:decision,
-        decision,
-        decisionReason:uniqueReasons.join(",") || "VALID_SETUP",
-        contractLookupReason:contractResult.reason || "OK",
-        gates:gate,
-        marketSetup:setup,
-        optionPremiumSetup:premium,
-        pipeline:{ ...(data.pipeline || {}), optionsChecked:true }
-    };
-}
-
-async function calculateOptionsDecisions(rows) {
-    const input=Array.isArray(rows) ? rows : [];
-    const results=[];
-    for (const row of input) {
-        try {
-            const result=await calculateOptionsDecision(row);
-            if (result) results.push(result);
-        } catch(error) {
-            results.push({ stock:row?.stock || row?.symbol, symbol:row?.symbol || row?.stock, optionsDecision:"REJECT", decision:"REJECT", reason:error?.message || "OPTIONS_ENGINE_ERROR", optionsConfidence:0 });
-        }
-    }
-    return results;
-}
-
-module.exports = { calculateOptionsDecision, calculateOptionsDecisions, marketSetup };
+async function calculateOptionsDecisions(rows){const input=Array.isArray(rows)?rows:[];const results=[];for(const row of input){try{const r=await calculateOptionsDecision(row);if(r)results.push(r);}catch(e){results.push({stock:row?.stock||row?.symbol,symbol:row?.symbol||row?.stock,optionsDecision:'REJECT',decision:'REJECT',reason:e?.message||'OPTIONS_ENGINE_ERROR',optionsConfidence:0});}}return results;}
+module.exports={calculateOptionsDecision,calculateOptionsDecisions,marketSetup};
