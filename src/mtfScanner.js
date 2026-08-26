@@ -1,12 +1,158 @@
-const {getBroker}=require('./brokers');
-const {calculateIndicators}=require('./indicators');
-const num=v=>Number.isFinite(Number(v))?Number(v):0;
-function emptyTrend(reason='NO_DATA'){return{trend:'UNKNOWN',direction:'UNKNOWN',bullish:false,bearish:false,score:0,bullishPoints:0,bearishPoints:0,valid:false,reason};}
-function normalize(cs){if(!Array.isArray(cs))return[];return cs.map(c=>({time:c?.time??c?.timestamp??c?.datetime??c?.date??c?.[0],open:num(c?.open??c?.[1]),high:num(c?.high??c?.[2]),low:num(c?.low??c?.[3]),close:num(c?.close??c?.[4]),volume:num(c?.volume??c?.[5])})).filter(c=>c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.high>=Math.max(c.open,c.close)&&c.low<=Math.min(c.open,c.close)).sort((a,b)=>new Date(a.time)-new Date(b.time));}
-function direction(v){const s=String(v||'').toUpperCase();return s.includes('BULLISH')?'BULLISH':s.includes('BEARISH')?'BEARISH':'UNKNOWN';}
-function calculateTrend(symbol,interval,candles){try{const d=normalize(candles);if(d.length<50)return emptyTrend('INSUFFICIENT_CANDLES');const i=calculateIndicators(d),e20=num(i.ema20),e50=num(i.ema50),e200=num(i.ema200),rsi=num(i.rsi),m=i.macd||{},macd=num(m.MACD??m.macd),sig=num(m.signal),a=i.adx||{},adx=num(a.adx),pdi=num(a.pdi),mdi=num(a.mdi),last=d.at(-1).close;let b=0,s=0;if(e20&&e50){if(e20>e50)b++;else if(e20<e50)s++;}if(e50&&e200){if(e50>e200)b++;else if(e50<e200)s++;}if(last>e20)b++;else if(last<e20)s++;if(rsi>50)b++;else if(rsi>0&&rsi<50)s++;if(macd>sig)b++;else if(macd<sig)s++;if(adx>=20){if(pdi>mdi)b++;else if(mdi>pdi)s++;}const bull=b>=3&&b>s,bear=s>=3&&s>b,trend=bull?(b>=4?'STRONG BULLISH':'BULLISH'):bear?(s>=4?'STRONG BEARISH':'BEARISH'):'SIDEWAYS';return{trend,direction:direction(trend),bullish:bull,bearish:bear,score:bull?b:-s,bullishPoints:b,bearishPoints:s,valid:true,reason:'OK'};}catch(e){return emptyTrend('CALCULATION_ERROR');}}
-function istParts(v){const d=new Date(v);if(Number.isNaN(d.getTime()))return null;const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d),o={};p.forEach(x=>{if(x.type!=='literal')o[x.type]=x.value});return o;}
-function bucket4H(candles){const data=normalize(candles),map=new Map();for(const c of data){const p=istParts(c.time);if(!p)continue;const mins=Number(p.hour)*60+Number(p.minute),anchor=555;if(mins<anchor)continue;const idx=Math.floor((mins-anchor)/240),start=new Date(`${p.year}-${p.month}-${p.day}T00:00:00+05:30`);start.setUTCMinutes(start.getUTCMinutes()+anchor+idx*240);const key=start.toISOString();const x=map.get(key);if(!x)map.set(key,{time:key,open:c.open,high:c.high,low:c.low,close:c.close,volume:c.volume});else{x.high=Math.max(x.high,c.high);x.low=Math.min(x.low,c.low);x.close=c.close;x.volume+=c.volume;}}return[...map.values()].sort((a,b)=>new Date(a.time)-new Date(b.time));}
-async function getTrend(symbol,interval){try{const b=getBroker();if(!b?.getHistoricalData)throw new Error('Active broker does not implement getHistoricalData()');if(interval==='FOUR_HOUR')return calculateTrend(symbol,interval,bucket4H(await b.getHistoricalData(symbol,'ONE_HOUR')));return calculateTrend(symbol,interval,await b.getHistoricalData(symbol,interval));}catch(e){return emptyTrend('BROKER_DATA_ERROR');}}
-async function getMultiTimeframeAnalysis(symbol){const[daily,fourHour,oneHour,fifteen]=await Promise.all([getTrend(symbol,'ONE_DAY'),getTrend(symbol,'FOUR_HOUR'),getTrend(symbol,'ONE_HOUR'),getTrend(symbol,'FIFTEEN_MINUTE')]);const t=[daily,fourHour,oneHour,fifteen],w=[30,30,20,20];let score=0;t.forEach((x,i)=>{if(x.bullish)score+=w[i];else if(x.bearish)score-=w[i]});const valid=t.filter(x=>x.valid),bull=valid.filter(x=>x.bullish).length,bear=valid.filter(x=>x.bearish).length,alignment=Math.max(bull,bear);let overall='SIDEWAYS';if(score>=70)overall='STRONG BULLISH';else if(score>=40)overall='BULLISH';else if(score<=-70)overall='STRONG BEARISH';else if(score<=-40)overall='BEARISH';let label='MIXED';if(valid.length===4&&bull===4)label='FULL BULLISH';else if(valid.length===4&&bear===4)label='FULL BEARISH';else if(bull>=3&&bull>bear)label='BULLISH ALIGNED';else if(bear>=3&&bear>bull)label='BEARISH ALIGNED';else if(!bull&&!bear)label='UNKNOWN';return{dailyTrend:daily.direction,fourHourTrend:fourHour.direction,oneHourTrend:oneHour.direction,fifteenMinTrend:fifteen.direction,dailyTrendLabel:daily.trend,fourHourTrendLabel:fourHour.trend,oneHourTrendLabel:oneHour.trend,fifteenMinTrendLabel:fifteen.trend,mtfScore:score,bullishTimeframes:bull,bearishTimeframes:bear,unknownTimeframes:t.length-valid.length,validTimeframes:valid.length,directionBias:bull>bear?'BULLISH':bear>bull?'BEARISH':'NEUTRAL',overallTrend:overall,alignment:label,mtfAlignment:alignment,alignedTimeframes:alignment,details:{daily,fourHour,oneHour,fifteen}};}
-module.exports={getMultiTimeframeAnalysis,getTrend,bucket4H};
+const { getBroker } = require('./brokers');
+const { calculateIndicators } = require('./indicators');
+
+// Only broker/market-native intervals are used. No synthetic 4H candles.
+const TIMEFRAMES = Object.freeze([
+  { key: 'daily', interval: 'ONE_DAY', weight: 30, minCandles: 220 },
+  { key: 'oneHour', interval: 'ONE_HOUR', weight: 30, minCandles: 200 },
+  { key: 'thirtyMin', interval: 'THIRTY_MINUTE', weight: 20, minCandles: 200 },
+  { key: 'fifteenMin', interval: 'FIFTEEN_MINUTE', weight: 20, minCandles: 200 }
+]);
+
+const num = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
+
+function emptyTrend(reason = 'NO_DATA', interval = '') {
+  return {
+    trend: 'UNKNOWN', direction: 'UNKNOWN', bullish: false, bearish: false,
+    score: 0, bullishPoints: 0, bearishPoints: 0, valid: false,
+    reason, interval, candles: 0, indicatorQuality: {}
+  };
+}
+
+function normalize(candles) {
+  if (!Array.isArray(candles)) return [];
+  return candles.map(c => ({
+    time: c?.time ?? c?.timestamp ?? c?.datetime ?? c?.date ?? c?.[0],
+    open: num(c?.open ?? c?.[1]), high: num(c?.high ?? c?.[2]),
+    low: num(c?.low ?? c?.[3]), close: num(c?.close ?? c?.[4]),
+    volume: Math.max(0, num(c?.volume ?? c?.[5]) ?? 0)
+  })).filter(c => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) &&
+    c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0 &&
+    c.high >= c.open && c.high >= c.close && c.low <= c.open && c.low <= c.close)
+    .sort((a, b) => new Date(a.time) - new Date(b.time));
+}
+
+function direction(v) {
+  const s = String(v || '').toUpperCase();
+  if (s.includes('BULLISH')) return 'BULLISH';
+  if (s.includes('BEARISH')) return 'BEARISH';
+  return 'UNKNOWN';
+}
+
+function calculateTrend(symbol, spec, candles) {
+  try {
+    const data = normalize(candles);
+    if (data.length < spec.minCandles) {
+      return emptyTrend(`INSUFFICIENT_CANDLES_${data.length}_OF_${spec.minCandles}`, spec.interval);
+    }
+
+    const i = calculateIndicators(data);
+    const e20 = num(i.ema20), e50 = num(i.ema50), e200 = num(i.ema200);
+    const rsi = num(i.rsi), m = i.macd || {}, a = i.adx || {};
+    const macd = num(m.MACD ?? m.macd), signal = num(m.signal);
+    const adx = num(a.adx), pdi = num(a.pdi), mdi = num(a.mdi);
+    const last = data.at(-1)?.close;
+
+    const quality = {
+      ema20: e20 !== null, ema50: e50 !== null, ema200: e200 !== null,
+      rsi: rsi !== null, macd: macd !== null && signal !== null,
+      adx: adx !== null, di: pdi !== null && mdi !== null
+    };
+    const missing = Object.keys(quality).filter(k => !quality[k]);
+    if (missing.length) return emptyTrend(`MISSING_INDICATORS_${missing.join(',')}`, spec.interval);
+
+    let bullishPoints = 0, bearishPoints = 0;
+    if (e20 > e50) bullishPoints++; else if (e20 < e50) bearishPoints++;
+    if (e50 > e200) bullishPoints++; else if (e50 < e200) bearishPoints++;
+    if (last > e20) bullishPoints++; else if (last < e20) bearishPoints++;
+    if (rsi > 50) bullishPoints++; else if (rsi < 50) bearishPoints++;
+    if (macd > signal) bullishPoints++; else if (macd < signal) bearishPoints++;
+    if (adx >= 20) {
+      if (pdi > mdi) bullishPoints++;
+      else if (mdi > pdi) bearishPoints++;
+    }
+
+    const bullish = bullishPoints >= 3 && bullishPoints > bearishPoints;
+    const bearish = bearishPoints >= 3 && bearishPoints > bullishPoints;
+    const trend = bullish ? (bullishPoints >= 4 ? 'STRONG BULLISH' : 'BULLISH') :
+      bearish ? (bearishPoints >= 4 ? 'STRONG BEARISH' : 'BEARISH') : 'SIDEWAYS';
+
+    return {
+      trend, direction: direction(trend), bullish, bearish,
+      score: bullish ? bullishPoints : bearish ? -bearishPoints : 0,
+      bullishPoints, bearishPoints, valid: true, reason: 'OK',
+      interval: spec.interval, candles: data.length, indicatorQuality: quality
+    };
+  } catch (e) {
+    console.log(`⚠️ ${symbol} ${spec.interval} MTF failed: ${e.message}`);
+    return emptyTrend('CALCULATION_ERROR', spec.interval);
+  }
+}
+
+async function getTrend(symbol, specOrInterval) {
+  const spec = typeof specOrInterval === 'string'
+    ? TIMEFRAMES.find(x => x.interval === specOrInterval)
+    : specOrInterval;
+  if (!spec) return emptyTrend('UNSUPPORTED_TIMEFRAME', String(specOrInterval));
+  try {
+    const broker = getBroker();
+    if (!broker?.getHistoricalData) throw new Error('Active broker does not implement getHistoricalData()');
+    const candles = await broker.getHistoricalData(symbol, spec.interval);
+    return calculateTrend(symbol, spec, candles);
+  } catch (e) {
+    console.log(`⚠️ ${symbol} ${spec.interval} MTF failed: ${e.message}`);
+    return emptyTrend('BROKER_DATA_ERROR', spec.interval);
+  }
+}
+
+async function getMultiTimeframeAnalysis(symbol) {
+  const results = await Promise.all(TIMEFRAMES.map(spec => getTrend(symbol, spec)));
+  const byKey = Object.fromEntries(results.map((r, i) => [TIMEFRAMES[i].key, r]));
+  const valid = results.filter(r => r.valid);
+
+  let mtfScore = 0;
+  results.forEach((r, i) => {
+    if (r.bullish) mtfScore += TIMEFRAMES[i].weight;
+    else if (r.bearish) mtfScore -= TIMEFRAMES[i].weight;
+  });
+
+  const bull = valid.filter(r => r.bullish).length;
+  const bear = valid.filter(r => r.bearish).length;
+  const alignment = Math.max(bull, bear);
+  let overallTrend = 'SIDEWAYS';
+  if (mtfScore >= 70) overallTrend = 'STRONG BULLISH';
+  else if (mtfScore >= 40) overallTrend = 'BULLISH';
+  else if (mtfScore <= -70) overallTrend = 'STRONG BEARISH';
+  else if (mtfScore <= -40) overallTrend = 'BEARISH';
+
+  let label = 'MIXED';
+  if (valid.length === 4 && bull === 4) label = 'FULL BULLISH';
+  else if (valid.length === 4 && bear === 4) label = 'FULL BEARISH';
+  else if (bull >= 3 && bull > bear) label = 'BULLISH ALIGNED';
+  else if (bear >= 3 && bear > bull) label = 'BEARISH ALIGNED';
+  else if (!bull && !bear) label = 'UNKNOWN';
+
+  return {
+    dailyTrend: byKey.daily.direction,
+    oneHourTrend: byKey.oneHour.direction,
+    thirtyMinTrend: byKey.thirtyMin.direction,
+    fifteenMinTrend: byKey.fifteenMin.direction,
+    dailyTrendLabel: byKey.daily.trend,
+    oneHourTrendLabel: byKey.oneHour.trend,
+    thirtyMinTrendLabel: byKey.thirtyMin.trend,
+    fifteenMinTrendLabel: byKey.fifteenMin.trend,
+    // Compatibility alias only; this is NOT a 4H result.
+    fourHourTrend: byKey.oneHour.direction,
+    fourHourTrendLabel: byKey.oneHour.trend,
+    mtfScore, bullishTimeframes: bull, bearishTimeframes: bear,
+    unknownTimeframes: results.length - valid.length, validTimeframes: valid.length,
+    directionBias: bull > bear ? 'BULLISH' : bear > bull ? 'BEARISH' : 'NEUTRAL',
+    overallTrend, alignment: label, mtfAlignment: alignment, alignedTimeframes: alignment,
+    details: {
+      daily: byKey.daily, oneHour: byKey.oneHour,
+      thirtyMin: byKey.thirtyMin, fifteenMin: byKey.fifteenMin
+    }
+  };
+}
+
+module.exports = { getMultiTimeframeAnalysis, getTrend, TIMEFRAMES };
