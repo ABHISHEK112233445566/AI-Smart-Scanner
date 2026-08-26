@@ -2,32 +2,23 @@ require("dotenv").config();
 
 module.exports = {
     BROKER: (process.env.BROKER || "UPSTOX").trim().toUpperCase(),
-
-    UPSTOX: {
-        ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN || ""
-    },
-
+    UPSTOX: { ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN || "" },
     ANGELONE: {
         API_KEY: process.env.API_KEY || "",
         CLIENT_ID: process.env.CLIENT_ID || "",
         MPIN: process.env.MPIN || "",
         TOTP_SECRET: process.env.TOTP_SECRET || ""
     },
-
-    // Backward compatibility
     API_KEY: process.env.API_KEY || "",
     CLIENT_ID: process.env.CLIENT_ID || "",
     MPIN: process.env.MPIN || "",
     TOTP_SECRET: process.env.TOTP_SECRET || "",
-
     GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || "",
 
-    // Universe is resolved from the symbols directory. No hard-coded
-    // stock-count cap is applied here.
+    // NIFTY100 is the permanent default universe.
     SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "NIFTY100").trim().toUpperCase(),
     MAX_STOCKS: 0,
 
-    // Technical indicators
     EMA_PERIODS: [5, 9, 20, 50, 100, 200],
     EMA_SHORT: 20,
     EMA_LONG: 200,
@@ -38,7 +29,6 @@ module.exports = {
     SUPERTREND: { ATR_PERIOD: 10, MULTIPLIER: 3 },
     BOLLINGER: { PERIOD: 20, STD_DEV: 2 },
 
-    // Single source of truth for scanner quality thresholds.
     THRESHOLDS: {
         AI_BUY_SCORE: 80,
         AI_WATCH_SCORE: 60,
@@ -48,21 +38,19 @@ module.exports = {
         MIN_RR: 1.5
     },
 
-    // Backward-compatible aliases. New code should read THRESHOLDS.
     AI_BUY_SCORE: 80,
     AI_WATCH_SCORE: 60,
     DASHBOARD_MIN_SCORE: 90,
     DASHBOARD_MAX_ROWS: 10,
 
-    // Scheduler configuration is centralized here so scheduler.js
-    // does not maintain a second set of market-hour constants.
+    // Single scheduler source of truth: scanner.js is run by scheduler.js every 30 minutes.
     SCHEDULER: {
         TIMEZONE: "Asia/Kolkata",
         START_HOUR: 9,
-        START_MINUTE: 15,
+        START_MINUTE: 10,
         END_HOUR: 15,
         END_MINUTE: 30,
-        INTERVAL_MINUTES: 5,
-        TIMEOUT_MINUTES: 10
+        INTERVAL_MINUTES: 30,
+        TIMEOUT_MINUTES: 420
     }
 };
