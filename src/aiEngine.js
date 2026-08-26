@@ -1,1741 +1,330 @@
 // ============================================================
-// AI ENGINE V4
+// AI ENGINE V5
 // ============================================================
-// Purpose:
-// - Calculate balanced technical score
-// - Detect bullish / bearish / sideways conditions
-// - Avoid artificially high scores
-// - Correctly evaluate OBV direction
-// - Require alignment for 90+ scores
-// - Generate scanner recommendation
-// - Generate ONE trade setup
-// - Prevent trade setup from overwriting AI score fields
-// - Provide quality fields for Options Decision Engine
+// Signed directional score:
+//   +100 = strongest bullish
+//      0 = neutral / sideways
+//   -100 = strongest bearish
+//
+// Qualification threshold: absolute score >= 85.
+// Bullish and bearish scoring use the same weighted structure.
 // ============================================================
 
-const {
-    calculateTradeSetup
-} = require("./tradeSetup");
+const { calculateTradeSetup } = require("./tradeSetup");
 
-
-// ============================================================
-// SAFE NUMBER
-// ============================================================
+const QUALIFY_SCORE = 85;
 
 function num(value, fallback = 0) {
-
     const n = Number(value);
-
-    return Number.isFinite(n)
-        ? n
-        : fallback;
-
+    return Number.isFinite(n) ? n : fallback;
 }
-
-
-// ============================================================
-// SAFE OBJECT
-// ============================================================
 
 function obj(value) {
-
-    return (
-        value &&
-        typeof value === "object"
-    )
-        ? value
-        : {};
-
+    return value && typeof value === "object" ? value : {};
 }
-
-
-// ============================================================
-// NORMALIZE TREND
-// ============================================================
 
 function normalizeTrend(value) {
-
-    return String(value || "")
-        .trim()
-        .toUpperCase();
-
+    return String(value || "").trim().toUpperCase();
 }
-
-
-// ============================================================
-// GET MACD DATA
-// ============================================================
 
 function getMACD(indicators) {
-
-    const macd =
-        obj(indicators.macd);
-
+    const m = obj(indicators.macd);
     return {
-
-        value:
-            num(
-                macd.MACD ??
-                macd.macd
-            ),
-
-        signal:
-            num(
-                macd.signal ??
-                macd.Signal
-            ),
-
-        histogram:
-            num(
-                macd.histogram ??
-                macd.Histogram
-            )
-
+        value: num(m.MACD ?? m.macd),
+        signal: num(m.signal ?? m.Signal),
+        histogram: num(m.histogram ?? m.Histogram)
     };
-
 }
-
-
-// ============================================================
-// GET ADX DATA
-// ============================================================
 
 function getADX(indicators) {
-
-    const adx =
-        obj(indicators.adx);
-
+    const a = obj(indicators.adx);
     return {
-
-        value:
-            num(
-                adx.adx ??
-                indicators.adxValue
-            ),
-
-        pdi:
-            num(
-                adx.pdi ??
-                indicators.pdi
-            ),
-
-        mdi:
-            num(
-                adx.mdi ??
-                indicators.mdi
-            )
-
+        value: num(a.adx ?? indicators.adxValue),
+        pdi: num(a.pdi ?? indicators.pdi),
+        mdi: num(a.mdi ?? indicators.mdi)
     };
-
 }
-
-
-// ============================================================
-// GET BOLLINGER DATA
-// ============================================================
 
 function getBollinger(indicators) {
-
-    const bollinger =
-        obj(indicators.bollinger);
-
-    return {
-
-        middle:
-            num(
-                bollinger.middle ??
-                bollinger.middleBand
-            )
-
-    };
-
+    const b = obj(indicators.bollinger);
+    return num(b.middle ?? b.middleBand);
 }
-
-
-// ============================================================
-// GET SUPERTREND
-// ============================================================
 
 function getSupertrend(indicators) {
-
-    return normalizeTrend(
-        indicators.supertrend?.trend ??
-        indicators.supertrend
-    );
-
+    return normalizeTrend(indicators.supertrend?.trend ?? indicators.supertrend);
 }
-
-
-// ============================================================
-// OBV DIRECTION
-// ============================================================
-// Supports multiple possible field names:
-//
-// obvTrend
-// obvDirection
-// obvSignal
-// obvChange
-// obvDelta
-// obvSlope
-//
-// Important:
-// A positive OBV number by itself is NOT bullish.
-// OBV is cumulative, so its absolute value has no directional
-// meaning without comparing it with its previous/current trend.
-// ============================================================
 
 function getOBVDirection(indicators) {
-
-    const explicitTrend =
-        normalizeTrend(
-            indicators.obvTrend ??
-            indicators.obvDirection ??
-            indicators.obvSignal
-        );
-
-
-    if (
-        explicitTrend.includes("BULL") ||
-        explicitTrend.includes("UP") ||
-        explicitTrend.includes("RISING") ||
-        explicitTrend === "BUY"
-    ) {
-
-        return "BULLISH";
-
-    }
-
-
-    if (
-        explicitTrend.includes("BEAR") ||
-        explicitTrend.includes("DOWN") ||
-        explicitTrend.includes("FALLING") ||
-        explicitTrend === "SELL"
-    ) {
-
-        return "BEARISH";
-
-    }
-
-
-    const change =
-        num(
-            indicators.obvChange ??
-            indicators.obvDelta ??
-            indicators.obvSlope,
-            NaN
-        );
-
-
-    if (
-        Number.isFinite(change)
-    ) {
-
-        if (change > 0)
-            return "BULLISH";
-
-        if (change < 0)
-            return "BEARISH";
-
-    }
-
-
+    const explicit = normalizeTrend(indicators.obvTrend ?? indicators.obvDirection ?? indicators.obvSignal);
+    if (explicit.includes("BULL") || explicit.includes("UP") || explicit.includes("RISING") || explicit === "BUY") return "BULLISH";
+    if (explicit.includes("BEAR") || explicit.includes("DOWN") || explicit.includes("FALLING") || explicit === "SELL") return "BEARISH";
+    const change = num(indicators.obvChange ?? indicators.obvDelta ?? indicators.obvSlope, NaN);
+    if (Number.isFinite(change)) return change > 0 ? "BULLISH" : change < 0 ? "BEARISH" : "UNKNOWN";
     return "UNKNOWN";
-
 }
 
-
-// ============================================================
-// EMA ALIGNMENT
-// ============================================================
-
-function getBullishEMAAlignment(
-    indicators,
-    price
-) {
-
-    const ema20 =
-        num(indicators.ema20);
-
-    const ema50 =
-        num(indicators.ema50);
-
-    const ema100 =
-        num(indicators.ema100);
-
-    const ema200 =
-        num(indicators.ema200);
-
-
-    return {
-
-        priceAbove20:
-            ema20 > 0 &&
-            price > ema20,
-
-        priceAbove50:
-            ema50 > 0 &&
-            price > ema50,
-
-        ema20Above50:
-            ema20 > 0 &&
-            ema50 > 0 &&
-            ema20 > ema50,
-
-        ema50Above100:
-            ema50 > 0 &&
-            ema100 > 0 &&
-            ema50 > ema100,
-
-        ema100Above200:
-            ema100 > 0 &&
-            ema200 > 0 &&
-            ema100 > ema200
-
-    };
-
-}
-
-
-function getBearishEMAAlignment(
-    indicators,
-    price
-) {
-
-    const ema20 =
-        num(indicators.ema20);
-
-    const ema50 =
-        num(indicators.ema50);
-
-    const ema100 =
-        num(indicators.ema100);
-
-    const ema200 =
-        num(indicators.ema200);
-
-
-    return {
-
-        priceBelow20:
-            ema20 > 0 &&
-            price < ema20,
-
-        priceBelow50:
-            ema50 > 0 &&
-            price < ema50,
-
-        ema20Below50:
-            ema20 > 0 &&
-            ema50 > 0 &&
-            ema20 < ema50,
-
-        ema50Below100:
-            ema50 > 0 &&
-            ema100 > 0 &&
-            ema50 < ema100,
-
-        ema100Below200:
-            ema100 > 0 &&
-            ema200 > 0 &&
-            ema100 < ema200
-
-    };
-
-}
-
-
-// ============================================================
-// CALCULATE BULLISH SCORE
-// ============================================================
-
-function calculateBullishScore(
-    indicators = {},
-    price = 0
-) {
-
-    indicators =
-        obj(indicators);
-
-    price =
-        num(price);
-
-
-    let score = 0;
-
-
-    // ========================================================
-    // TREND — 40 POINTS
-    // ========================================================
-
-    const ema =
-        getBullishEMAAlignment(
-            indicators,
-            price
-        );
-
-    const vwap =
-        num(indicators.vwap);
-
-
-    if (ema.priceAbove20)
-        score += 5;
-
-    if (ema.priceAbove50)
-        score += 5;
-
-    if (ema.ema20Above50)
-        score += 5;
-
-    if (ema.ema50Above100)
-        score += 5;
-
-    if (ema.ema100Above200)
-        score += 5;
-
-
-    if (
-        vwap > 0 &&
-        price > vwap
-    ) {
-
-        score += 5;
-
-    }
-
-
-    const supertrend =
-        getSupertrend(indicators);
-
-
-    if (
-        supertrend.includes("BUY") ||
-        supertrend.includes("BULL") ||
-        supertrend.includes("UP")
-    ) {
-
-        score += 10;
-
-    }
-
-
-    // ========================================================
-    // MOMENTUM — 25 POINTS
-    // ========================================================
-
-    const rsi =
-        num(indicators.rsi);
-
-    if (
-        rsi >= 55 &&
-        rsi <= 70
-    ) {
-
-        score += 8;
-
-    }
-
-
-    const macd =
-        getMACD(indicators);
-
-
-    if (
-        macd.value >
-        macd.signal
-    ) {
-
-        score += 8;
-
-    }
-
-
-    if (
-        macd.histogram > 0
-    ) {
-
-        score += 4;
-
-    }
-
-
-    const bollinger =
-        getBollinger(indicators);
-
-
-    if (
-        bollinger.middle > 0 &&
-        price > bollinger.middle
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // ========================================================
-    // VOLUME — 15 POINTS
-    // ========================================================
-
-    const rvol =
-        num(indicators.rvol);
-
-
-    if (
-        rvol >= 1.2
-    ) {
-
-        score += 5;
-
-    }
-
-
-    if (
-        indicators.volumeSpike === true
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // IMPORTANT:
-    // Do NOT check obv > 0.
-    // Absolute OBV value is not directional.
-
-    const obvDirection =
-        getOBVDirection(indicators);
-
-
-    if (
-        obvDirection === "BULLISH"
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // ========================================================
-    // STRENGTH — 20 POINTS
-    // ========================================================
-
-    const adx =
-        getADX(indicators);
-
-
-    if (
-        adx.value > 25
-    ) {
-
-        score += 10;
-
-    }
-
-
-    if (
+function bullishConditions(indicators = {}, price = 0) {
+    const ema20 = num(indicators.ema20), ema50 = num(indicators.ema50);
+    const ema100 = num(indicators.ema100), ema200 = num(indicators.ema200);
+    const vwap = num(indicators.vwap);
+    const rsi = num(indicators.rsi);
+    const macd = getMACD(indicators);
+    const adx = getADX(indicators);
+    const st = getSupertrend(indicators);
+    const obv = getOBVDirection(indicators);
+    const bb = getBollinger(indicators);
+    const rvol = num(indicators.rvol);
+
+    return [
+        ema20 > 0 && price > ema20,
+        ema50 > 0 && price > ema50,
+        ema20 > 0 && ema50 > 0 && ema20 > ema50,
+        ema50 > 0 && ema100 > 0 && ema50 > ema100,
+        ema100 > 0 && ema200 > 0 && ema100 > ema200,
+        vwap > 0 && price > vwap,
+        st.includes("BUY") || st.includes("BULL") || st.includes("UP"),
+        rsi >= 55 && rsi <= 70,
+        macd.value > macd.signal,
+        macd.histogram > 0,
+        bb > 0 && price > bb,
+        rvol >= 1.2,
+        indicators.volumeSpike === true,
+        obv === "BULLISH",
+        adx.value > 25,
         adx.pdi > adx.mdi
-    ) {
-
-        score += 10;
-
-    }
-
-
-    return Math.min(
-        100,
-        Math.round(score)
-    );
-
+    ];
 }
 
-
-// ============================================================
-// CALCULATE BEARISH SCORE
-// ============================================================
-
-function calculateBearishScore(
-    indicators = {},
-    price = 0
-) {
-
-    indicators =
-        obj(indicators);
-
-    price =
-        num(price);
-
-
-    let score = 0;
-
-
-    // ========================================================
-    // TREND — 40 POINTS
-    // ========================================================
-
-    const ema =
-        getBearishEMAAlignment(
-            indicators,
-            price
-        );
-
-    const vwap =
-        num(indicators.vwap);
-
-
-    if (ema.priceBelow20)
-        score += 5;
-
-    if (ema.priceBelow50)
-        score += 5;
-
-    if (ema.ema20Below50)
-        score += 5;
-
-    if (ema.ema50Below100)
-        score += 5;
-
-    if (ema.ema100Below200)
-        score += 5;
-
-
-    if (
-        vwap > 0 &&
-        price < vwap
-    ) {
-
-        score += 5;
-
-    }
-
-
-    const supertrend =
-        getSupertrend(indicators);
-
-
-    if (
-        supertrend.includes("SELL") ||
-        supertrend.includes("BEAR") ||
-        supertrend.includes("DOWN")
-    ) {
-
-        score += 10;
-
-    }
-
-
-    // ========================================================
-    // MOMENTUM — 25 POINTS
-    // ========================================================
-
-    const rsi =
-        num(indicators.rsi);
-
-
-    if (
-        rsi >= 30 &&
-        rsi <= 45
-    ) {
-
-        score += 8;
-
-    }
-
-
-    const macd =
-        getMACD(indicators);
-
-
-    if (
-        macd.value <
-        macd.signal
-    ) {
-
-        score += 8;
-
-    }
-
-
-    if (
-        macd.histogram < 0
-    ) {
-
-        score += 4;
-
-    }
-
-
-    const bollinger =
-        getBollinger(indicators);
-
-
-    if (
-        bollinger.middle > 0 &&
-        price < bollinger.middle
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // ========================================================
-    // VOLUME — 15 POINTS
-    // ========================================================
-
-    const rvol =
-        num(indicators.rvol);
-
-
-    if (
-        rvol >= 1.2
-    ) {
-
-        score += 5;
-
-    }
-
-
-    if (
-        indicators.volumeSpike === true
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // IMPORTANT:
-    // Do NOT check obv > 0.
-    // Absolute OBV value is not directional.
-
-    const obvDirection =
-        getOBVDirection(indicators);
-
-
-    if (
-        obvDirection === "BEARISH"
-    ) {
-
-        score += 5;
-
-    }
-
-
-    // ========================================================
-    // STRENGTH — 20 POINTS
-    // ========================================================
-
-    const adx =
-        getADX(indicators);
-
-
-    if (
-        adx.value > 25
-    ) {
-
-        score += 10;
-
-    }
-
-
-    if (
+function bearishConditions(indicators = {}, price = 0) {
+    const ema20 = num(indicators.ema20), ema50 = num(indicators.ema50);
+    const ema100 = num(indicators.ema100), ema200 = num(indicators.ema200);
+    const vwap = num(indicators.vwap);
+    const rsi = num(indicators.rsi);
+    const macd = getMACD(indicators);
+    const adx = getADX(indicators);
+    const st = getSupertrend(indicators);
+    const obv = getOBVDirection(indicators);
+    const bb = getBollinger(indicators);
+    const rvol = num(indicators.rvol);
+
+    return [
+        ema20 > 0 && price < ema20,
+        ema50 > 0 && price < ema50,
+        ema20 > 0 && ema50 > 0 && ema20 < ema50,
+        ema50 > 0 && ema100 > 0 && ema50 < ema100,
+        ema100 > 0 && ema200 > 0 && ema100 < ema200,
+        vwap > 0 && price < vwap,
+        st.includes("SELL") || st.includes("BEAR") || st.includes("DOWN"),
+        rsi >= 30 && rsi <= 45,
+        macd.value < macd.signal,
+        macd.histogram < 0,
+        bb > 0 && price < bb,
+        rvol >= 1.2,
+        indicators.volumeSpike === true,
+        obv === "BEARISH",
+        adx.value > 25,
         adx.mdi > adx.pdi
-    ) {
-
-        score += 10;
-
-    }
-
-
-    return Math.min(
-        100,
-        Math.round(score)
-    );
-
+    ];
 }
 
-
-// ============================================================
-// 90+ ALIGNMENT
-// ============================================================
-// A raw score of 90 is NOT sufficient.
-//
-// 90+ is allowed only when the important technical components
-// agree with the same direction.
-//
-// This prevents a stock from receiving an "elite" score because
-// many weak/partial conditions happen to add up to 90.
-// ============================================================
-
-function check90PlusAlignment(
-    indicators = {},
-    price = 0,
-    direction = "SIDEWAYS",
-    score = 0
-) {
-
-    indicators =
-        obj(indicators);
-
-    price =
-        num(price);
-
-
-    if (
-        score < 90 ||
-        direction === "SIDEWAYS"
-    ) {
-
-        return {
-
-            aligned: false,
-
-            reasons: []
-
-        };
-
-    }
-
-
-    const adx =
-        getADX(indicators);
-
-    const macd =
-        getMACD(indicators);
-
-    const rsi =
-        num(indicators.rsi);
-
-    const vwap =
-        num(indicators.vwap);
-
-    const supertrend =
-        getSupertrend(indicators);
-
-    const obvDirection =
-        getOBVDirection(indicators);
-
-
-    const bullishEMA =
-        getBullishEMAAlignment(
-            indicators,
-            price
-        );
-
-    const bearishEMA =
-        getBearishEMAAlignment(
-            indicators,
-            price
-        );
-
-
-    const reasons = [];
-
-
-    if (
-        adx.value < 25
-    ) {
-
-        reasons.push(
-            "ADX below 25"
-        );
-
-    }
-
-
-    if (
-        direction === "BULLISH"
-    ) {
-
-        if (
-            !bullishEMA.priceAbove20 ||
-            !bullishEMA.priceAbove50
-        ) {
-
-            reasons.push(
-                "Price not above EMA20/EMA50"
-            );
-
-        }
-
-
-        if (
-            !bullishEMA.ema20Above50 ||
-            !bullishEMA.ema50Above100
-        ) {
-
-            reasons.push(
-                "Bullish EMA structure incomplete"
-            );
-
-        }
-
-
-        if (
-            adx.pdi <= adx.mdi
-        ) {
-
-            reasons.push(
-                "PDI not above MDI"
-            );
-
-        }
-
-
-        if (
-            rsi < 55 ||
-            rsi > 75
-        ) {
-
-            reasons.push(
-                "Bullish RSI alignment missing"
-            );
-
-        }
-
-
-        if (
-            macd.value <= macd.signal ||
-            macd.histogram <= 0
-        ) {
-
-            reasons.push(
-                "Bullish MACD alignment missing"
-            );
-
-        }
-
-
-        if (
-            vwap <= 0 ||
-            price <= vwap
-        ) {
-
-            reasons.push(
-                "Price not above VWAP"
-            );
-
-        }
-
-
-        if (
-            !(
-                supertrend.includes("BUY") ||
-                supertrend.includes("BULL") ||
-                supertrend.includes("UP")
-            )
-        ) {
-
-            reasons.push(
-                "Bullish Supertrend alignment missing"
-            );
-
-        }
-
-
-        if (
-            obvDirection !== "BULLISH"
-        ) {
-
-            reasons.push(
-                "Bullish OBV confirmation missing"
-            );
-
-        }
-
-    }
-
-
-    if (
-        direction === "BEARISH"
-    ) {
-
-        if (
-            !bearishEMA.priceBelow20 ||
-            !bearishEMA.priceBelow50
-        ) {
-
-            reasons.push(
-                "Price not below EMA20/EMA50"
-            );
-
-        }
-
-
-        if (
-            !bearishEMA.ema20Below50 ||
-            !bearishEMA.ema50Below100
-        ) {
-
-            reasons.push(
-                "Bearish EMA structure incomplete"
-            );
-
-        }
-
-
-        if (
-            adx.mdi <= adx.pdi
-        ) {
-
-            reasons.push(
-                "MDI not above PDI"
-            );
-
-        }
-
-
-        if (
-            rsi < 25 ||
-            rsi > 45
-        ) {
-
-            reasons.push(
-                "Bearish RSI alignment missing"
-            );
-
-        }
-
-
-        if (
-            macd.value >= macd.signal ||
-            macd.histogram >= 0
-        ) {
-
-            reasons.push(
-                "Bearish MACD alignment missing"
-            );
-
-        }
-
-
-        if (
-            vwap <= 0 ||
-            price >= vwap
-        ) {
-
-            reasons.push(
-                "Price not below VWAP"
-            );
-
-        }
-
-
-        if (
-            !(
-                supertrend.includes("SELL") ||
-                supertrend.includes("BEAR") ||
-                supertrend.includes("DOWN")
-            )
-        ) {
-
-            reasons.push(
-                "Bearish Supertrend alignment missing"
-            );
-
-        }
-
-
-        if (
-            obvDirection !== "BEARISH"
-        ) {
-
-            reasons.push(
-                "Bearish OBV confirmation missing"
-            );
-
-        }
-
-    }
-
-
-    return {
-
-        aligned:
-            reasons.length === 0,
-
-        reasons
-
-    };
-
+// 16 components, weighted to a 100-point magnitude.
+// Trend 40, momentum 25, volume 15, strength 20.
+function scoreConditions(conditions) {
+    const weights = [5,5,5,5,5,5,10,8,8,4,5,5,5,5,10,10];
+    let score = 0;
+    for (let i = 0; i < conditions.length; i++) if (conditions[i]) score += weights[i];
+    return Math.min(100, Math.round(score));
 }
 
+function calculateBullishScore(indicators = {}, price = 0) {
+    return scoreConditions(bullishConditions(obj(indicators), num(price)));
+}
 
-// ============================================================
-// MAIN AI SCORE
-// ============================================================
+function calculateBearishScore(indicators = {}, price = 0) {
+    return scoreConditions(bearishConditions(obj(indicators), num(price)));
+}
 
-function calculateAIScore(
-    indicators = {},
-    price = 0
-) {
+function check85PlusAlignment(indicators = {}, price = 0, direction = "SIDEWAYS", magnitude = 0) {
+    if (magnitude < QUALIFY_SCORE || direction === "SIDEWAYS") return { aligned: false, reasons: [] };
+    const i = obj(indicators), p = num(price), reasons = [];
+    const adx = getADX(i), macd = getMACD(i), rsi = num(i.rsi), vwap = num(i.vwap), st = getSupertrend(i), obv = getOBVDirection(i);
+    const bullish = direction === "BULLISH";
 
-    indicators =
-        obj(indicators);
+    if (adx.value < 25) reasons.push("ADX below 25");
+    if (bullish) {
+        if (!(num(i.ema20) > 0 && p > num(i.ema20) && num(i.ema50) > 0 && p > num(i.ema50))) reasons.push("Price not above EMA20/EMA50");
+        if (!(num(i.ema20) > 0 && num(i.ema50) > 0 && num(i.ema20) > num(i.ema50) && num(i.ema50) > num(i.ema100))) reasons.push("Bullish EMA structure incomplete");
+        if (adx.pdi <= adx.mdi) reasons.push("PDI not above MDI");
+        if (rsi < 55 || rsi > 75) reasons.push("Bullish RSI alignment missing");
+        if (!(macd.value > macd.signal && macd.histogram > 0)) reasons.push("Bullish MACD alignment missing");
+        if (!(vwap > 0 && p > vwap)) reasons.push("Price not above VWAP");
+        if (!(st.includes("BUY") || st.includes("BULL") || st.includes("UP"))) reasons.push("Bullish Supertrend alignment missing");
+        if (obv !== "BULLISH") reasons.push("Bullish OBV confirmation missing");
+    } else {
+        if (!(num(i.ema20) > 0 && p < num(i.ema20) && num(i.ema50) > 0 && p < num(i.ema50))) reasons.push("Price not below EMA20/EMA50");
+        if (!(num(i.ema20) > 0 && num(i.ema50) > 0 && num(i.ema20) < num(i.ema50) && num(i.ema50) < num(i.ema100))) reasons.push("Bearish EMA structure incomplete");
+        if (adx.mdi <= adx.pdi) reasons.push("MDI not above PDI");
+        if (rsi < 25 || rsi > 45) reasons.push("Bearish RSI alignment missing");
+        if (!(macd.value < macd.signal && macd.histogram < 0)) reasons.push("Bearish MACD alignment missing");
+        if (!(vwap > 0 && p < vwap)) reasons.push("Price not below VWAP");
+        if (!(st.includes("SELL") || st.includes("BEAR") || st.includes("DOWN"))) reasons.push("Bearish Supertrend alignment missing");
+        if (obv !== "BEARISH") reasons.push("Bearish OBV confirmation missing");
+    }
+    return { aligned: reasons.length === 0, reasons };
+}
 
-    price =
-        num(price);
+function calculateAIScore(indicators = {}, price = 0) {
+    const i = obj(indicators), p = num(price);
+    const bull = calculateBullishScore(i, p);
+    const bearMagnitude = calculateBearishScore(i, p);
+    const difference = Math.abs(bull - bearMagnitude);
+    let direction = "SIDEWAYS";
+    let magnitude = 0;
 
-
-    const bullishScore =
-        calculateBullishScore(
-            indicators,
-            price
-        );
-
-    const bearishScore =
-        calculateBearishScore(
-            indicators,
-            price
-        );
-
-
-    const difference =
-        Math.abs(
-            bullishScore -
-            bearishScore
-        );
-
-
-    let direction =
-        "SIDEWAYS";
-
-
-    if (
-        bullishScore >= 60 &&
-        bullishScore > bearishScore &&
-        difference >= 8
-    ) {
-
-        direction =
-            "BULLISH";
-
-    } else if (
-        bearishScore >= 60 &&
-        bearishScore > bullishScore &&
-        difference >= 8
-    ) {
-
-        direction =
-            "BEARISH";
-
+    if (bull >= 60 && bull > bearMagnitude && difference >= 8) {
+        direction = "BULLISH";
+        magnitude = bull;
+    } else if (bearMagnitude >= 60 && bearMagnitude > bull && difference >= 8) {
+        direction = "BEARISH";
+        magnitude = bearMagnitude;
     }
 
+    const alignment = check85PlusAlignment(i, p, direction, magnitude);
+    // Do not allow an unconfirmed 85+ signal to remain at 85 or above.
+    if (magnitude >= QUALIFY_SCORE && !alignment.aligned) magnitude = QUALIFY_SCORE - 1;
 
-    let score =
-        Math.max(
-            bullishScore,
-            bearishScore
-        );
-
-
-    if (
-        direction === "SIDEWAYS"
-    ) {
-
-        score =
-            Math.min(
-                score,
-                59
-            );
-
-    }
-
-
-    // ========================================================
-    // 90+ ALIGNMENT
-    // ========================================================
-
-    const alignment =
-        check90PlusAlignment(
-            indicators,
-            price,
-            direction,
-            score
-        );
-
-
-    // A raw 90+ score is capped below 90 unless all required
-    // major directional conditions agree.
-
-    if (
-        score >= 90 &&
-        !alignment.aligned
-    ) {
-
-        score = 89;
-
-    }
-
+    const signedScore = direction === "BULLISH" ? magnitude : direction === "BEARISH" ? -magnitude : 0;
 
     return {
-
-        score:
-            Math.min(
-                100,
-                Math.round(score)
-            ),
-
-        bullishScore,
-
-        bearishScore,
-
+        score: signedScore,
+        finalScore: signedScore,
+        bullishScore: bull,
+        bearishScore: -bearMagnitude,
+        bullishScoreMagnitude: bull,
+        bearishScoreMagnitude: bearMagnitude,
         direction,
-
-        directionDifference:
-            difference,
-
-        ninetyPlusAligned:
-            alignment.aligned,
-
-        ninetyPlusAlignmentReasons:
-            alignment.reasons
-
+        directionDifference: difference,
+        ninetyPlusAligned: alignment.aligned,
+        ninetyPlusAlignmentReasons: alignment.reasons,
+        eightyFivePlusAligned: alignment.aligned
     };
-
 }
 
-
-// ============================================================
-// RECOMMENDATION
-// ============================================================
-
-function getRecommendation(
-    score,
-    direction = "SIDEWAYS"
-) {
-
-    score =
-        num(score);
-
-
-    direction =
-        normalizeTrend(direction);
-
-
-    if (
-        direction === "BULLISH"
-    ) {
-
-        if (score >= 90)
-            return "⭐⭐⭐⭐⭐ ELITE BUY";
-
-        if (score >= 80)
-            return "⭐⭐⭐⭐⭐ STRONG BUY";
-
-        if (score >= 70)
-            return "⭐⭐⭐⭐ BUY";
-
-        if (score >= 60)
-            return "⭐⭐⭐ WATCH";
-
+function getRecommendation(score, direction = "SIDEWAYS") {
+    const s = num(score), magnitude = Math.abs(s), d = normalizeTrend(direction);
+    if (d === "BULLISH") {
+        if (magnitude >= 90) return "⭐⭐⭐⭐⭐ ELITE BUY";
+        if (magnitude >= 85) return "⭐⭐⭐⭐⭐ STRONG BUY";
+        if (magnitude >= 70) return "⭐⭐⭐⭐ BUY";
+        if (magnitude >= 60) return "⭐⭐⭐ WATCH";
     }
-
-
-    if (
-        direction === "BEARISH"
-    ) {
-
-        if (score >= 90)
-            return "⭐⭐⭐⭐⭐ ELITE SELL";
-
-        if (score >= 80)
-            return "⭐⭐⭐⭐⭐ STRONG SELL";
-
-        if (score >= 70)
-            return "⭐⭐⭐⭐ SELL";
-
-        if (score >= 60)
-            return "⭐⭐⭐ WATCH";
-
+    if (d === "BEARISH") {
+        if (magnitude >= 90) return "⭐⭐⭐⭐⭐ ELITE SELL";
+        if (magnitude >= 85) return "⭐⭐⭐⭐⭐ STRONG SELL";
+        if (magnitude >= 70) return "⭐⭐⭐⭐ SELL";
+        if (magnitude >= 60) return "⭐⭐⭐ WATCH";
     }
-
-
-    return score >= 40
-        ? "⚠ WAIT"
-        : "❌ AVOID";
-
+    return magnitude >= 40 ? "⚠ WAIT" : "❌ AVOID";
 }
 
-
-// ============================================================
-// RATING
-// ============================================================
-
-function getRating(
-    score,
-    direction = "SIDEWAYS"
-) {
-
-    score =
-        num(score);
-
-
-    direction =
-        normalizeTrend(direction);
-
-
-    if (
-        direction === "BULLISH"
-    ) {
-
-        if (score >= 80)
-            return "STRONG BUY";
-
-        if (score >= 65)
-            return "BUY";
-
+function getRating(score, direction = "SIDEWAYS") {
+    const magnitude = Math.abs(num(score)), d = normalizeTrend(direction);
+    if (d === "BULLISH") {
+        if (magnitude >= 85) return "STRONG BUY";
+        if (magnitude >= 65) return "BUY";
     }
-
-
-    if (
-        direction === "BEARISH"
-    ) {
-
-        if (score >= 80)
-            return "STRONG SELL";
-
-        if (score >= 65)
-            return "SELL";
-
+    if (d === "BEARISH") {
+        if (magnitude >= 85) return "STRONG SELL";
+        if (magnitude >= 65) return "SELL";
     }
-
-
-    if (score >= 50)
-        return "WATCH";
-
-    if (score >= 35)
-        return "WAIT";
-
+    if (magnitude >= 50) return "WATCH";
+    if (magnitude >= 35) return "WAIT";
     return "AVOID";
-
 }
 
-
-// ============================================================
-// QUALITY RULES
-// ============================================================
-
-function getQualityStatus(
-    scoreData,
-    data
-) {
-
-    data =
-        obj(data);
-
-    scoreData =
-        obj(scoreData);
-
-
-    const scannerScore =
-        Number(
-            data.finalScore ??
-            scoreData.score ??
-            0
-        );
-
-
-    const adx =
-        num(
-            data.adx?.adx ??
-            data.adxValue
-        );
-
-
-    const rvol =
-        num(data.rvol);
-
-
-    const volumeConfirmed =
-        data.volumeConfirmed === true ||
-        data.volumeSpike === true ||
-        rvol >= 1.2;
-
-
-    const trendConfirmed =
-        scoreData.direction !==
-        "SIDEWAYS";
-
-
-    const momentumConfirmed =
-        (
-            scoreData.direction === "BULLISH" &&
-            num(data.rsi) >= 50
-        ) ||
-        (
-            scoreData.direction === "BEARISH" &&
-            num(data.rsi) <= 50
-        );
-
-
-    const breakoutConfirmed =
-        data.breakout === true ||
-        String(
-            data.breakout || ""
-        ).trim().toUpperCase() === "TRUE";
-
-
-    const strongTrend =
-        adx >= 20;
-
-
-    const tradeQuality =
-        scannerScore >= 70 &&
-        trendConfirmed &&
-        momentumConfirmed;
-
-
+function getQualityStatus(scoreData, data) {
+    const d = obj(data), s = obj(scoreData), magnitude = Math.abs(num(d.finalScore ?? s.score ?? 0));
+    const adx = num(d.adx?.adx ?? d.adxValue);
+    const rvol = num(d.rvol);
+    const volumeConfirmed = d.volumeConfirmed === true || d.volumeSpike === true || rvol >= 1.2;
+    const trendConfirmed = s.direction !== "SIDEWAYS";
+    const rsi = num(d.rsi);
+    const momentumConfirmed = (s.direction === "BULLISH" && rsi >= 50) || (s.direction === "BEARISH" && rsi <= 50);
+    const breakoutConfirmed = d.breakout === true || String(d.breakout || "").trim().toUpperCase() === "TRUE";
+    const strongTrend = adx >= 20;
+    const tradeQuality = magnitude >= QUALIFY_SCORE && trendConfirmed && momentumConfirmed;
     return {
-
-        scannerQuality:
-            scannerScore >= 70,
-
-        trendConfirmed,
-
-        momentumConfirmed,
-
-        volumeConfirmed,
-
-        breakoutConfirmed,
-
-        strongTrend,
-
-        tradeQuality
-
+        scannerQuality: magnitude >= QUALIFY_SCORE,
+        trendConfirmed, momentumConfirmed, volumeConfirmed, breakoutConfirmed, strongTrend, tradeQuality
     };
-
 }
-
-
-// ============================================================
-// PROTECT AI FIELDS FROM TRADE SETUP
-// ============================================================
-// calculateTradeSetup() may return additional fields.
-//
-// However, the AI engine owns:
-// score
-// finalScore
-// direction
-// signal
-// rating
-// bullishScore
-// bearishScore
-// quality fields
-//
-// Therefore those fields must never be overwritten by the
-// trade setup object.
-// ============================================================
 
 function sanitizeTradeSetup(trade) {
-
-    const setup =
-        obj(trade);
-
-
     const protectedFields = new Set([
-
-        "score",
-        "finalScore",
-
-        "bullishScore",
-        "bearishScore",
-
-        "direction",
-        "directionDifference",
-
-        "rating",
-        "signal",
-
-        "scannerQuality",
-        "trendConfirmed",
-        "momentumConfirmed",
-        "volumeConfirmed",
-        "breakoutConfirmed",
-        "strongTrend",
-        "tradeQuality",
-
-        "ninetyPlusAligned",
-        "ninetyPlusAlignmentReasons"
-
+        "score","finalScore","bullishScore","bearishScore","bullishScoreMagnitude","bearishScoreMagnitude",
+        "direction","directionDifference","rating","signal","scannerQuality","trendConfirmed",
+        "momentumConfirmed","volumeConfirmed","breakoutConfirmed","strongTrend","tradeQuality",
+        "ninetyPlusAligned","ninetyPlusAlignmentReasons","eightyFivePlusAligned"
     ]);
-
-
-    const safeTrade = {};
-
-
-    for (
-        const [key, value]
-        of Object.entries(setup)
-    ) {
-
-        if (
-            !protectedFields.has(key)
-        ) {
-
-            safeTrade[key] =
-                value;
-
-        }
-
-    }
-
-
-    return safeTrade;
-
+    const safe = {};
+    for (const [key, value] of Object.entries(obj(trade))) if (!protectedFields.has(key)) safe[key] = value;
+    return safe;
 }
-
-
-// ============================================================
-// MAIN SCORE FUNCTION
-// ============================================================
 
 function calculateScore(data) {
-
-    if (
-        !data ||
-        typeof data !== "object"
-    ) {
-
-        return {
-
-            score: 0,
-            finalScore: 0,
-
-            bullishScore: 0,
-            bearishScore: 0,
-
-            direction: "SIDEWAYS",
-
-            directionDifference: 0,
-
-            ninetyPlusAligned: false,
-
-            ninetyPlusAlignmentReasons: [],
-
-            rating: "AVOID",
-            signal: "❌ AVOID"
-
-        };
-
-    }
-
-
-    const price =
-        num(data.price);
-
-
-    if (
-        price <= 0
-    ) {
-
-        return {
-
-            ...data,
-
-            score: 0,
-            finalScore: 0,
-
-            bullishScore: 0,
-            bearishScore: 0,
-
-            direction: "SIDEWAYS",
-
-            directionDifference: 0,
-
-            ninetyPlusAligned: false,
-
-            ninetyPlusAlignmentReasons: [],
-
-            rating: "AVOID",
-            signal: "❌ AVOID"
-
-        };
-
-    }
-
-
-    // ========================================================
-    // CALCULATE DIRECTIONAL SCORE
-    // ========================================================
-
-    const scoreData =
-        calculateAIScore(
-            data,
-            price
-        );
-
-
-    const score =
-        scoreData.score;
-
-
-    // ========================================================
-    // SIGNAL
-    // ========================================================
-
-    const signal =
-        getRecommendation(
-            score,
-            scoreData.direction
-        );
-
-
-    // ========================================================
-    // RATING
-    // ========================================================
-
-    const rating =
-        getRating(
-            score,
-            scoreData.direction
-        );
-
-
-    // ========================================================
-    // QUALITY
-    // ========================================================
-
-    const quality =
-        getQualityStatus(
-            scoreData,
-            data
-        );
-
-
-    // ========================================================
-    // TRADE SETUP
-    // ========================================================
-    // Exactly ONE call.
-    //
-    // The returned object is sanitized before merging so it
-    // cannot overwrite AI engine fields.
-    // ========================================================
-
-    let safeTrade = {};
-
-
-    try {
-
-        const trade =
-            calculateTradeSetup(
-                price,
-                data,
-                {
-                    optionType:
-                        scoreData.direction === "BULLISH"
-                            ? "CALL"
-                            : scoreData.direction === "BEARISH"
-                                ? "PUT"
-                                : null
-                }
-            );
-
-
-        safeTrade =
-            sanitizeTradeSetup(
-                trade
-            );
-
-    } catch (error) {
-
-        safeTrade = {
-
-            tradeSetupError:
-                error?.message ||
-                "Trade setup calculation failed"
-
-        };
-
-    }
-
-
-    // ========================================================
-    // FINAL RESULT
-    // ========================================================
-
-    return {
-
-        ...data,
-
-        // AI score fields
-
-        score,
-
-        finalScore:
-            score,
-
-        bullishScore:
-            scoreData.bullishScore,
-
-        bearishScore:
-            scoreData.bearishScore,
-
-        direction:
-            scoreData.direction,
-
-        directionDifference:
-            scoreData.directionDifference,
-
-        // 90+ alignment
-
-        ninetyPlusAligned:
-            scoreData.ninetyPlusAligned,
-
-        ninetyPlusAlignmentReasons:
-            scoreData.ninetyPlusAlignmentReasons,
-
-        // Recommendation
-
-        rating,
-
-        signal,
-
-        // Quality fields
-
-        scannerQuality:
-            quality.scannerQuality,
-
-        trendConfirmed:
-            quality.trendConfirmed,
-
-        momentumConfirmed:
-            quality.momentumConfirmed,
-
-        volumeConfirmed:
-            quality.volumeConfirmed,
-
-        breakoutConfirmed:
-            quality.breakoutConfirmed,
-
-        strongTrend:
-            quality.strongTrend,
-
-        tradeQuality:
-            quality.tradeQuality,
-
-        // Trade setup fields
-
-        ...safeTrade
-
+    if (!data || typeof data !== "object") return {
+        score: 0, finalScore: 0, bullishScore: 0, bearishScore: 0, direction: "SIDEWAYS",
+        directionDifference: 0, ninetyPlusAligned: false, ninetyPlusAlignmentReasons: [], rating: "AVOID", signal: "❌ AVOID"
     };
 
+    const price = num(data.price);
+    if (price <= 0) return {
+        ...data, score: 0, finalScore: 0, bullishScore: 0, bearishScore: 0, direction: "SIDEWAYS",
+        directionDifference: 0, ninetyPlusAligned: false, ninetyPlusAlignmentReasons: [], rating: "AVOID", signal: "❌ AVOID"
+    };
+
+    const scoreData = calculateAIScore(data, price);
+    const rating = getRating(scoreData.score, scoreData.direction);
+    const signal = getRecommendation(scoreData.score, scoreData.direction);
+    const quality = getQualityStatus(scoreData, data);
+    let safeTrade = {};
+
+    try {
+        safeTrade = sanitizeTradeSetup(calculateTradeSetup(price, data, {
+            optionType: scoreData.direction === "BULLISH" ? "CALL" : scoreData.direction === "BEARISH" ? "PUT" : null
+        }));
+    } catch (error) {
+        safeTrade = { tradeSetupError: error?.message || "Trade setup calculation failed" };
+    }
+
+    return {
+        ...data,
+        score: scoreData.score,
+        finalScore: scoreData.score,
+        bullishScore: scoreData.bullishScore,
+        bearishScore: scoreData.bearishScore,
+        bullishScoreMagnitude: scoreData.bullishScoreMagnitude,
+        bearishScoreMagnitude: scoreData.bearishScoreMagnitude,
+        direction: scoreData.direction,
+        directionDifference: scoreData.directionDifference,
+        ninetyPlusAligned: scoreData.ninetyPlusAligned,
+        ninetyPlusAlignmentReasons: scoreData.ninetyPlusAlignmentReasons,
+        eightyFivePlusAligned: scoreData.eightyFivePlusAligned,
+        rating, signal,
+        scannerQuality: quality.scannerQuality,
+        trendConfirmed: quality.trendConfirmed,
+        momentumConfirmed: quality.momentumConfirmed,
+        volumeConfirmed: quality.volumeConfirmed,
+        breakoutConfirmed: quality.breakoutConfirmed,
+        strongTrend: quality.strongTrend,
+        tradeQuality: quality.tradeQuality,
+        ...safeTrade
+    };
 }
 
-
-// ============================================================
-// EXPORT
-// ============================================================
-
 module.exports = {
-
     calculateAIScore,
-
     calculateScore,
-
     getRecommendation,
-
     getRating
-
 };
