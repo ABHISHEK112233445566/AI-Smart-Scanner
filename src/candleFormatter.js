@@ -1,56 +1,29 @@
 // ============================================================
-// CANDLE FORMATTER
+// CANDLE FORMATTER V2
 // ============================================================
 // Purpose:
 // - Convert raw broker candle arrays into standard candle objects
 // - Validate input before formatting
-// - Prevent NaN / invalid OHLC values
+// - Reject invalid/physically impossible OHLC values
+// - Prevent NaN / invalid values reaching indicators and scanners
 // - Preserve existing API
 // ============================================================
 
 function formatCandles(rawCandles) {
-
-    // ========================================================
-    // INPUT VALIDATION
-    // ========================================================
-
-    if (!Array.isArray(rawCandles)) {
-        return [];
-    }
-
-    // ========================================================
-    // FORMAT + VALIDATE CANDLES
-    // ========================================================
+    if (!Array.isArray(rawCandles)) return [];
 
     return rawCandles
         .map(candle => {
+            if (!Array.isArray(candle) || candle.length < 5) return null;
 
-            if (!Array.isArray(candle)) {
-                return null;
-            }
+            const time = candle[0];
+            const open = Number(candle[1]);
+            const high = Number(candle[2]);
+            const low = Number(candle[3]);
+            const close = Number(candle[4]);
+            const volume = Number(candle[5] ?? 0);
 
-            const time =
-                candle[0];
-
-            const open =
-                Number(candle[1]);
-
-            const high =
-                Number(candle[2]);
-
-            const low =
-                Number(candle[3]);
-
-            const close =
-                Number(candle[4]);
-
-            const volume =
-                Number(candle[5] ?? 0);
-
-            // ------------------------------------------------
-            // REQUIRED OHLC VALIDATION
-            // ------------------------------------------------
-
+            // Required fields must be valid finite numbers.
             if (
                 !time ||
                 !Number.isFinite(open) ||
@@ -61,48 +34,38 @@ function formatCandles(rawCandles) {
                 return null;
             }
 
-            // ------------------------------------------------
-            // OHLC LOGICAL VALIDATION
-            // ------------------------------------------------
+            // Prices cannot be negative or zero for normal NSE candles.
+            if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+                return null;
+            }
 
+            // Fundamental OHLC relationship:
+            // low <= open <= high and low <= close <= high.
+            // Also reject an inverted high/low range.
             if (
                 high < low ||
-                open < 0 ||
-                high < 0 ||
-                low < 0 ||
-                close < 0
+                open < low ||
+                open > high ||
+                close < low ||
+                close > high
             ) {
                 return null;
             }
 
             return {
-
                 time,
-
                 open,
-
                 high,
-
                 low,
-
                 close,
-
                 volume:
-                    Number.isFinite(volume) &&
-                    volume >= 0
+                    Number.isFinite(volume) && volume >= 0
                         ? volume
                         : 0
-
             };
-
         })
         .filter(Boolean);
-
 }
-
-// ============================================================
-// EXPORT
-// ============================================================
 
 module.exports = {
     formatCandles
