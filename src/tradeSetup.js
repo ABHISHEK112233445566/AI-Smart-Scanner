@@ -1,26 +1,165 @@
+// ============================================================
+// TRADE SETUP — MARKET-STRUCTURE ONLY
+// ============================================================
+
+function positiveNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function round(value) {
+  const n = positiveNumber(value);
+  return n ? Number(n.toFixed(2)) : 0;
+}
+
+function getDirection(stock = {}, option = {}) {
+  const raw = String(
+    option.optionType ?? stock.optionType ?? stock.direction ??
+    stock.finalDirection ?? stock.stockDirection ?? ''
+  ).trim().toUpperCase();
+
+  if (['CALL', 'CE', 'BULLISH', 'BUY'].includes(raw)) return 'CALL';
+  if (['PUT', 'PE', 'BEARISH', 'SELL'].includes(raw)) return 'PUT';
+  return null;
+}
+
+function collectLevels(stock = {}, entry) {
+  const values = [
+    ...(Array.isArray(stock.supportLevels) ? stock.supportLevels : []),
+    stock.support1, stock.support2, stock.support3,
+    stock.pivotS1, stock.pivotS2, stock.pivotS3,
+    stock.oiSupport1, stock.oiSupport2, stock.oiSupport3
+  ];
+
+  const supports = [...new Set(values.map(positiveNumber).filter(v => v < entry))]
+    .sort((a, b) => b - a);
+
+  const resistanceValues = [
+    ...(Array.isArray(stock.resistanceLevels) ? stock.resistanceLevels : []),
+    stock.resistance1, stock.resistance2, stock.resistance3,
+    stock.pivotR1, stock.pivotR2, stock.pivotR3,
+    stock.oiResistance1, stock.oiResistance2, stock.oiResistance3
+  ];
+
+  const resistances = [...new Set(resistanceValues.map(positiveNumber).filter(v => v > entry))]
+    .sort((a, b) => a - b);
+
+  return { supports, resistances };
+}
+
+function riskReward(entry, stop, target, direction) {
+  const e = Number(entry), s = Number(stop), t = Number(target);
+  if (![e, s, t].every(Number.isFinite) || e <= 0 || s <= 0 || t <= 0) return 0;
+
+  const risk = direction === 'CALL' ? e - s : s - e;
+  const reward = direction === 'CALL' ? t - e : e - t;
+  return risk > 0 && reward > 0 ? Number((reward / risk).toFixed(2)) : 0;
+}
+
 module.exports = function calculateTradeSetup(stock = {}, option = {}) {
-  const n = v => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0;
-  const round = v => n(v) ? Number(n(v).toFixed(2)) : 0;
-  const direction = String(option.optionType || stock.optionType || stock.direction || stock.finalDirection || stock.stockDirection || '').toUpperCase();
-  const type = direction === 'CALL' || direction === 'CE' || direction === 'BULLISH' || direction === 'BUY' ? 'CALL' : direction === 'PUT' || direction === 'PE' || direction === 'BEARISH' || direction === 'SELL' ? 'PUT' : null;
-  const entry = n(option.entry ?? stock.marketEntry ?? stock.entry ?? stock.stockEntry ?? stock.price ?? stock.ltp ?? stock.close);
-  const supports = [...new Set([...(Array.isArray(stock.supportLevels) ? stock.supportLevels : []), stock.support1, stock.support2, stock.support3, stock.pivotS1, stock.pivotS2, stock.pivotS3, stock.oiSupport1, stock.oiSupport2, stock.oiSupport3].map(n).filter(v => v > 0))].filter(v => v < entry).sort((a,b)=>b-a);
-  const resistances = [...new Set([...(Array.isArray(stock.resistanceLevels) ? stock.resistanceLevels : []), stock.resistance1, stock.resistance2, stock.resistance3, stock.pivotR1, stock.pivotR2, stock.pivotR3, stock.oiResistance1, stock.oiResistance2, stock.oiResistance3].map(n).filter(v => v > 0))].filter(v => v > entry).sort((a,b)=>a-b);
-  if (!type) return { valid:false,isValid:false,direction:null,optionType:null,entry:round(entry),stockEntry:round(entry),stopLoss:0,target1:0,target2:0,risk:0,reward:0,riskReward:0,rr:0,supportLevels:supports,resistanceLevels:resistances,levelsSource:'MARKET_STRUCTURE_ONLY',reason:'NO_DIRECTION' };
-  if (!entry) return { valid:false,isValid:false,direction:type,optionType:type,entry:0,stockEntry:0,stopLoss:0,target1:0,target2:0,risk:0,reward:0,riskReward:0,rr:0,supportLevels:supports,resistanceLevels:resistances,levelsSource:'MARKET_STRUCTURE_ONLY',reason:'NO_MARKET_ENTRY' };
-  const stop = type === 'CALL' ? supports[0] || 0 : resistances[0] || 0;
-  const candidates = type === 'CALL' ? resistances : supports;
-  const rrFor = target => { const risk = type === 'CALL' ? entry-stop : stop-entry; const reward = type === 'CALL' ? target-entry : entry-target; return risk > 0 && reward > 0 ? reward/risk : 0; };
-  const idx = candidates.findIndex(v => rrFor(v) >= 1.5);
-  const target1 = idx >= 0 ? candidates[idx] : (candidates[0] || 0);
-  const target2 = idx >= 0 ? (candidates[idx+1] || 0) : (candidates[1] || 0);
-  const risk = type === 'CALL' ? entry-stop : stop-entry;
-  const reward = type === 'CALL' ? target1-entry : entry-target1;
-  const rr = risk > 0 && reward > 0 ? Number((reward/risk).toFixed(2)) : 0;
-  const valid = !!stop && !!target1 && rr >= 1.5;
-  const reason = !stop || !target1 ? 'MISSING_MARKET_STRUCTURE_LEVEL' : valid ? 'VALID_MARKET_STRUCTURE_RR' : 'LOW_MARKET_RR';
-  return { valid,isValid:valid,direction:type,optionType:type,entry:round(entry),stockEntry:round(entry),stopLoss:round(stop),sl:round(stop),target1:round(target1),t1:round(target1),target2:round(target2),t2:round(target2),risk:round(risk),reward:round(reward),riskReward:rr,rr,stopSource:stop ? (type==='CALL'?'MARKET_SUPPORT':'MARKET_RESISTANCE'):'MARKET_STRUCTURE_REQUIRED',target1Source:target1?'MARKET_STRUCTURE':'MARKET_STRUCTURE_REQUIRED',target2Source:target2?'NEXT_MARKET_STRUCTURE':'MARKET_STRUCTURE_OPTIONAL',targetSource:target1?'MARKET_STRUCTURE':'MARKET_STRUCTURE_REQUIRED',levelsSource:'MARKET_STRUCTURE_ONLY',supportLevels:supports,resistanceLevels:resistances,reason };
+  const direction = getDirection(stock, option);
+  const entry = positiveNumber(
+    option.entry ?? stock.marketEntry ?? stock.entry ?? stock.stockEntry ??
+    stock.price ?? stock.ltp ?? stock.close
+  );
+  const { supports, resistances } = collectLevels(stock, entry);
+
+  const base = {
+    valid: false,
+    isValid: false,
+    direction,
+    optionType: direction,
+    entry: round(entry),
+    stockEntry: round(entry),
+    stopLoss: 0,
+    sl: 0,
+    target1: 0,
+    t1: 0,
+    target2: 0,
+    t2: 0,
+    risk: 0,
+    reward: 0,
+    riskReward: 0,
+    rr: 0,
+    stopSource: 'MARKET_STRUCTURE_REQUIRED',
+    target1Source: 'MARKET_STRUCTURE_REQUIRED',
+    target2Source: 'MARKET_STRUCTURE_OPTIONAL',
+    targetSource: 'MARKET_STRUCTURE_REQUIRED',
+    levelsSource: 'MARKET_STRUCTURE_ONLY',
+    supportLevels: supports,
+    resistanceLevels: resistances,
+    reason: 'UNKNOWN'
+  };
+
+  if (!direction) return { ...base, direction: null, optionType: null, reason: 'NO_DIRECTION' };
+  if (!entry) return { ...base, reason: 'NO_MARKET_ENTRY' };
+
+  // CALL: support below entry is the protective level; resistance above is target.
+  // PUT: resistance above entry is the protective level; support below is target.
+  const stop = direction === 'CALL' ? (supports[0] || 0) : (resistances[0] || 0);
+  const candidates = direction === 'CALL' ? resistances : supports;
+
+  if (!stop) {
+    return {
+      ...base,
+      stopLoss: 0,
+      sl: 0,
+      reason: direction === 'CALL'
+        ? 'MISSING_MARKET_SUPPORT'
+        : 'MISSING_MARKET_RESISTANCE'
+    };
+  }
+
+  const risk = direction === 'CALL' ? entry - stop : stop - entry;
+  if (!(risk > 0)) return { ...base, reason: 'INVALID_MARKET_RISK' };
+
+  // Only a target that actually satisfies the minimum 1.5 R:R can become T1.
+  // Do not return a low-RR target as if it were a usable trade target.
+  const validTargets = candidates.filter(target => riskReward(entry, stop, target, direction) >= 1.5);
+
+  if (!validTargets.length) {
+    return {
+      ...base,
+      stopLoss: round(stop),
+      sl: round(stop),
+      risk: round(risk),
+      stopSource: direction === 'CALL' ? 'MARKET_SUPPORT' : 'MARKET_RESISTANCE',
+      reason: candidates.length ? 'NO_TARGET_WITH_MIN_RR_1_5' : 'MISSING_MARKET_TARGET'
+    };
+  }
+
+  const target1 = validTargets[0];
+  const target2 = validTargets[1] || 0;
+  const reward = direction === 'CALL' ? target1 - entry : entry - target1;
+  const rr = riskReward(entry, stop, target1, direction);
+
+  const result = {
+    ...base,
+    valid: true,
+    isValid: true,
+    entry: round(entry),
+    stockEntry: round(entry),
+    stopLoss: round(stop),
+    sl: round(stop),
+    target1: round(target1),
+    t1: round(target1),
+    target2: round(target2),
+    t2: round(target2),
+    risk: round(risk),
+    reward: round(reward),
+    riskReward: rr,
+    rr,
+    stopSource: direction === 'CALL' ? 'MARKET_SUPPORT' : 'MARKET_RESISTANCE',
+    target1Source: 'MARKET_STRUCTURE',
+    target2Source: target2 ? 'NEXT_MARKET_STRUCTURE' : 'MARKET_STRUCTURE_OPTIONAL',
+    targetSource: 'MARKET_STRUCTURE',
+    levelsSource: 'MARKET_STRUCTURE_ONLY',
+    reason: 'VALID_MARKET_STRUCTURE_RR'
+  };
+
+  return result;
 };
+
 module.exports.calculateTradeSetup = module.exports;
-module.exports.getDirection = (stock={},option={}) => { const x=String(option.optionType||stock.optionType||stock.direction||stock.finalDirection||stock.stockDirection||'').toUpperCase(); return ['CALL','CE','BULLISH','BUY'].includes(x)?'CALL':['PUT','PE','BEARISH','SELL'].includes(x)?'PUT':null; };
-module.exports.riskReward = (entry,stop,target,direction) => { const e=Number(entry),s=Number(stop),t=Number(target); const r=direction==='CALL'?e-s:s-e, w=direction==='CALL'?t-e:e-t; return r>0&&w>0?Number((w/r).toFixed(2)):0; };
+module.exports.getDirection = getDirection;
+module.exports.riskReward = riskReward;
