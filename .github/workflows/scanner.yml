@@ -2,7 +2,9 @@ name: AI Scanner
 
 on:
   workflow_dispatch:
+
   schedule:
+    # 09:10 IST = 03:40 UTC
     - cron: '40 3 * * 1-5'
 
 jobs:
@@ -10,8 +12,8 @@ jobs:
     name: Run AI Smart Scanner
     runs-on: ubuntu-latest
 
-    # Scheduler runs every 30 minutes.
-    # Give it enough time to stay alive during the trading session.
+    # npm start must contain the 30-minute scanning loop.
+    # GitHub keeps this workflow alive for the trading session.
     timeout-minutes: 420
 
     env:
@@ -19,8 +21,18 @@ jobs:
       GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
 
     steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
       - name: Checkout scanner
         uses: actions/checkout@v5
+
+
+      # ======================================================
+      # NODE
+      # ======================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -28,8 +40,18 @@ jobs:
           node-version: 22
           cache: npm
 
+
+      # ======================================================
+      # DEPENDENCIES
+      # ======================================================
+
       - name: Install dependencies
         run: npm ci
+
+
+      # ======================================================
+      # CONFIGURATION CHECK
+      # ======================================================
 
       - name: Verify required secrets
         shell: bash
@@ -45,23 +67,37 @@ jobs:
             exit 1
           fi
 
-          echo "✅ UPSTOX_ACCESS_TOKEN available."
+          echo "UPSTOX_ACCESS_TOKEN: OK"
 
           if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
             echo "::error::GOOGLE_SHEET_WEBHOOK_URL secret is missing."
             exit 1
           fi
 
-          echo "✅ GOOGLE_SHEET_WEBHOOK_URL available."
+          echo "GOOGLE_SHEET_WEBHOOK_URL: OK"
 
           echo "========================================"
           echo "Configuration verified."
-          echo "Starting scanner..."
           echo "========================================"
+
+
+      # ======================================================
+      # RUN SCANNER
+      # ======================================================
 
       - name: Run AI Smart Scanner
         id: scanner
-        run: npm start
+        run: |
+          echo "========================================"
+          echo "       STARTING AI SMART SCANNER"
+          echo "========================================"
+
+          npm start
+
+
+      # ======================================================
+      # RESULT
+      # ======================================================
 
       - name: Scanner result
         if: always()
@@ -72,15 +108,20 @@ jobs:
           echo "========================================"
 
           if [ "${{ steps.scanner.outcome }}" = "success" ]; then
-            echo "✅ Scanner completed successfully."
+            echo "Scanner completed successfully."
           else
-            echo "❌ Scanner failed."
-            echo "Review the scanner output above."
+            echo "::error::Scanner failed."
+            echo "Check the scanner logs above."
           fi
 
           echo "========================================"
 
+
+      # ======================================================
+      # WORKFLOW END
+      # ======================================================
+
       - name: Complete workflow
         if: always()
         run: |
-          echo "AI Scanner workflow completed."
+          echo "AI Scanner workflow finished."
