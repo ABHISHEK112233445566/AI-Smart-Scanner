@@ -1,11 +1,12 @@
 // ============================================================
-// AI SMART SCANNER - DASHBOARD ENGINE V2
+// AI SMART SCANNER - DASHBOARD ENGINE V3
 // ============================================================
 // Dashboard uses STOCK price levels only.
-// Dashboard score gate = 85. Confidence is a separate quality gate.
-// Option premium is never used for Entry / SL / Target.
-// A candidate must have score >= 85, confidence >= 85, valid option
-// contract + live LTP, genuine stock levels and valid stock R:R.
+// Score gate = 85 in the direction of the trade.
+// CALL: score >= +85
+// PUT : score <= -85
+// Confidence is a separate quality gate.
+// Option premium is never used for stock Entry / SL / Target.
 // ============================================================
 
 const DASHBOARD_MIN_SCORE = 85;
@@ -43,15 +44,22 @@ function getISTDateParts(date = new Date()) {
     for (const part of parts) if (part.type !== "literal") values[part.type] = part.value;
     return values;
 }
+
 function getISTTimestamp(date = new Date()) {
     const p = getISTDateParts(date);
     return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+05:30`;
 }
-function getISTMinutes(date = new Date()) { const p = getISTDateParts(date); return Number(p.hour) * 60 + Number(p.minute); }
+
+function getISTMinutes(date = new Date()) {
+    const p = getISTDateParts(date);
+    return Number(p.hour) * 60 + Number(p.minute);
+}
+
 function getISTWeekday(date = new Date()) {
     const p = getISTDateParts(date);
     return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day))).getUTCDay();
 }
+
 function getOptionType(option) {
     if (!option || typeof option !== "object") return "";
     const direct = String(option.optionType ?? option.option_type ?? option.finalDirection ?? option.direction ?? "").trim().toUpperCase();
@@ -62,33 +70,93 @@ function getOptionType(option) {
     if (/\bPE\b$/.test(symbol) || symbol.endsWith("PE")) return "PUT";
     return "";
 }
-function getDecision(option) { return String(option?.optionsDecision ?? option?.optionDecision ?? option?.decision ?? "").trim().toUpperCase(); }
-function getConfidence(option) { return safeNumber(getNestedValue(option, ["optionsConfidence", "optionConfidence", "confidence", "score.confidence", "decision.confidence"])); }
-function getScore(option) { return safeNumber(getNestedValue(option, ["rankingScore", "finalScore", "aiFinalScore", "scannerScore", "score"])); }
-function getStockPrice(option) { return safeNumber(getNestedValue(option, ["price", "stockPrice", "underlyingPrice"])); }
-function getStockEntry(option) { return safeNumber(getNestedValue(option, ["stockEntry", "stock_entry", "entry", "tradeSetup.stockEntry", "tradeSetup.entry"])); }
-function getStockStopLoss(option) { return safeNumber(getNestedValue(option, ["stockStopLoss", "stock_stop_loss", "stopLoss", "tradeSetup.stockStopLoss", "tradeSetup.stopLoss"])); }
-function getStockTarget1(option) { return safeNumber(getNestedValue(option, ["stockTarget1", "stock_target_1", "target1", "tradeSetup.stockTarget1", "tradeSetup.target1"])); }
-function getStockTarget2(option) { return safeNumber(getNestedValue(option, ["stockTarget2", "stock_target_2", "target2", "tradeSetup.stockTarget2", "tradeSetup.target2"])); }
-function getStockRiskReward(option) { return safeNumber(getNestedValue(option, ["stockRiskReward", "riskReward", "stockRiskRewardRatio"])); }
+
+function getDecision(option) {
+    return String(option?.optionsDecision ?? option?.optionDecision ?? option?.decision ?? "").trim().toUpperCase();
+}
+
+function getConfidence(option) {
+    return safeNumber(getNestedValue(option, ["optionsConfidence", "optionConfidence", "confidence", "score.confidence", "decision.confidence"]));
+}
+
+function getScore(option) {
+    return safeNumber(getNestedValue(option, ["rankingScore", "finalScore", "aiFinalScore", "scannerScore", "score"]));
+}
+
+function getStockPrice(option) {
+    return safeNumber(getNestedValue(option, ["price", "stockPrice", "underlyingPrice"]));
+}
+
+function getStockEntry(option) {
+    return safeNumber(getNestedValue(option, ["stockEntry", "stock_entry", "entry", "tradeSetup.stockEntry", "tradeSetup.entry"]));
+}
+
+function getStockStopLoss(option) {
+    return safeNumber(getNestedValue(option, ["stockStopLoss", "stock_stop_loss", "stopLoss", "tradeSetup.stockStopLoss", "tradeSetup.stopLoss"]));
+}
+
+function getStockTarget1(option) {
+    return safeNumber(getNestedValue(option, ["stockTarget1", "stock_target_1", "target1", "tradeSetup.stockTarget1", "tradeSetup.target1"]));
+}
+
+function getStockTarget2(option) {
+    return safeNumber(getNestedValue(option, ["stockTarget2", "stock_target_2", "target2", "tradeSetup.stockTarget2", "tradeSetup.target2"]));
+}
+
+function getStockRiskReward(option) {
+    return safeNumber(getNestedValue(option, ["stockRiskReward", "riskReward", "stockRiskRewardRatio"]));
+}
+
 function getADX(option) {
     const value = getNestedValue(option, ["adx", "ADX", "indicators.adx", "indicatorData.adx"]);
     if (value && typeof value === "object") return safeNumber(value.adx ?? value.value, 0);
     return value === undefined || value === null || value === "" ? "" : safeNumber(value, value);
 }
-function getMood(option) { return String(getNestedValue(option, ["oiMood", "OIMood", "oi_mood", "mood", "optionMood"]) ?? "").trim().toUpperCase(); }
-function getStockName(option) { return String(option?.stock ?? option?.symbol ?? option?.name ?? "").trim(); }
+
+function getMood(option) {
+    return String(getNestedValue(option, ["oiMood", "OIMood", "oi_mood", "mood", "optionMood"]) ?? "").trim().toUpperCase();
+}
+
+function getStockName(option) {
+    return String(option?.stock ?? option?.symbol ?? option?.name ?? "").trim();
+}
 
 function validateStockSetup(option) {
-    const type = getOptionType(option), entry = getStockEntry(option), sl = getStockStopLoss(option), t1 = getStockTarget1(option), t2 = getStockTarget2(option), rr = getStockRiskReward(option), price = getStockPrice(option);
+    const type = getOptionType(option);
+    const entry = getStockEntry(option);
+    const sl = getStockStopLoss(option);
+    const t1 = getStockTarget1(option);
+    const t2 = getStockTarget2(option);
+    const rr = getStockRiskReward(option);
+    const price = getStockPrice(option);
+
     if (!type || entry <= 0 || sl <= 0 || rr <= 0 || price <= 0) return false;
     const target = t2 > 0 ? t2 : t1;
     if (target <= 0) return false;
+
     if (type === "CALL") return sl < entry && target > entry;
     if (type === "PUT") return sl > entry && target < entry;
     return false;
 }
-function getDashboardUniverse(results) { if (Array.isArray(results?.allResults)) return results.allResults; return Array.isArray(results) ? results : []; }
+
+function isScoreQualified(option) {
+    const type = getOptionType(option);
+    const score = getScore(option);
+
+    // Signed AI score: bullish is positive, bearish is negative.
+    if (type === "CALL") return score >= DASHBOARD_MIN_SCORE;
+    if (type === "PUT") return score <= -DASHBOARD_MIN_SCORE;
+    return false;
+}
+
+function scoreStrength(option) {
+    return Math.abs(getScore(option));
+}
+
+function getDashboardUniverse(results) {
+    if (Array.isArray(results?.allResults)) return results.allResults;
+    return Array.isArray(results) ? results : [];
+}
 
 function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const scanResults = getDashboardUniverse(results);
@@ -100,6 +168,7 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const minutes = getISTMinutes();
     const weekday = getISTWeekday();
     const marketStatus = weekday >= 1 && weekday <= 5 && minutes >= 555 && minutes <= 930 ? "Market Open" : "Market Closed";
+
     const callCount = decisions.filter(o => getOptionType(o) === "CALL").length;
     const putCount = decisions.filter(o => getOptionType(o) === "PUT").length;
     const noDirectionCount = decisions.filter(o => !getOptionType(o)).length;
@@ -108,23 +177,98 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const rejectCount = decisions.filter(o => getDecision(o) === "REJECT").length;
 
     const qualityCandidates = decisions.filter(option =>
-        getScore(option) >= DASHBOARD_MIN_SCORE &&
+        isScoreQualified(option) &&
         getConfidence(option) >= DASHBOARD_MIN_CONFIDENCE &&
         (getDecision(option) === "TRADE" || getDecision(option) === "WATCH") &&
         (getOptionType(option) === "CALL" || getOptionType(option) === "PUT") &&
-        option.contractAvailable === true && option.optionPriceAvailable === true && validateStockSetup(option)
+        option.contractAvailable === true &&
+        option.optionPriceAvailable === true &&
+        validateStockSetup(option)
     );
-    const sortedOptions = [...qualityCandidates].sort((a, b) => (getScore(b) - getScore(a)) || (getConfidence(b) - getConfidence(a)) || (getStockRiskReward(b) - getStockRiskReward(a)));
+
+    // Rank by absolute score strength, while preserving the signed score.
+    const sortedOptions = [...qualityCandidates].sort((a, b) =>
+        (scoreStrength(b) - scoreStrength(a)) ||
+        (getConfidence(b) - getConfidence(a)) ||
+        (getStockRiskReward(b) - getStockRiskReward(a))
+    );
+
     const top10 = sortedOptions.slice(0, DASHBOARD_MAX_ROWS).map((option, index) => {
-        const type = getOptionType(option), target = getStockTarget2(option) > 0 ? getStockTarget2(option) : getStockTarget1(option);
-        return { rank:index + 1, stock:getStockName(option), cePe:type === "CALL" ? "CE" : "PE", score:getScore(option), entry:getStockEntry(option), stopLoss:getStockStopLoss(option), target, mood:getMood(option), adx:getADX(option), confidence:getConfidence(option), riskReward:getStockRiskReward(option), decision:getDecision(option), strike:safeNumber(option.optionStrike ?? option.recommendedStrike, 0), optionLTP:safeNumber(option.optionLTP, 0), optionSymbol:option.optionSymbol || option.tradingSymbol || "" };
+        const type = getOptionType(option);
+        const target = getStockTarget2(option) > 0 ? getStockTarget2(option) : getStockTarget1(option);
+        return {
+            rank: index + 1,
+            stock: getStockName(option),
+            cePe: type === "CALL" ? "CE" : "PE",
+            score: getScore(option),
+            entry: getStockEntry(option),
+            stopLoss: getStockStopLoss(option),
+            target,
+            mood: getMood(option),
+            adx: getADX(option),
+            confidence: getConfidence(option),
+            riskReward: getStockRiskReward(option),
+            decision: getDecision(option),
+            strike: safeNumber(option.optionStrike ?? option.recommendedStrike, 0),
+            optionLTP: safeNumber(option.optionLTP, 0),
+            optionSymbol: option.optionSymbol || option.tradingSymbol || ""
+        };
     });
+
     const strongBuy = qualityCandidates.length;
     let marketMood = "NEUTRAL";
-    if (callCount > putCount) marketMood = "BULLISH"; else if (putCount > callCount) marketMood = "BEARISH";
+    if (callCount > putCount) marketMood = "BULLISH";
+    else if (putCount > callCount) marketMood = "BEARISH";
+
     const headers = ["Stock", "CE / PE", "Score", "Stock Entry", "Stock SL", "Stock Target", "Mood", "ADX"];
-    const summary = { "Last Scan":lastScan, "Market Status":marketStatus, "Total Stocks":total, "Successful Scans":successfulScans, "Failed Scans":failedScans, "Strong Buy (85+)":strongBuy, "Market Mood":marketMood, CALL:callCount, PUT:putCount, "No Direction":noDirectionCount, TRADE:tradeCount, "WATCH Decisions":watchCount, REJECT:rejectCount };
-    return { generatedAt:lastScan, summary, headers, top10, top10Count:top10.length, lastScan, marketStatus, totalStocks:total, successfulScans, failedScans, strongBuy, buy:0, watch:0, avoid:0, mood:marketMood, callCount, putCount, noDirectionCount, tradeCount, watchCount, rejectCount, dashboardMinScore:DASHBOARD_MIN_SCORE, dashboardMinConfidence:DASHBOARD_MIN_CONFIDENCE, dashboardFilter:"SCORE >= 85 + CONFIDENCE >= 85 + VALID CONTRACT + LIVE LTP + VALID STOCK LEVELS + VALID STOCK R:R" };
+    const summary = {
+        "Last Scan": lastScan,
+        "Market Status": marketStatus,
+        "Total Stocks": total,
+        "Successful Scans": successfulScans,
+        "Failed Scans": failedScans,
+        "Strong Setups (±85+)": strongBuy,
+        "Market Mood": marketMood,
+        CALL: callCount,
+        PUT: putCount,
+        "No Direction": noDirectionCount,
+        TRADE: tradeCount,
+        "WATCH Decisions": watchCount,
+        REJECT: rejectCount
+    };
+
+    return {
+        generatedAt: lastScan,
+        summary,
+        headers,
+        top10,
+        top10Count: top10.length,
+        lastScan,
+        marketStatus,
+        totalStocks: total,
+        successfulScans,
+        failedScans,
+        strongBuy,
+        buy: 0,
+        watch: 0,
+        avoid: 0,
+        mood: marketMood,
+        callCount,
+        putCount,
+        noDirectionCount,
+        tradeCount,
+        watchCount,
+        rejectCount,
+        dashboardMinScore: DASHBOARD_MIN_SCORE,
+        dashboardMinConfidence: DASHBOARD_MIN_CONFIDENCE,
+        dashboardFilter: "CALL score >= +85 OR PUT score <= -85 + CONFIDENCE >= 85 + VALID CONTRACT + LIVE LTP + VALID STOCK LEVELS + VALID STOCK R:R"
+    };
 }
 
-module.exports = { buildDashboard, validateStockSetup, DASHBOARD_MIN_SCORE, DASHBOARD_MIN_CONFIDENCE, DASHBOARD_MAX_ROWS };
+module.exports = {
+    buildDashboard,
+    validateStockSetup,
+    DASHBOARD_MIN_SCORE,
+    DASHBOARD_MIN_CONFIDENCE,
+    DASHBOARD_MAX_ROWS
+};
