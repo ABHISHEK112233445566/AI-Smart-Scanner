@@ -2,13 +2,18 @@ require("dotenv").config();
 
 module.exports = {
     BROKER: (process.env.BROKER || "UPSTOX").trim().toUpperCase(),
-    UPSTOX: { ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN || "" },
+
+    UPSTOX: {
+        ACCESS_TOKEN: process.env.UPSTOX_ACCESS_TOKEN || ""
+    },
+
     ANGELONE: {
         API_KEY: process.env.API_KEY || "",
         CLIENT_ID: process.env.CLIENT_ID || "",
         MPIN: process.env.MPIN || "",
         TOTP_SECRET: process.env.TOTP_SECRET || ""
     },
+
     API_KEY: process.env.API_KEY || "",
     CLIENT_ID: process.env.CLIENT_ID || "",
     MPIN: process.env.MPIN || "",
@@ -29,17 +34,23 @@ module.exports = {
     SUPERTREND: { ATR_PERIOD: 10, MULTIPLIER: 3 },
     BOLLINGER: { PERIOD: 20, STD_DEV: 2 },
 
+    // Single score standard used throughout the scanner.
+    // AI score range is -100 to +100:
+    // +85 or higher = bullish qualification
+    // -85 or lower = bearish qualification
+    // -84 to +84 = not qualified
     THRESHOLDS: {
-        AI_BUY_SCORE: 80,
+        AI_BUY_SCORE: 85,
+        AI_SELL_SCORE: -85,
         AI_WATCH_SCORE: 60,
-        // Dashboard minimum SCORE is 85. Confidence remains a separate quality gate.
         DASHBOARD_MIN_SCORE: 85,
         DASHBOARD_MAX_ROWS: 10,
         MIN_CONFIDENCE: 70,
         MIN_RR: 1.5
     },
 
-    AI_BUY_SCORE: 80,
+    AI_BUY_SCORE: 85,
+    AI_SELL_SCORE: -85,
     AI_WATCH_SCORE: 60,
     DASHBOARD_MIN_SCORE: 85,
     DASHBOARD_MAX_ROWS: 10,
