@@ -1,7 +1,7 @@
 // ============================================================
-// AI SMART SCANNER — GOOGLE SHEET UPLOADER V12
-// Dashboard: ALWAYS TOP 5 ranked candidates, minimal display only
-// Trade hard gates do NOT control dashboard eligibility.
+// AI SMART SCANNER — GOOGLE SHEET UPLOADER V13
+// Dashboard: TOP 5 from the option-ready Top-20 universe.
+// Trade hard gates and score thresholds do NOT control dashboard eligibility.
 // ============================================================
 const axios = require('axios');
 const config = require('./config');
@@ -11,7 +11,7 @@ const DASHBOARD_MAX_ROWS = 5;
 const MIN_CONFIDENCE = Number(config.THRESHOLDS?.MIN_CONFIDENCE ?? 70);
 const MIN_RR = Number(config.THRESHOLDS?.MIN_RR ?? 1.5);
 const REQUIRED_OI_HEADERS = ['oiMood','oiSentiment','oiDataAvailable','oiPriceChangePercent','oiChangePercent'];
-const DASHBOARD_HEADERS = ['stockPrice','symbol','optionType','confidence','target','stopLoss'];
+const DASHBOARD_HEADERS = ['stockPrice','symbol','optionType','entryPrice','bestStrike','optionLTP','confidence','target','stopLoss','oiMood'];
 const GOOGLE_TIMEOUT = 120000;
 
 function getGoogleSheetUrl(){return process.env.GOOGLE_SHEET_WEBHOOK_URL||process.env.GOOGLE_SCRIPT_URL||process.env.GOOGLE_SHEETS_WEBHOOK_URL||process.env.GOOGLE_SHEET_URL||process.env.GOOGLE_APPS_SCRIPT_URL||config.GOOGLE_SHEET_WEBHOOK_URL||config.GOOGLE_SCRIPT_URL||config.GOOGLE_SHEETS_WEBHOOK_URL||config.GOOGLE_SHEET_URL||config.GOOGLE_APPS_SCRIPT_URL||null;}
@@ -23,22 +23,25 @@ function direction(row={}){const d=String(row.direction??row.finalDirection??row
 function normalizeSignedScore(row={}){const s=score(row),d=direction(row),m=Math.min(100,Math.abs(s));return d==='BULLISH'?m:d==='BEARISH'?-m:0;}
 function tradeEligible(row={}){const decision=String(row.decision??row.optionsDecision??'').trim().toUpperCase();return decision==='TRADE';}
 function optionType(row={}){const v=String(row.optionType??row.optionSymbol??'').toUpperCase();if(v.includes('PUT')||v.includes(' PE')||v==='PE')return'PE';if(v.includes('CALL')||v.includes(' CE')||v==='CE')return'CE';return direction(row)==='BEARISH'?'PE':direction(row)==='BULLISH'?'CE':'';}
-function dashboardRow(row={}){return{stockPrice:n(row.stockPrice??row.price??row.livePrice??row.currentPrice??row.ltp),symbol:String(row.symbol??row.stock??row.tradingSymbol??'').trim(),optionType:optionType(row),confidence:n(row.confidence??row.optionsConfidence),target:n(row.target??row.target1??row.stockTarget1??row.optionPremiumTarget1),stopLoss:n(row.stopLoss??row.stockStopLoss??row.optionPremiumStopLoss)}}
+function dashboardRow(row={}){const type=optionType(row);return{stockPrice:n(row.stockPrice??row.price??row.livePrice??row.currentPrice??row.ltp),symbol:String(row.symbol??row.stock??row.tradingSymbol??'').trim(),optionType:type,entryPrice:n(row.optionPremiumEntry??row.optionLTP??row.optionEntry??row.entryPrice??row.entry),bestStrike:n(row.recommendedStrike??row.optionStrike??row.atmStrike),optionLTP:n(row.optionPremiumEntry??row.optionLTP??row.optionEntry),confidence:n(row.optionsConfidence??row.confidence),target:n(row.target??row.target1??row.stockTarget1??row.optionPremiumTarget1),stopLoss:n(row.stopLoss??row.stockStopLoss??row.optionPremiumStopLoss),oiMood:String(row.oiMood??row.OIMood??row.oi_mood??'UNKNOWN').trim().toUpperCase()||'UNKNOWN'}}
 
-// Dashboard selection is intentionally independent of TRADE/WATCH/REJECT.
-// The scanner ranks candidates; the user makes the final live-market choice.
+// The caller supplies the option-ready Top-20. Keep selection independent of TRADE/WATCH/REJECT.
 function selectDashboardRows(rows=[]){
-  return (Array.isArray(rows)?rows:[]).filter(Boolean).sort((a,b)=>{
+  return (Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>{
+    const hasContract=Boolean(r.optionInstrumentKey||r.optionSymbol||r.recommendedStrike||r.optionType);
+    const ltp=n(r.optionPremiumEntry??r.optionLTP??r.optionEntry);
+    return hasContract&&ltp!==null&&ltp>0;
+  }).sort((a,b)=>{
     const ar=n(a.rankingScore??a.finalScore??a.aiFinalScore??a.score??a.scannerScore)??0;
     const br=n(b.rankingScore??b.finalScore??b.aiFinalScore??b.score??b.scannerScore)??0;
-    const ac=n(a.confidence??a.optionsConfidence)??0;
-    const bc=n(b.confidence??b.optionsConfidence)??0;
+    const ac=n(a.optionsConfidence??a.confidence)??0;
+    const bc=n(b.optionsConfidence??b.confidence)??0;
     return (br+bc)-(ar+ac);
-  }).slice(0,DASHBOARD_MAX_ROWS).map(dashboardRow);
+  }).slice(0,DASHBOARD_MAX_ROWS).map(addOIMood).map(dashboardRow);
 }
 function addOIMood(row={}){const stock=row&&typeof row==='object'?row:{};let mood=null;try{mood=calculateOIMoodForStock(stock);}catch(_){mood=null;}return{...stock,oiMood:String(stock.oiMood??stock.OIMood??stock.oi_mood??mood?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(stock.oiSentiment??stock.OISentiment??mood?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:mood?.dataAvailable===true||stock.oiDataAvailable===true,oiPriceChangePercent:n(stock.oiPriceChangePercent??mood?.priceChangePercent)??0,oiChangePercent:n(stock.oiChangePercent??mood?.oiChangePercent)??0};}
 function cleanCell(v){if(v===undefined||v===null)return'';if(v instanceof Date)return v.toISOString();if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
-function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood),headers=[],seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));const outRows=rows.map(row=>headers.map(h=>{if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);return cleanCell(row[h]);}));return{action:'replaceSheet',sheet,clearFirst:true,headers,rows:outRows,timestamp:new Date().toISOString()};}
+function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood),headers=[],seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);headers.push(k);}}));const uniqueHeaders=[];const hs=new Set();for(const h of headers)if(!hs.has(h)){hs.add(h);uniqueHeaders.push(h);}const outRows=rows.map(row=>uniqueHeaders.map(h=>{if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);return cleanCell(row[h]);}));return{action:'replaceSheet',sheet,clearFirst:true,headers:uniqueHeaders,rows:outRows,timestamp:new Date().toISOString()};}
 function buildDashboardPayload(rows=[]){const selected=selectDashboardRows(rows);return{action:'replaceSheet',sheet:'Dashboard',clearFirst:true,headers:DASHBOARD_HEADERS,rows:selected.map(r=>DASHBOARD_HEADERS.map(h=>cleanCell(r[h]))),timestamp:new Date().toISOString()};}
 async function postToGoogleSheet(payload){const url=getGoogleSheetUrl();if(!url)throw new Error('Google Sheet webhook URL is not configured');return axios.post(url,payload,{timeout:GOOGLE_TIMEOUT,headers:{'Content-Type':'application/json'}});}
 async function postReplaceSheet(sheet,objects){const response=await postToGoogleSheet(buildSheetPayload(sheet,objects));if(response?.data?.success===false)throw new Error(`Google Sheets rejected ${sheet}: ${response.data.error||'unknown error'}`);return response?.data||{};}
