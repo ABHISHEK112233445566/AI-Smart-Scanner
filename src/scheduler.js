@@ -2,8 +2,9 @@
 // AI SMART SCANNER - 24-HOUR SCHEDULER
 // ============================================================
 // Runs app.js immediately and then every 30 minutes.
-// After every scan, evaluates existing ACCURACY predictions against
-// fresh broker market data. One scanner/evaluator cycle at a time.
+// Accuracy evaluation runs ONLY after a successful scanner cycle.
+// A scanner failure must never be reported as a completed scan.
+// ============================================================
 
 const { spawn } = require("child_process");
 const path = require("path");
@@ -32,7 +33,6 @@ async function runAccuracyEvaluation() {
         const result = await evaluateLiveAccuracy();
         console.log(`[${formatTime()}] 📈 Accuracy evaluation: found=${result.found}, evaluated=${result.evaluated}, updated=${result.updated}, skipped=${result.skipped}`);
     } catch (error) {
-        // Accuracy failure must never stop the main scanner scheduler.
         console.error(`[${formatTime()}] ⚠️ Live ACCURACY evaluation failed: ${error.message}`);
     }
 }
@@ -55,19 +55,20 @@ function runScanner() {
         console.error(`[${formatTime()}] ❌ Scanner process error: ${error.message}`);
         scannerRunning = false;
         scannerProcess = null;
-        // Still attempt to evaluate existing accuracy records.
-        runAccuracyEvaluation().catch(() => {});
     });
 
     scannerProcess.on("close", async code => {
         scannerRunning = false;
         scannerProcess = null;
-        console.log(`[${formatTime()}] ✅ Scanner finished with code ${code}.`);
 
-        // Evaluate after each scan so newly-created predictions receive
-        // a live market snapshot and older predictions continue to update.
+        if (code !== 0) {
+            console.error(`[${formatTime()}] ❌ Scanner failed with code ${code}. Accuracy evaluation SKIPPED.`);
+            console.log(`[${formatTime()}] 🔁 Scheduler remains active. Next scan in ${INTERVAL_MINUTES} minutes.`);
+            return;
+        }
+
+        console.log(`[${formatTime()}] ✅ Scanner completed successfully.`);
         await runAccuracyEvaluation();
-
         console.log(`[${formatTime()}] 🔁 Scheduler remains active. Next scan in ${INTERVAL_MINUTES} minutes.`);
     });
 }
@@ -75,15 +76,12 @@ function runScanner() {
 console.log("============================================================");
 console.log("🚀 AI SMART SCANNER — PERMANENT 24-HOUR MODE");
 console.log(`🔁 Scan interval: EVERY ${INTERVAL_MINUTES} MINUTES`);
-console.log("📊 Live ACCURACY evaluation: AFTER EVERY SCAN");
+console.log("📊 Live ACCURACY evaluation: AFTER SUCCESSFUL SCAN ONLY");
 console.log("🕐 Market-hours restriction: DISABLED");
 console.log("🛡️ Overlapping scans: BLOCKED");
 console.log("============================================================");
 
-// First scan immediately when the service starts.
 runScanner();
-
-// Continue forever every 30 minutes, including outside market hours.
 const interval = setInterval(runScanner, INTERVAL_MS);
 
 function shutdown(signal) {
