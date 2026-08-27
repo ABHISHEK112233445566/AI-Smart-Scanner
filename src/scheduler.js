@@ -1,15 +1,24 @@
 // ============================================================
-// AI SMART SCANNER - 24-HOUR SCHEDULER
+// AI SMART SCANNER - SCHEDULER
 // ============================================================
-// Runs app.js immediately and then every 30 minutes.
-// Accuracy evaluation runs ONLY after a successful scanner cycle.
-// A scanner failure must never be reported as a completed scan.
+// Scheduler is preserved, but BYPASSED by default.
+// Manual mode is the current operating mode.
+//
+// To temporarily enable the 30-minute scheduler:
+//   set SCANNER_SCHEDULER_ENABLED=true
+//
+// Default:
+//   npm start -> scheduler.js -> exits without scanning
+//
+// Manual scan:
+//   node src/app.js
 // ============================================================
 
 const { spawn } = require("child_process");
 const path = require("path");
 const { evaluateLiveAccuracy } = require("./liveAccuracyEvaluator");
 
+const SCHEDULER_ENABLED = String(process.env.SCANNER_SCHEDULER_ENABLED || "false").toLowerCase() === "true";
 const INTERVAL_MINUTES = 30;
 const INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000;
 const appPath = path.join(__dirname, "app.js");
@@ -63,21 +72,38 @@ function runScanner() {
 
         if (code !== 0) {
             console.error(`[${formatTime()}] ❌ Scanner failed with code ${code}. Accuracy evaluation SKIPPED.`);
-            console.log(`[${formatTime()}] 🔁 Scheduler remains active. Next scan in ${INTERVAL_MINUTES} minutes.`);
             return;
         }
 
         console.log(`[${formatTime()}] ✅ Scanner completed successfully.`);
         await runAccuracyEvaluation();
-        console.log(`[${formatTime()}] 🔁 Scheduler remains active. Next scan in ${INTERVAL_MINUTES} minutes.`);
     });
 }
 
+// ============================================================
+// CURRENT DEFAULT: MANUAL MODE
+// ============================================================
+
+if (!SCHEDULER_ENABLED) {
+    console.log("============================================================");
+    console.log("⏸️ AI SMART SCANNER — SCHEDULER BYPASSED");
+    console.log("🖐️ MANUAL SCAN MODE ACTIVE");
+    console.log("❌ No automatic 30-minute scans");
+    console.log("❌ No background scanner process");
+    console.log("❌ No automatic accuracy evaluation");
+    console.log("✅ Run manually with: node src/app.js");
+    console.log("============================================================");
+    process.exit(0);
+}
+
+// ============================================================
+// OPTIONAL SCHEDULER MODE
+// ============================================================
+
 console.log("============================================================");
-console.log("🚀 AI SMART SCANNER — PERMANENT 24-HOUR MODE");
+console.log("🚀 AI SMART SCANNER — 30-MINUTE SCHEDULER ENABLED");
 console.log(`🔁 Scan interval: EVERY ${INTERVAL_MINUTES} MINUTES`);
-console.log("📊 Live ACCURACY evaluation: AFTER SUCCESSFUL SCAN ONLY");
-console.log("🕐 Market-hours restriction: DISABLED");
+console.log("📊 Accuracy evaluation: AFTER SUCCESSFUL SCAN ONLY");
 console.log("🛡️ Overlapping scans: BLOCKED");
 console.log("============================================================");
 
