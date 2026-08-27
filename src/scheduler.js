@@ -1,17 +1,12 @@
 // ============================================================
 // AI SMART SCANNER - SCHEDULER
 // ============================================================
-// Scheduler is preserved, but BYPASSED by default.
-// Manual mode is the current operating mode.
+// Scheduler is preserved, but automatic scheduling is bypassed.
+// npm start now runs ONE scanner cycle through app.js and exits.
+// No 30-minute loop and no automatic accuracy evaluation.
 //
-// To temporarily enable the 30-minute scheduler:
-//   set SCANNER_SCHEDULER_ENABLED=true
-//
-// Default:
-//   npm start -> scheduler.js -> exits without scanning
-//
-// Manual scan:
-//   node src/app.js
+// To restore the old 30-minute scheduler later:
+//   SCANNER_SCHEDULER_ENABLED=true npm start
 // ============================================================
 
 const { spawn } = require("child_process");
@@ -46,9 +41,10 @@ async function runAccuracyEvaluation() {
     }
 }
 
-function runScanner() {
+function runScanner(onComplete) {
     if (scannerRunning) {
-        console.log(`[${formatTime()}] ⚠️ Previous scan is still running. Skipping this cycle.`);
+        console.log(`[${formatTime()}] ⚠️ Scanner is already running.`);
+        if (onComplete) onComplete(1);
         return;
     }
 
@@ -64,6 +60,7 @@ function runScanner() {
         console.error(`[${formatTime()}] ❌ Scanner process error: ${error.message}`);
         scannerRunning = false;
         scannerProcess = null;
+        if (onComplete) onComplete(1);
     });
 
     scannerProcess.on("close", async code => {
@@ -71,51 +68,61 @@ function runScanner() {
         scannerProcess = null;
 
         if (code !== 0) {
-            console.error(`[${formatTime()}] ❌ Scanner failed with code ${code}. Accuracy evaluation SKIPPED.`);
+            console.error(`[${formatTime()}] ❌ Scanner failed with code ${code}.`);
+            if (onComplete) onComplete(code || 1);
             return;
         }
 
         console.log(`[${formatTime()}] ✅ Scanner completed successfully.`);
-        await runAccuracyEvaluation();
+        if (onComplete) onComplete(0);
     });
 }
 
 // ============================================================
-// CURRENT DEFAULT: MANUAL MODE
+// DEFAULT: MANUAL ONE-SCAN MODE
 // ============================================================
 
 if (!SCHEDULER_ENABLED) {
     console.log("============================================================");
-    console.log("⏸️ AI SMART SCANNER — SCHEDULER BYPASSED");
-    console.log("🖐️ MANUAL SCAN MODE ACTIVE");
+    console.log("🖐️ AI SMART SCANNER — MANUAL MODE");
+    console.log("▶️ npm start = ONE SCANNER CYCLE");
     console.log("❌ No automatic 30-minute scans");
     console.log("❌ No background scanner process");
     console.log("❌ No automatic accuracy evaluation");
-    console.log("✅ Run manually with: node src/app.js");
     console.log("============================================================");
-    process.exit(0);
+
+    runScanner(code => {
+        process.exitCode = code;
+    });
+} else {
+    // ========================================================
+    // OPTIONAL: 30-MINUTE SCHEDULER MODE
+    // ========================================================
+
+    console.log("============================================================");
+    console.log("🚀 AI SMART SCANNER — 30-MINUTE SCHEDULER ENABLED");
+    console.log(`🔁 Scan interval: EVERY ${INTERVAL_MINUTES} MINUTES`);
+    console.log("📊 Accuracy evaluation: AFTER SUCCESSFUL SCAN ONLY");
+    console.log("🛡️ Overlapping scans: BLOCKED");
+    console.log("============================================================");
+
+    runScanner(async code => {
+        if (code === 0) await runAccuracyEvaluation();
+    });
+
+    const interval = setInterval(() => {
+        runScanner(async code => {
+            if (code === 0) await runAccuracyEvaluation();
+        });
+    }, INTERVAL_MS);
+
+    function shutdown(signal) {
+        console.log(`\n[${formatTime()}] 🛑 Scheduler received ${signal}. Shutting down.`);
+        clearInterval(interval);
+        if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
+        process.exit(0);
+    }
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
-
-// ============================================================
-// OPTIONAL SCHEDULER MODE
-// ============================================================
-
-console.log("============================================================");
-console.log("🚀 AI SMART SCANNER — 30-MINUTE SCHEDULER ENABLED");
-console.log(`🔁 Scan interval: EVERY ${INTERVAL_MINUTES} MINUTES`);
-console.log("📊 Accuracy evaluation: AFTER SUCCESSFUL SCAN ONLY");
-console.log("🛡️ Overlapping scans: BLOCKED");
-console.log("============================================================");
-
-runScanner();
-const interval = setInterval(runScanner, INTERVAL_MS);
-
-function shutdown(signal) {
-    console.log(`\n[${formatTime()}] 🛑 Scheduler received ${signal}. Shutting down.`);
-    clearInterval(interval);
-    if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
-    process.exit(0);
-}
-
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
