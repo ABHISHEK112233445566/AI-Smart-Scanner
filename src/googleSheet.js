@@ -1,8 +1,8 @@
 // ============================================================
-// AI SMART SCANNER — GOOGLE SHEET UPLOADER V14
+// AI SMART SCANNER — GOOGLE SHEET UPLOADER V15
 // Dashboard: TOP 5 from option-ready Top-20 universe.
-// IMPORTANT: Dashboard entry/SL/targets are STOCK (underlying) levels.
-// Option LTP is displayed separately and is NEVER used as stock entry.
+// Dashboard entry/SL/targets are STOCK (underlying) levels.
+// Option LTP is separate and NEVER used as stock entry.
 // ============================================================
 const axios = require('axios');
 const config = require('./config');
@@ -27,7 +27,6 @@ function optionType(row={}){const v=String(row.optionType??row.optionSymbol??'')
 
 function dashboardRow(row={}){
   const type=optionType(row);
-  // STOCK/UNDERLYING entry — never option premium.
   const stockEntry=n(row.stockEntry??row.underlyingEntry??row.marketEntry??row.entry??row.stockPrice??row.price??row.currentPrice);
   const stockSL=n(row.stockStopLoss??row.stopLoss);
   const stockT1=n(row.stockTarget1??row.target1??row.target);
@@ -45,7 +44,8 @@ function dashboardRow(row={}){
   };
 }
 
-// The caller supplies the option-ready Top-20. Keep selection independent of TRADE/WATCH/REJECT.
+// Dashboard is intentionally NOT gated by TRADE/WATCH/REJECT or score thresholds.
+// It shows the best available option-ready stocks from the Top-20 universe.
 function selectDashboardRows(rows=[]){
   return (Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>{
     const hasContract=Boolean(r.optionInstrumentKey||r.optionSymbol||r.recommendedStrike||r.optionType);
@@ -59,9 +59,30 @@ function selectDashboardRows(rows=[]){
     return (br+bc)-(ar+ac);
   }).slice(0,DASHBOARD_MAX_ROWS).map(addOIMood).map(dashboardRow);
 }
-function addOIMood(row={}){const stock=row&&typeof row==='object'?row:{};let mood=null;try{mood=calculateOIMoodForStock(stock);}catch(_){mood=null;}return{...stock,oiMood:String(stock.oiMood??stock.OIMood??stock.oi_mood??mood?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(stock.oiSentiment??stock.OISentiment??mood?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:mood?.dataAvailable===true||stock.oiDataAvailable===true,oiPriceChangePercent:n(stock.oiPriceChangePercent??mood?.priceChangePercent)??0,oiChangePercent:n(stock.oiChangePercent??mood?.oiChangePercent)??0};}
+function addOIMood(row={}){const stock=row&&typeof row==='object'?row:{};let mood=null;try{mood=calculateOIMoodForStock(stock);}catch(_){mood=null;}return{...stock,oiMood:String(stock.oiMood??stock.OIMood??stock.oi_mood??mood?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(stock.oiSentiment??stock.OISentiment??stock.oi_mood_sentiment??mood?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:mood?.dataAvailable===true||stock.oiDataAvailable===true,oiPriceChangePercent:n(stock.oiPriceChangePercent??mood?.priceChangePercent)??0,oiChangePercent:n(stock.oiChangePercent??mood?.oiChangePercent)??0};}
 function cleanCell(v){if(v===undefined||v===null)return'';if(v instanceof Date)return v.toISOString();if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
-function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood),headers=[],seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));const outRows=rows.map(row=>uniqueHeaders.map(h=>{if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);return cleanCell(row[h]);}));const uniqueHeaders=[];const hs=new Set();for(const h of headers)if(!hs.has(h)){hs.add(h);uniqueHeaders.push(h);}return{action:'replaceSheet',sheet,clearFirst:true,headers:uniqueHeaders,rows:outRows,timestamp:new Date().toISOString()};}
+
+function buildSheetPayload(sheet,objects=[]){
+  const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood);
+  const headers=[];
+  const seen=new Set();
+  REQUIRED_OI_HEADERS.forEach(h=>{if(!seen.has(h)){seen.add(h);headers.push(h);}});
+  rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));
+
+  // IMPORTANT: uniqueHeaders must exist before it is used to build row arrays.
+  // Previous V14 code referenced uniqueHeaders before initialization, causing:
+  // "Cannot access 'uniqueHeaders' before initialization".
+  const uniqueHeaders=[];
+  const headerSet=new Set();
+  for(const h of headers){if(!headerSet.has(h)){headerSet.add(h);uniqueHeaders.push(h);}}
+
+  const outRows=rows.map(row=>uniqueHeaders.map(h=>{
+    if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);
+    return cleanCell(row[h]);
+  }));
+  return{action:'replaceSheet',sheet,clearFirst:true,headers:uniqueHeaders,rows:outRows,timestamp:new Date().toISOString()};
+}
+
 function buildDashboardPayload(rows=[]){const selected=selectDashboardRows(rows);return{action:'replaceSheet',sheet:'Dashboard',clearFirst:true,headers:DASHBOARD_HEADERS,rows:selected.map(r=>DASHBOARD_HEADERS.map(h=>cleanCell(r[h]))),timestamp:new Date().toISOString()};}
 async function postToGoogleSheet(payload={}){const url=getGoogleSheetUrl();if(!url)throw new Error('Google Sheet webhook URL is not configured');return axios.post(url,payload,{timeout:GOOGLE_TIMEOUT,headers:{'Content-Type':'application/json'}});}
 async function postReplaceSheet(sheet,objects){const response=await postToGoogleSheet(buildSheetPayload(sheet,objects));if(response?.data?.success===false)throw new Error(`Google Sheets rejected ${sheet}: ${response.data.error||'unknown error'}`);return response?.data||{};}
