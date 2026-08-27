@@ -1,425 +1,83 @@
 // ============================================================
-// OI MOOD ENGINE — PER STOCK
+// OI MOOD ENGINE
 // ============================================================
-//
-// PURPOSE
-// ------------------------------------------------------------
-// Calculates OI mood independently for EACH stock.
-//
-// Price UP   + OI UP   = LONG BUILDUP
-// Price DOWN + OI UP   = SHORT BUILDUP
-// Price UP   + OI DOWN = SHORT COVERING
-// Price DOWN + OI DOWN = LONG UNWINDING
-//
-// Price/OI movement too small = NEUTRAL
-// Missing/unreliable OI data   = UNKNOWN
-//
-// OUTPUT
-// ------------------------------------------------------------
-// {
-//     mood,
-//     sentiment,
-//     priceChange,
-//     priceChangePercent,
-//     oiChange,
-//     oiChangePercent
-// }
-//
-// IMPORTANT
-// ------------------------------------------------------------
-// This file does NOT use overall market OI.
-// Every stock receives its own calculation.
+// Calculates OI mood from the exact instrument supplied.
+// Stock objects use stock price/OI fields.
+// Option objects MUST use option-specific fields when present.
 // ============================================================
 
-
-// ============================================================
-// CONFIGURATION
-// ============================================================
-
-const PRICE_THRESHOLD = 0.10;   // %
-const OI_THRESHOLD = 1.00;      // %
-
-
-// ============================================================
-// NUMBER NORMALIZER
-// ============================================================
+const PRICE_THRESHOLD = 0.10;
+const OI_THRESHOLD = 1.00;
 
 function toNumber(value) {
-
-    if (
-        value === null ||
-        value === undefined ||
-        value === ""
-    ) {
-        return NaN;
-    }
-
-    if (typeof value === "string") {
-
-        value = value
-            .replace(/,/g, "")
-            .replace(/%/g, "")
-            .trim();
-
-    }
-
+    if (value === null || value === undefined || value === "") return NaN;
+    if (typeof value === "string') value = value.replace(/,/g, "").replace(/%/g, "").trim();
     const number = Number(value);
-
-    return Number.isFinite(number)
-        ? number
-        : NaN;
+    return Number.isFinite(number) ? number : NaN;
 }
 
+function calculateOIMood({ currentPrice, previousPrice, currentOI, previousOI } = {}) {
+    const price = toNumber(currentPrice);
+    const prevPrice = toNumber(previousPrice);
+    const oi = toNumber(currentOI);
+    const prevOI = toNumber(previousOI);
 
-// ============================================================
-// CALCULATE OI MOOD
-// ============================================================
-
-function calculateOIMood({
-
-    currentPrice,
-    previousPrice,
-    currentOI,
-    previousOI
-
-} = {}) {
-
-    const price =
-        toNumber(currentPrice);
-
-    const prevPrice =
-        toNumber(previousPrice);
-
-    const oi =
-        toNumber(currentOI);
-
-    const prevOI =
-        toNumber(previousOI);
-
-
-    // ========================================================
-    // VALIDATION
-    // ========================================================
-
-    if (
-        !Number.isFinite(price) ||
-        !Number.isFinite(prevPrice) ||
-        !Number.isFinite(oi) ||
-        !Number.isFinite(prevOI) ||
-        prevPrice <= 0 ||
-        prevOI <= 0
-    ) {
-
+    if (!Number.isFinite(price) || !Number.isFinite(prevPrice) || !Number.isFinite(oi) || !Number.isFinite(prevOI) || prevPrice <= 0 || prevOI <= 0) {
         return {
-
-            mood: "UNKNOWN",
-
-            sentiment: "UNKNOWN",
-
-            priceChange: 0,
-
-            priceChangePercent: 0,
-
-            oiChange: 0,
-
-            oiChangePercent: 0,
-
-            priceDirection: "UNKNOWN",
-
-            oiDirection: "UNKNOWN",
-
+            mood: "UNKNOWN", sentiment: "UNKNOWN", priceChange: 0, priceChangePercent: 0,
+            oiChange: 0, oiChangePercent: 0, priceDirection: "UNKNOWN", oiDirection: "UNKNOWN",
             dataAvailable: false
-
         };
-
     }
 
-
-    // ========================================================
-    // PRICE CHANGE
-    // ========================================================
-
-    const priceChange =
-        price - prevPrice;
-
-
-    const priceChangePercent =
-        (priceChange / prevPrice) * 100;
-
-
-    // ========================================================
-    // OI CHANGE
-    // ========================================================
-
-    const oiChange =
-        oi - prevOI;
-
-
-    const oiChangePercent =
-        (oiChange / prevOI) * 100;
-
-
-    // ========================================================
-    // PRICE DIRECTION
-    // ========================================================
-
-    let priceDirection =
-        "FLAT";
-
-
-    if (
-        priceChangePercent >=
-        PRICE_THRESHOLD
-    ) {
-
-        priceDirection =
-            "UP";
-
-    }
-
-    else if (
-        priceChangePercent <=
-        -PRICE_THRESHOLD
-    ) {
-
-        priceDirection =
-            "DOWN";
-
-    }
-
-
-    // ========================================================
-    // OI DIRECTION
-    // ========================================================
-
-    let oiDirection =
-        "FLAT";
-
-
-    if (
-        oiChangePercent >=
-        OI_THRESHOLD
-    ) {
-
-        oiDirection =
-            "UP";
-
-    }
-
-    else if (
-        oiChangePercent <=
-        -OI_THRESHOLD
-    ) {
-
-        oiDirection =
-            "DOWN";
-
-    }
-
-
-    // ========================================================
-    // OI MOOD
-    // ========================================================
-
-    let mood =
-        "NEUTRAL";
-
-
-    // --------------------------------------------------------
-    // PRICE UP + OI UP
-    // --------------------------------------------------------
-
-    if (
-        priceDirection === "UP" &&
-        oiDirection === "UP"
-    ) {
-
-        mood =
-            "LONG BUILDUP";
-
-    }
-
-
-    // --------------------------------------------------------
-    // PRICE DOWN + OI UP
-    // --------------------------------------------------------
-
-    else if (
-        priceDirection === "DOWN" &&
-        oiDirection === "UP"
-    ) {
-
-        mood =
-            "SHORT BUILDUP";
-
-    }
-
-
-    // --------------------------------------------------------
-    // PRICE UP + OI DOWN
-    // --------------------------------------------------------
-
-    else if (
-        priceDirection === "UP" &&
-        oiDirection === "DOWN"
-    ) {
-
-        mood =
-            "SHORT COVERING";
-
-    }
-
-
-    // --------------------------------------------------------
-    // PRICE DOWN + OI DOWN
-    // --------------------------------------------------------
-
-    else if (
-        priceDirection === "DOWN" &&
-        oiDirection === "DOWN"
-    ) {
-
-        mood =
-            "LONG UNWINDING";
-
-    }
-
-
-    // ========================================================
-    // SENTIMENT
-    // ========================================================
-
-    let sentiment =
-        "NEUTRAL";
-
-
-    if (
-        mood === "LONG BUILDUP" ||
-        mood === "SHORT COVERING"
-    ) {
-
-        sentiment =
-            "BULLISH";
-
-    }
-
-    else if (
-        mood === "SHORT BUILDUP" ||
-        mood === "LONG UNWINDING"
-    ) {
-
-        sentiment =
-            "BEARISH";
-
-    }
-
-
-    // ========================================================
-    // RETURN
-    // ========================================================
+    const priceChange = price - prevPrice;
+    const priceChangePercent = (priceChange / prevPrice) * 100;
+    const oiChange = oi - prevOI;
+    const oiChangePercent = (oiChange / prevOI) * 100;
+
+    const priceDirection = priceChangePercent >= PRICE_THRESHOLD ? "UP" : priceChangePercent <= -PRICE_THRESHOLD ? "DOWN" : "FLAT";
+    const oiDirection = oiChangePercent >= OI_THRESHOLD ? "UP" : oiChangePercent <= -OI_THRESHOLD ? "DOWN" : "FLAT";
+
+    let mood = "NEUTRAL";
+    if (priceDirection === "UP" && oiDirection === "UP") mood = "LONG BUILDUP";
+    else if (priceDirection === "DOWN" && oiDirection === "UP") mood = "SHORT BUILDUP";
+    else if (priceDirection === "UP" && oiDirection === "DOWN") mood = "SHORT COVERING";
+    else if (priceDirection === "DOWN" && oiDirection === "DOWN") mood = "LONG UNWINDING";
+
+    const sentiment = (mood === "LONG BUILDUP" || mood === "SHORT COVERING") ? "BULLISH" :
+        (mood === "SHORT BUILDUP" || mood === "LONG UNWINDING") ? "BEARISH" : "NEUTRAL";
 
     return {
-
-        mood,
-
-        sentiment,
-
-        priceChange,
-
-        priceChangePercent,
-
-        oiChange,
-
-        oiChangePercent,
-
-        priceDirection,
-
-        oiDirection,
-
-        dataAvailable: true
-
+        mood, sentiment, priceChange, priceChangePercent, oiChange, oiChangePercent,
+        priceDirection, oiDirection, dataAvailable: true
     };
-
 }
 
-
-// ============================================================
-// HELPER — CALCULATE FROM A STOCK OBJECT
-// ============================================================
-//
-// This allows scanner code to pass a complete stock object
-// without changing the core calculation.
-//
-// Supported field names:
-// currentPrice / price / close
-// previousPrice / prevPrice / previousClose
-// currentOI / oi / openInterest
-// previousOI / prevOI / previousOpenInterest
-// ============================================================
-
+// IMPORTANT: when option fields exist, they always take precedence.
+// This prevents the option Dashboard from accidentally displaying stock OI mood.
 function calculateOIMoodForStock(stock = {}) {
+    if (!stock || typeof stock !== "object") return calculateOIMood();
 
-    if (
-        !stock ||
-        typeof stock !== "object"
-    ) {
+    const hasOptionIdentity = Boolean(
+        stock.optionInstrumentKey || stock.optionInstrument || stock.optionSymbol ||
+        stock.optionType || stock.recommendedStrike || stock.atmStrike
+    );
 
-        return calculateOIMood();
-
+    if (hasOptionIdentity) {
+        return calculateOIMood({
+            currentPrice: stock.optionCurrentPrice ?? stock.optionLTP ?? stock.optionPremiumEntry,
+            previousPrice: stock.optionPreviousPrice ?? stock.optionPrevLTP ?? stock.optionPreviousLTP,
+            currentOI: stock.optionCurrentOI ?? stock.optionOI ?? stock.optionOpenInterest,
+            previousOI: stock.optionPreviousOI ?? stock.optionPrevOI ?? stock.optionPreviousOpenInterest
+        });
     }
 
-
-    const currentPrice =
-        stock.currentPrice ??
-        stock.price ??
-        stock.close;
-
-
-    const previousPrice =
-        stock.previousPrice ??
-        stock.prevPrice ??
-        stock.previousClose;
-
-
-    const currentOI =
-        stock.currentOI ??
-        stock.oi ??
-        stock.openInterest;
-
-
-    const previousOI =
-        stock.previousOI ??
-        stock.prevOI ??
-        stock.previousOpenInterest;
-
-
     return calculateOIMood({
-
-        currentPrice,
-
-        previousPrice,
-
-        currentOI,
-
-        previousOI
-
+        currentPrice: stock.currentPrice ?? stock.price ?? stock.close,
+        previousPrice: stock.previousPrice ?? stock.prevPrice ?? stock.previousClose,
+        currentOI: stock.currentOI ?? stock.oi ?? stock.openInterest,
+        previousOI: stock.previousOI ?? stock.prevOI ?? stock.previousOpenInterest
     });
-
 }
 
-
-// ============================================================
-// EXPORT
-// ============================================================
-
-module.exports = {
-
-    calculateOIMood,
-
-    calculateOIMoodForStock,
-
-    PRICE_THRESHOLD,
-
-    OI_THRESHOLD
-
-};
+module.exports = { calculateOIMood, calculateOIMoodForStock, PRICE_THRESHOLD, OI_THRESHOLD };
