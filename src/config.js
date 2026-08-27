@@ -15,7 +15,8 @@ module.exports = {
     BANKNIFTY_FULL_CONSTITUENTS: true,
     TOP_LIVE_STOCKS: 20,
     ONE_ACTIVE_TRADE: true,
-    MAX_STOCKS: 20,
+    // Do not cap the source universe here; app.js applies the live Top-20 gate.
+    MAX_STOCKS: 0,
     EMA_PERIODS: [5, 9, 20, 50, 100, 200],
     EMA_SHORT: 20,
     EMA_LONG: 200,
