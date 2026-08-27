@@ -1,6 +1,7 @@
 // ============================================================
-// AI SMART SCANNER — GOOGLE SHEET UPLOADER V11
-// Dashboard: TOP 5 TRADE candidates, minimal display only
+// AI SMART SCANNER — GOOGLE SHEET UPLOADER V12
+// Dashboard: ALWAYS TOP 5 ranked candidates, minimal display only
+// Trade hard gates do NOT control dashboard eligibility.
 // ============================================================
 const axios = require('axios');
 const config = require('./config');
@@ -23,11 +24,16 @@ function normalizeSignedScore(row={}){const s=score(row),d=direction(row),m=Math
 function tradeEligible(row={}){const decision=String(row.decision??row.optionsDecision??'').trim().toUpperCase();return decision==='TRADE';}
 function optionType(row={}){const v=String(row.optionType??row.optionSymbol??'').toUpperCase();if(v.includes('PUT')||v.includes(' PE')||v==='PE')return'PE';if(v.includes('CALL')||v.includes(' CE')||v==='CE')return'CE';return direction(row)==='BEARISH'?'PE':direction(row)==='BULLISH'?'CE':'';}
 function dashboardRow(row={}){return{stockPrice:n(row.stockPrice??row.price??row.livePrice??row.currentPrice??row.ltp),symbol:String(row.symbol??row.stock??row.tradingSymbol??'').trim(),optionType:optionType(row),confidence:n(row.confidence??row.optionsConfidence),target:n(row.target??row.target1??row.stockTarget1??row.optionPremiumTarget1),stopLoss:n(row.stopLoss??row.stockStopLoss??row.optionPremiumStopLoss)}}
+
+// Dashboard selection is intentionally independent of TRADE/WATCH/REJECT.
+// The scanner ranks candidates; the user makes the final live-market choice.
 function selectDashboardRows(rows=[]){
-  return (Array.isArray(rows)?rows:[]).filter(tradeEligible).sort((a,b)=>{
-    const ar=n(a.rankingScore??a.finalScore??a.aiFinalScore??a.score)??0,br=n(b.rankingScore??b.finalScore??b.aiFinalScore??b.score)??0;
-    const ac=n(a.confidence??a.optionsConfidence)??0,bc=n(b.confidence??b.optionsConfidence)??0;
-    return (bc+br)-(ac+ar);
+  return (Array.isArray(rows)?rows:[]).filter(Boolean).sort((a,b)=>{
+    const ar=n(a.rankingScore??a.finalScore??a.aiFinalScore??a.score??a.scannerScore)??0;
+    const br=n(b.rankingScore??b.finalScore??b.aiFinalScore??b.score??b.scannerScore)??0;
+    const ac=n(a.confidence??a.optionsConfidence)??0;
+    const bc=n(b.confidence??b.optionsConfidence)??0;
+    return (br+bc)-(ar+ac);
   }).slice(0,DASHBOARD_MAX_ROWS).map(dashboardRow);
 }
 function addOIMood(row={}){const stock=row&&typeof row==='object'?row:{};let mood=null;try{mood=calculateOIMoodForStock(stock);}catch(_){mood=null;}return{...stock,oiMood:String(stock.oiMood??stock.OIMood??stock.oi_mood??mood?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(stock.oiSentiment??stock.OISentiment??mood?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:mood?.dataAvailable===true||stock.oiDataAvailable===true,oiPriceChangePercent:n(stock.oiPriceChangePercent??mood?.priceChangePercent)??0,oiChangePercent:n(stock.oiChangePercent??mood?.oiChangePercent)??0};}
