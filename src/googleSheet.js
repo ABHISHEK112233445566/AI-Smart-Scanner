@@ -52,8 +52,10 @@ function selectDashboardRows(rows=[]){
     const ltp=n(r.optionPremiumEntry??r.optionLTP??r.optionEntry);
     return hasContract&&ltp!==null&&ltp>0;
   }).sort((a,b)=>{
-    const ar=n(a.rankingScore??a.finalScore??a.aiFinalScore??a.score??a.scannerScore)??0;
-    const br=n(b.rankingScore??b.finalScore??b.aiFinalScore??b.score??b.scannerScore)??0;
+    // Scores are signed: bullish is positive and bearish is negative.
+    // Dashboard ranking must compare strength by magnitude, otherwise every
+    // bearish candidate is pushed below bullish candidates and PE disappears.
+    const ar=magnitude(a), br=magnitude(b);
     const ac=n(a.optionsConfidence??a.confidence)??0;
     const bc=n(b.optionsConfidence??b.confidence)??0;
     return (br+bc)-(ar+ac);
@@ -69,9 +71,6 @@ function buildSheetPayload(sheet,objects=[]){
   REQUIRED_OI_HEADERS.forEach(h=>{if(!seen.has(h)){seen.add(h);headers.push(h);}});
   rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));
 
-  // IMPORTANT: uniqueHeaders must exist before it is used to build row arrays.
-  // Previous V14 code referenced uniqueHeaders before initialization, causing:
-  // "Cannot access 'uniqueHeaders' before initialization".
   const uniqueHeaders=[];
   const headerSet=new Set();
   for(const h of headers){if(!headerSet.has(h)){headerSet.add(h);uniqueHeaders.push(h);}}
