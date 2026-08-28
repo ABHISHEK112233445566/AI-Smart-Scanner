@@ -104,17 +104,23 @@ function confidence(row){return n(row,["optionsConfidence","confidence","optionC
 function riskReward(row){return n(row,["optionRiskReward","riskReward","rr","stockRiskReward"]);}
 function failedGateCount(row){const explicit=n(row,["failedGateCount","failedGatesCount"],NaN);if(Number.isFinite(explicit))return explicit;if(Array.isArray(row?.failedGates))return row.failedGates.length;return 0;}
 
-// Strategy sheets are opportunity sheets. Show TRADE/WATCH when a real
-// option contract and live premium exist. Do NOT apply the trade RR gate here;
-// the options engine remains responsible for rejecting low-RR trades. This
-// prevents valid CALL/PUT opportunities from disappearing from the sheets.
+// Strategy sheets are opportunity sheets. They should include a real option
+// candidate when the option engine has produced a CALL/PUT decision and a
+// live contract/premium. The option engine stores these facts as
+// optionInstrumentKey, optionPremiumEntry and marketSetup.valid; older field
+// names (contractAvailable/optionPriceAvailable/marketSetupValid) are not
+// guaranteed to exist on the decision object.
 function optionBuyCandidate(row){
   const type=optionType(row);if(!type)return false;
   const d=decision(row);if(d!=="TRADE"&&d!=="WATCH")return false;
-  if(!yes(row,["contractAvailable","hasContract","optionContractAvailable"]))return false;
-  if(!yes(row,["optionPriceAvailable","hasOptionPrice","optionLtpAvailable"]))return false;
-  if(!(n(row,["optionLTP","optionEntry","optionPrice","optionLastPrice"])>0))return false;
-  if(row.marketSetupValid!==true&&String(row.marketSetupValid).toLowerCase()!=="true")return false;
+  const contract=Boolean(row?.optionInstrumentKey||row?.optionSymbol||row?.recommendedStrike) || yes(row,["contractAvailable","hasContract","optionContractAvailable"]);
+  if(!contract)return false;
+  const optionLTP=n(row,["optionPremiumEntry","optionLTP","optionEntry","optionPrice","optionLastPrice"]);
+  if(!(optionLTP>0))return false;
+  const optionPriceAvailable=yes(row,["optionPriceAvailable","hasOptionPrice","optionLtpAvailable"]) || optionLTP>0;
+  if(!optionPriceAvailable)return false;
+  const setupValid=(row?.marketSetup?.valid===true)||String(row?.marketSetup?.valid).toLowerCase()==="true"||row?.marketSetupValid===true||String(row?.marketSetupValid).toLowerCase()==="true";
+  if(!setupValid)return false;
   return true;
 }
 
@@ -127,8 +133,8 @@ function optionValue(row,col){
     optionsRating:["rating","optionRating"],optionsConfidence:["confidence","optionConfidence"],optionsReason:["reason","optionReason"],
     failedGates:["failedGateList"],failedGateCount:["failedGatesCount"],contractAvailable:["hasContract","optionContractAvailable"],
     optionPriceAvailable:["hasOptionPrice","optionLtpAvailable"],optionSetupAvailable:["hasOptionSetup"],mtfAlignment:["mtfAligned","alignment"],
-    optionEntry:["option_entry"],optionLTP:["option_ltp","optionLastPrice"],optionStopLoss:["option_stop_loss"],optionTarget1:["option_target1"],optionTarget2:["option_target2"],
-    optionRisk:["option_risk"],optionReward:["option_reward"],optionRiskReward:["option_rr"],optionInstrumentKey:["option_instrument_key"],timestamp:["time","scanTime","lastScanTime"]
+    optionEntry:["optionPremiumEntry","option_entry"],optionLTP:["optionPremiumEntry","option_ltp","optionLastPrice"],optionStopLoss:["optionPremiumStopLoss","option_stop_loss"],optionTarget1:["optionPremiumTarget1","option_target1"],optionTarget2:["optionPremiumTarget2","option_target2"],
+    optionRisk:["optionPremiumRisk","option_risk"],optionReward:["optionPremiumReward","option_reward"],optionRiskReward:["optionPremiumRiskReward","option_rr"],optionInstrumentKey:["optionInstrumentKey","option_instrument_key"],timestamp:["time","scanTime","lastScanTime"]
   };
   if(row?.[col]!==undefined&&row[col]!==null&&row[col]!=="")return row[col];
   for(const k of aliases[col]||[])if(row?.[k]!==undefined&&row[k]!==null&&row[k]!=="")return row[k];
