@@ -8,6 +8,9 @@
 //
 // Qualification threshold: absolute score >= 85.
 // Bullish and bearish scoring use the same weighted structure.
+// IMPORTANT: directional component scores remain POSITIVE magnitudes.
+// Only the final score is signed. This prevents bearish scores from
+// being lost by downstream >= threshold filters.
 // ============================================================
 
 const { calculateTradeSetup } = require("./tradeSetup");
@@ -198,8 +201,10 @@ function calculateAIScore(indicators = {}, price = 0) {
     return {
         score: signedScore,
         finalScore: signedScore,
+        // IMPORTANT: these remain positive magnitudes.
+        // The signed direction is carried by score/finalScore/direction.
         bullishScore: bull,
-        bearishScore: -bearMagnitude,
+        bearishScore: bearMagnitude,
         bullishScoreMagnitude: bull,
         bearishScoreMagnitude: bearMagnitude,
         direction,
@@ -243,7 +248,10 @@ function getRating(score, direction = "SIDEWAYS") {
 }
 
 function getQualityStatus(scoreData, data) {
-    const d = obj(data), s = obj(scoreData), magnitude = Math.abs(num(d.finalScore ?? s.score ?? 0));
+    const d = obj(data), s = obj(scoreData);
+    // ALWAYS use the freshly calculated score. Never read data.finalScore
+    // because it may belong to the previous scan and cause score carryover.
+    const magnitude = Math.abs(num(s.score));
     const adx = num(d.adx?.adx ?? d.adxValue);
     const rvol = num(d.rvol);
     const volumeConfirmed = d.volumeConfirmed === true || d.volumeSpike === true || rvol >= 1.2;
