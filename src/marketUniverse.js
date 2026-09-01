@@ -1,54 +1,76 @@
-const axios = require("axios");
+const NSE_EQUITY_SEGMENT = "NSE_EQ";
+const NSE_FO_SEGMENT = "NSE_FO";
 
-const NSE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
-  "Accept": "text/csv,text/plain,application/json,*/*",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Referer": "https://www.nseindia.com/"
-};
-
-const URLS = {
-  NIFTY500: "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
-  BANKNIFTY: "https://nsearchives.nseindia.com/content/indices/ind_niftybanklist.csv"
-};
-
-function parseCsvSymbols(text) {
-  const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
-  const header = lines[0].split(",").map(x => x.trim().replace(/^"|"$/g, "").toUpperCase());
-  const symbolIndex = header.findIndex(x => x === "SYMBOL");
-  if (symbolIndex < 0) return [];
-  return [...new Set(lines.slice(1).map(line => {
-    const cells = line.match(/("[^"]*"|[^,])+/g) || [];
-    const value = String(cells[symbolIndex] || "").trim().replace(/^"|"$/g, "").toUpperCase();
-    return value;
-  }).filter(Boolean))];
+function normalizeSymbol(v) {
+  return String(v || "").trim().toUpperCase().replace(/\s+/g, "").replace(/-EQ$/i, "");
 }
 
-async function fetchIndexSymbols(indexName) {
-  const url = URLS[indexName];
-  if (!url) throw new Error(`Unsupported NSE index universe: ${indexName}`);
-  const response = await axios.get(url, { headers: NSE_HEADERS, timeout: 20000, responseType: "text" });
-  const symbols = parseCsvSymbols(response.data);
-  if (!symbols.length) throw new Error(`${indexName} constituent list is empty`);
-  return symbols;
+function isNseEquity(i) {
+  const segment = String(i?.segment || "").toUpperCase();
+  const exchange = String(i?.exchange || "").toUpperCase();
+  const type = String(i?.instrument_type || "").toUpperCase();
+  return segment === NSE_EQUITY_SEGMENT || (exchange === "NSE" && type === "EQ");
 }
 
-async function getNifty500AndBankNiftyUniverse() {
-  const [nifty500, bankNifty] = await Promise.all([
-    fetchIndexSymbols("NIFTY500"),
-    fetchIndexSymbols("BANKNIFTY")
-  ]);
-  const merged = [...new Set([...nifty500, ...bankNifty])];
+function isNseDerivative(i) {
+  const segment = String(i?.segment || "").toUpperCase();
+  const exchange = String(i?.exchange || "").toUpperCase();
+  return segment === NSE_FO || (exchange === "NSE" && ["OPTSTK", "FUTSTK"].includes(String(i?.instrument_type || "").toUpperCase()));
+}
+
+function getUnderlyingSymbol(i) {
+  return normalizeSymbol(
+    i?.underlying_symbol ??
+    i?.underlyingSymbol ??
+    i?.underlying_stock_symbol ??
+    i?.underlyingStockSymbol ??
+    i?.underlying
+  );
+}
+
+/**
+ * Build the scanner universe from the complete NSE equity instrument master.
+ * No NIFTY index membership is used here.
+ */
+async function getWholeNseUniverse(broker) {
+  if (!broker || typeof broker.loadInstruments !== "function") {
+    throw new Error("Broker instrument master is unavailable for whole-NSE universe");
+  }
+
+  const instruments = await broker.loadInstruments();
+  if (!Array.isArray(instruments) || !instruments.length) {
+    throw new Error("NSE instrument master is empty");
+  }
+
+  const equities = [...new Set(
+    instruments
+      .filter(isNseEquity)
+      .map(i => normalizeSymbol(i?.trading_symbol ?? i?.tradingSymbol ?? i?.symbol))
+      .filter(Boolean)
+  )];
+
+  if (!equities.length) throw new Error("No NSE equity symbols found in instrument master");
+
+  const optionUnderlyings = new Set(
+    instruments
+      .filter(isNseDerivative)
+      .map(getUnderlyingSymbol)
+      .filter(Boolean)
+  );
+
   return {
-    name: "NIFTY500+BANKNIFTY",
-    nifty500,
-    bankNifty,
-    symbols: merged,
-    universeSize: merged.length,
-    bankNiftyConstituents: bankNifty.length,
-    source: "NSE index constituent CSV"
+    name: "WHOLE_NSE",
+    symbols: equities,
+    universeSize: equities.length,
+    optionEligibleSymbols: [...optionUnderlyings],
+    optionEligibleCount: optionUnderlyings.size,
+    source: "Upstox complete NSE instrument master"
   };
 }
 
-module.exports = { fetchIndexSymbols, getNifty500AndBankNiftyUniverse };
+module.exports = {
+  getWholeNseUniverse,
+  normalizeSymbol,
+  isNseEquity,
+  isNseDerivative
+};
