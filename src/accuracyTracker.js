@@ -2,8 +2,7 @@
 // AI SMART SCANNER — ACCURACY TRACKER
 // ============================================================
 // Evaluates the UNDERLYING STOCK after the signal timestamp.
-// Records max favorable/adverse movement and FIRST TOUCH time
-// for SL/T1/T2. No option-premium accuracy is calculated here.
+// Records first target/SL outcome, exact candle time and price.
 // ============================================================
 
 const ACCURACY_HEADERS = [
@@ -18,7 +17,7 @@ const ACCURACY_HEADERS = [
     "stopLossReached", "stopLossReachedDate", "stopLossReachedTime",
     "target1Reached", "target1ReachedDate", "target1ReachedTime",
     "target2Reached", "target2ReachedDate", "target2ReachedTime",
-    "accuracyPercent", "evaluationStatus", "evaluationDate"
+    "targetSLReached", "resultTime", "resultPrice", "accuracyPercent", "evaluationStatus", "evaluationDate"
 ];
 
 function number(value) {
@@ -84,6 +83,9 @@ function createAccuracyRecord(prediction, timestamp = new Date()) {
         target2Reached: false,
         target2ReachedDate: "",
         target2ReachedTime: "",
+        targetSLReached: "PENDING",
+        resultTime: "",
+        resultPrice: null,
         accuracyPercent: 0,
         evaluationStatus: "PENDING",
         evaluationDate: ""
@@ -115,6 +117,25 @@ function firstTouch(candles, direction, level, type) {
     return null;
 }
 
+function firstTouchEvent(candles, direction, level, type) {
+    if (!Number.isFinite(level) || level <= 0) return null;
+    for (const candle of candles) {
+        if (!touchInCandle(direction, candle, level, type)) continue;
+        const time = parseDate(candle?.time);
+        if (!time) continue;
+        const high = number(candle.high);
+        const low = number(candle.low);
+        let price = level;
+        // A candle crossing the level is recorded at the actual target/SL level.
+        if (type === "TARGET" && direction === "CALL") price = Math.max(level, Math.min(high, level));
+        if (type === "TARGET" && direction === "PUT") price = Math.min(level, Math.max(low, level));
+        if (type === "STOP" && direction === "CALL") price = Math.min(level, Math.max(low, level));
+        if (type === "STOP" && direction === "PUT") price = Math.max(level, Math.min(high, level));
+        return { time, price: Number.isFinite(price) ? price : level };
+    }
+    return null;
+}
+
 function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
     if (!record || !Array.isArray(candles) || candles.length === 0) return record;
 
@@ -122,6 +143,7 @@ function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
     const evaluationTime = parseDate(evaluatedAt) || new Date();
     if (!["CALL", "PUT"].includes(direction)) {
         record.evaluationStatus = "NO_DIRECTION";
+        record.targetSLReached = "PENDING";
         record.evaluationDate = evaluationTime.toISOString();
         return record;
     }
@@ -129,6 +151,7 @@ function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
     const entry = number(record.stockEntry);
     if (!Number.isFinite(entry) || entry <= 0) {
         record.evaluationStatus = "INVALID_ENTRY";
+        record.targetSLReached = "PENDING";
         record.evaluationDate = evaluationTime.toISOString();
         return record;
     }
@@ -144,6 +167,7 @@ function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
 
     if (!postSignalCandles.length) {
         record.evaluationStatus = "WAITING_FOR_POST_SIGNAL_DATA";
+        record.targetSLReached = "PENDING";
         record.evaluationDate = evaluationTime.toISOString();
         return record;
     }
@@ -163,6 +187,7 @@ function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
 
     if (!Number.isFinite(high) || !Number.isFinite(low)) {
         record.evaluationStatus = "NO_VALID_POST_SIGNAL_DATA";
+        record.targetSLReached = "PENDING";
         record.evaluationDate = evaluationTime.toISOString();
         return record;
     }
@@ -181,38 +206,59 @@ function evaluateAccuracy(record, candles, evaluatedAt = new Date()) {
     record.maxAdverseMove = Number(Math.max(0, adverse).toFixed(2));
     record.maxAdverseMovePercent = Number((Math.max(0, adverse) / entry * 100).toFixed(2));
 
-    // FIRST TOUCH means the timestamp of the first post-signal candle
-    // whose range crossed the level. It is NOT the max-high/max-low time.
     const stop = number(record.stockStopLoss);
     const t1 = number(record.stockTarget1);
     const t2 = number(record.stockTarget2);
+    const stopEvent = firstTouchEvent(postSignalCandles, direction, stop, "STOP");
+    const t1Event = firstTouchEvent(postSignalCandles, direction, t1, "TARGET");
+    const t2Event = firstTouchEvent(postSignalCandles, direction, t2, "TARGET");
 
-    const stopTime = firstTouch(postSignalCandles, direction, stop, "STOP");
-    const t1Time = firstTouch(postSignalCandles, direction, t1, "TARGET");
-    const t2Time = firstTouch(postSignalCandles, direction, t2, "TARGET");
-
-    if (stopTime) {
+    if (stopEvent) {
         record.stopLossReached = true;
-        record.stopLossReachedDate = stopTime.toISOString().slice(0, 10);
-        record.stopLossReachedTime = stopTime.toISOString().slice(11, 19);
+        record.stopLossReachedDate = stopEvent.time.toISOString().slice(0, 10);
+        record.stopLossReachedTime = stopEvent.time.toISOString().slice(11, 19);
     }
-    if (t1Time) {
+    if (t1Event) {
         record.target1Reached = true;
-        record.target1ReachedDate = t1Time.toISOString().slice(0, 10);
-        record.target1ReachedTime = t1Time.toISOString().slice(11, 19);
+        record.target1ReachedDate = t1Event.time.toISOString().slice(0, 10);
+        record.target1ReachedTime = t1Event.time.toISOString().slice(11, 19);
     }
-    if (t2Time) {
+    if (t2Event) {
         record.target2Reached = true;
-        record.target2ReachedDate = t2Time.toISOString().slice(0, 10);
-        record.target2ReachedTime = t2Time.toISOString().slice(11, 19);
+        record.target2ReachedDate = t2Event.time.toISOString().slice(0, 10);
+        record.target2ReachedTime = t2Event.time.toISOString().slice(11, 19);
     }
 
-    if (record.target2Reached) record.accuracyPercent = 100;
-    else if (record.target1Reached) record.accuracyPercent = 75;
-    else if (record.stopLossReached) record.accuracyPercent = 0;
-    else record.accuracyPercent = Math.max(0, Math.min(100, record.maxFavorableMovePercent));
+    // The result is the FIRST event after the signal. If both are inside the
+    // same 5-minute candle, OHLC cannot reveal intrabar order, so keep it pending
+    // rather than falsely claiming which was first.
+    const events = [
+        stopEvent ? { type: "SL", ...stopEvent } : null,
+        t1Event ? { type: "TARGET", ...t1Event } : null
+    ].filter(Boolean).sort((a, b) => a.time.getTime() - b.time.getTime());
 
-    record.evaluationStatus = record.target2Reached ? "T2_REACHED" : record.target1Reached ? "T1_REACHED" : record.stopLossReached ? "SL_REACHED" : "IN_PROGRESS";
+    if (events.length && events[0].time.getTime() !== events[1]?.time?.getTime()) {
+        const first = events[0];
+        record.targetSLReached = first.type;
+        record.resultTime = first.time.toISOString();
+        record.resultPrice = number(first.price);
+        record.accuracyPercent = first.type === "TARGET" ? 100 : 0;
+        record.evaluationStatus = first.type === "TARGET" ? "TARGET_REACHED" : "SL_REACHED";
+    } else if (events.length === 1) {
+        const first = events[0];
+        record.targetSLReached = first.type;
+        record.resultTime = first.time.toISOString();
+        record.resultPrice = number(first.price);
+        record.accuracyPercent = first.type === "TARGET" ? 100 : 0;
+        record.evaluationStatus = first.type === "TARGET" ? "TARGET_REACHED" : "SL_REACHED";
+    } else {
+        record.targetSLReached = "PENDING";
+        record.resultTime = "";
+        record.resultPrice = null;
+        record.accuracyPercent = 0;
+        record.evaluationStatus = "IN_PROGRESS";
+    }
+
     record.evaluationDate = evaluationTime.toISOString();
     return record;
 }
