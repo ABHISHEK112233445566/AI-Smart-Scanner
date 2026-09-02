@@ -1,8 +1,7 @@
 // ============================================================
-// AI SMART SCANNER — GOOGLE SHEET UPLOADER V15
+// AI SMART SCANNER — GOOGLE SHEET UPLOADER V16
 // Dashboard: TOP 5 from option-ready Top-20 universe.
-// Dashboard entry/SL/targets are STOCK (underlying) levels.
-// Option LTP is separate and NEVER used as stock entry.
+// Accuracy: Dashboard TOP 5 only, with a fixed useful schema.
 // ============================================================
 const axios = require('axios');
 const config = require('./config');
@@ -13,6 +12,21 @@ const MIN_CONFIDENCE = Number(config.THRESHOLDS?.MIN_CONFIDENCE ?? 70);
 const MIN_RR = Number(config.THRESHOLDS?.MIN_RR ?? 1.5);
 const REQUIRED_OI_HEADERS = ['oiMood','oiSentiment','oiDataAvailable','oiPriceChangePercent','oiChangePercent'];
 const DASHBOARD_HEADERS = ['stockPrice','symbol','optionType','entryPrice','bestStrike','optionLTP','confidence','target','stopLoss','oiMood'];
+
+// Keep ACCURACY compact and limited to fields actually used for prediction/evaluation.
+const ACCURACY_HEADERS = [
+  'recordId','predictionId','predictionTime','accuracyPredictionTime','accuracySnapshotTime',
+  'symbol','stockPrice','optionType','bestStrike','optionLTP','confidence','predictedDirection',
+  'predictedScore','predictedEntry','predictedStopLoss','predictedTarget1','predictedTarget2',
+  'predictedRiskReward','livePrice','oiMood','oiSentiment','oiDataAvailable',
+  'oiPriceChangePercent','oiChangePercent','evaluationStatus','actualPrice','evaluationResult',
+  'highestStockPriceReached','highestStockPriceDate','highestStockPriceTime',
+  'lowestStockPriceReached','lowestStockPriceDate','lowestStockPriceTime',
+  'maxFavorableMove','maxFavorableMovePercent','maxAdverseMove','maxAdverseMovePercent',
+  'target1Reached','target1ReachedDate','target1ReachedTime','target2Reached','target2ReachedDate',
+  'target2ReachedTime','stopLossReached','stopLossReachedDate','stopLossReachedTime',
+  'accuracyPercent','evaluationDate'
+];
 const GOOGLE_TIMEOUT = 120000;
 
 function getGoogleSheetUrl(){return process.env.GOOGLE_SHEET_WEBHOOK_URL||process.env.GOOGLE_SCRIPT_URL||process.env.GOOGLE_SHEETS_WEBHOOK_URL||process.env.GOOGLE_SHEET_URL||process.env.GOOGLE_APPS_SCRIPT_URL||config.GOOGLE_SHEET_WEBHOOK_URL||config.GOOGLE_SCRIPT_URL||config.GOOGLE_SHEETS_WEBHOOK_URL||config.GOOGLE_SHEET_URL||config.GOOGLE_APPS_SCRIPT_URL||null;}
@@ -31,57 +45,18 @@ function dashboardRow(row={}){
   const stockEntry=n(row.stockEntry??row.underlyingEntry??row.marketEntry??row.entry??row.stockPrice??row.price??row.currentPrice);
   const stockSL=n(row.stockStopLoss??row.stopLoss);
   const stockT1=n(row.stockTarget1??row.target1??row.target);
-  return {
-    stockPrice:n(row.stockPrice??row.price??row.livePrice??row.currentPrice??row.ltp),
-    symbol:String(row.symbol??row.stock??row.tradingSymbol??'').trim(),
-    optionType:type,
-    entryPrice:stockEntry,
-    bestStrike:n(row.recommendedStrike??row.optionStrike??row.atmStrike),
-    optionLTP:n(row.optionPremiumEntry??row.optionLTP??row.optionEntry),
-    confidence:n(row.optionsConfidence??row.confidence),
-    target:stockT1,
-    stopLoss:stockSL,
-    oiMood:String(row.oiMood??row.OIMood??row.oi_mood??'UNKNOWN').trim().toUpperCase()||'UNKNOWN'
-  };
+  return {stockPrice:n(row.stockPrice??row.price??row.livePrice??row.currentPrice??row.ltp),symbol:String(row.symbol??row.stock??row.tradingSymbol??'').trim(),optionType:type,entryPrice:stockEntry,bestStrike:n(row.recommendedStrike??row.optionStrike??row.atmStrike),optionLTP:n(row.optionPremiumEntry??row.optionLTP??row.optionEntry),confidence:n(row.optionsConfidence??row.confidence),target:stockT1,stopLoss:stockSL,oiMood:String(row.oiMood??row.OIMood??row.oi_mood??'UNKNOWN').trim().toUpperCase()||'UNKNOWN'};
 }
-
-function selectDashboardRows(rows=[]){
-  return (Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>{
-    const hasContract=Boolean(r.optionInstrumentKey||r.optionSymbol||r.recommendedStrike||r.optionType);
-    const ltp=n(r.optionPremiumEntry??r.optionLTP??r.optionEntry);
-    return hasContract&&ltp!==null&&ltp>0;
-  }).sort((a,b)=>{
-    const ar=magnitude(a), br=magnitude(b);
-    const ac=n(a.optionsConfidence??a.confidence)??0;
-    const bc=n(b.optionsConfidence??b.confidence)??0;
-    return (br+bc)-(ar+ac);
-  }).slice(0,DASHBOARD_MAX_ROWS).map(addOIMood).map(dashboardRow);
-}
+function selectDashboardRows(rows=[]){return(Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>{const hasContract=Boolean(r.optionInstrumentKey||r.optionSymbol||r.recommendedStrike||r.optionType);const ltp=n(r.optionPremiumEntry??r.optionLTP??r.optionEntry);return hasContract&&ltp!==null&&ltp>0;}).sort((a,b)=>{const ar=magnitude(a),br=magnitude(b),ac=n(a.optionsConfidence??a.confidence)??0,bc=n(b.optionsConfidence??b.confidence)??0;return(br+bc)-(ar+ac);}).slice(0,DASHBOARD_MAX_ROWS).map(addOIMood).map(dashboardRow);}
 function addOIMood(row={}){const stock=row&&typeof row==='object'?row:{};let mood=null;try{mood=calculateOIMoodForStock(stock);}catch(_){mood=null;}return{...stock,oiMood:String(stock.oiMood??stock.OIMood??stock.oi_mood??mood?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(stock.oiSentiment??stock.OISentiment??stock.oi_mood_sentiment??mood?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:mood?.dataAvailable===true||stock.oiDataAvailable===true,oiPriceChangePercent:n(stock.oiPriceChangePercent??mood?.priceChangePercent)??0,oiChangePercent:n(stock.oiChangePercent??mood?.oiChangePercent)??0};}
 function cleanCell(v){if(v===undefined||v===null)return'';if(v instanceof Date)return v.toISOString();if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
-
-function buildSheetPayload(sheet,objects=[]){
-  const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood);
-  const headers=[];
-  const seen=new Set();
-  REQUIRED_OI_HEADERS.forEach(h=>{if(!seen.has(h)){seen.add(h);headers.push(h);}});
-  rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));
-  const uniqueHeaders=[];
-  const headerSet=new Set();
-  for(const h of headers){if(!headerSet.has(h)){headerSet.add(h);uniqueHeaders.push(h);}}
-  const outRows=rows.map(row=>uniqueHeaders.map(h=>{
-    if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);
-    return cleanCell(row[h]);
-  }));
-  return{action:'replaceSheet',sheet,clearFirst:true,headers:uniqueHeaders,rows:outRows,timestamp:new Date().toISOString()};
-}
-
+function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood);const headers=[];const seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{if(!seen.has(h)){seen.add(h);headers.push(h);}});rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));const outRows=rows.map(row=>headers.map(h=>h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore'?normalizeSignedScore(row):cleanCell(row[h])));return{action:'replaceSheet',sheet,clearFirst:true,headers,rows:outRows,timestamp:new Date().toISOString()};}
 function buildDashboardPayload(rows=[]){const selected=selectDashboardRows(rows);return{action:'replaceSheet',sheet:'Dashboard',clearFirst:true,headers:DASHBOARD_HEADERS,rows:selected.map(r=>DASHBOARD_HEADERS.map(h=>cleanCell(r[h]))),timestamp:new Date().toISOString()};}
 async function postToGoogleSheet(payload={}){const url=getGoogleSheetUrl();if(!url)throw new Error('Google Sheet webhook URL is not configured');return axios.post(url,payload,{timeout:GOOGLE_TIMEOUT,headers:{'Content-Type':'application/json'}});}
 async function postReplaceSheet(sheet,objects){const response=await postToGoogleSheet(buildSheetPayload(sheet,objects));if(response?.data?.success===false)throw new Error(`Google Sheets rejected ${sheet}: ${response.data.error||'unknown error'}`);return response?.data||{};}
 async function postDashboard(rows){const response=await postToGoogleSheet(buildDashboardPayload(rows));if(response?.data?.success===false)throw new Error(`Google Sheets rejected Dashboard: ${response.data.error||'unknown error'}`);return response?.data||{};}
-function buildAccuracyRow(row={}){const r=addOIMood(row),signed=normalizeSignedScore(r),d=direction(r),now=new Date().toISOString();return{...r,predictionId:String(r.predictionId??r.predictionID??`${r.symbol||r.stock||'UNKNOWN'}_${Date.now()}`).trim(),accuracyPredictionTime:r.accuracyPredictionTime||r.predictionTime||r.timestamp||now,accuracySnapshotTime:now,livePrice:n(r.livePrice??r.currentPrice??r.ltp??r.price),predictedDirection:r.predictedDirection||d,predictedScore:signed,predictedEntry:n(r.predictedEntry??r.stockEntry??r.entry),predictedStopLoss:n(r.predictedStopLoss??r.stockStopLoss??r.stopLoss),predictedTarget1:n(r.predictedTarget1??r.stockTarget1??r.target1),predictedTarget2:n(r.predictedTarget2??r.stockTarget2??r.target2),predictedRiskReward:rr(r),evaluationStatus:r.evaluationStatus||'PENDING',actualPrice:n(r.actualPrice),evaluationResult:r.evaluationResult||'PENDING'};}
-async function postAccuracyRows(rows=[]){const list=(Array.isArray(rows)?rows:[]).filter(Boolean);if(!list.length)return{success:true,rowCount:0};const enriched=list.map(buildAccuracyRow),headers=[],seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});enriched.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));const response=await postToGoogleSheet({action:'appendRows',sheet:'ACCURACY',headers,rows:enriched.map(row=>headers.map(h=>h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore'?normalizeSignedScore(row):cleanCell(row[h]))),timestamp:new Date().toISOString()});if(response?.data?.success===false)throw new Error(`Google Sheets rejected ACCURACY: ${response.data.error||'unknown error'}`);return response?.data||{};}
+function buildAccuracyRow(row={}){const r=addOIMood(row),signed=normalizeSignedScore(r),d=direction(r),now=new Date().toISOString();return{recordId:String(r.recordId??r.predictionId??`${r.symbol||r.stock||'UNKNOWN'}_${Date.now()}`).trim(),predictionId:String(r.predictionId??r.predictionID??r.recordId??`${r.symbol||r.stock||'UNKNOWN'}_${Date.now()}`).trim(),predictionTime:r.predictionTime||r.accuracyPredictionTime||r.timestamp||now,accuracyPredictionTime:r.accuracyPredictionTime||r.predictionTime||r.timestamp||now,accuracySnapshotTime:now,symbol:String(r.symbol??r.stock??r.tradingSymbol??'').trim(),stockPrice:n(r.stockPrice??r.price??r.currentPrice??r.livePrice??r.ltp),optionType:optionType(r),bestStrike:n(r.recommendedStrike??r.optionStrike??r.atmStrike),optionLTP:n(r.optionPremiumEntry??r.optionLTP??r.optionEntry),confidence:n(r.optionsConfidence??r.confidence),predictedDirection:r.predictedDirection||d,predictedScore:signed,predictedEntry:n(r.predictedEntry??r.stockEntry??r.entry),predictedStopLoss:n(r.predictedStopLoss??r.stockStopLoss??r.stopLoss),predictedTarget1:n(r.predictedTarget1??r.stockTarget1??r.target1),predictedTarget2:n(r.predictedTarget2??r.stockTarget2??r.target2),predictedRiskReward:rr(r),livePrice:n(r.livePrice??r.currentPrice??r.ltp??r.price),oiMood:String(r.oiMood??r.OIMood??r.oi_mood??'UNKNOWN').trim().toUpperCase()||'UNKNOWN',oiSentiment:String(r.oiSentiment??r.OISentiment??r.oi_mood_sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:r.oiDataAvailable===true,oiPriceChangePercent:n(r.oiPriceChangePercent)??0,oiChangePercent:n(r.oiChangePercent)??0,evaluationStatus:r.evaluationStatus||'PENDING',actualPrice:n(r.actualPrice),evaluationResult:r.evaluationResult||'PENDING',highestStockPriceReached:n(r.highestStockPriceReached),highestStockPriceDate:r.highestStockPriceDate||'',highestStockPriceTime:r.highestStockPriceTime||'',lowestStockPriceReached:n(r.lowestStockPriceReached),lowestStockPriceDate:r.lowestStockPriceDate||'',lowestStockPriceTime:r.lowestStockPriceTime||'',maxFavorableMove:n(r.maxFavorableMove),maxFavorableMovePercent:n(r.maxFavorableMovePercent),maxAdverseMove:n(r.maxAdverseMove),maxAdverseMovePercent:n(r.maxAdverseMovePercent),target1Reached:r.target1Reached??'',target1ReachedDate:r.target1ReachedDate||'',target1ReachedTime:r.target1ReachedTime||'',target2Reached:r.target2Reached??'',target2ReachedDate:r.target2ReachedDate||'',target2ReachedTime:r.target2ReachedTime||'',stopLossReached:r.stopLossReached??'',stopLossReachedDate:r.stopLossReachedDate||'',stopLossReachedTime:r.stopLossReachedTime||'',accuracyPercent:n(r.accuracyPercent),evaluationDate:r.evaluationDate||''};}
+async function postAccuracyRows(rows=[]){const list=(Array.isArray(rows)?rows:[]).filter(Boolean);if(!list.length)return{success:true,rowCount:0};const enriched=list.map(buildAccuracyRow);const response=await postToGoogleSheet({action:'appendRows',sheet:'ACCURACY',headers:ACCURACY_HEADERS,rows:enriched.map(row=>ACCURACY_HEADERS.map(h=>cleanCell(row[h]))),timestamp:new Date().toISOString()});if(response?.data?.success===false)throw new Error(`Google Sheets rejected ACCURACY: ${response.data.error||'unknown error'}`);return response?.data||{};}
 async function updateGoogleSheet(payload={}){if(!payload||typeof payload!=='object')throw new Error('Google Sheet payload must be an object');if(String(payload.action||'').trim()==='scanner_status'){const response=await postToGoogleSheet({action:'scanner_status',scannerStatus:payload.scannerStatus||payload.status||{}});if(response?.data?.success===false)throw new Error(`Google Sheets rejected SCANNER_STATUS: ${response.data.error||'unknown error'}`);return response?.data||{};}const scannerData=Array.isArray(payload.scannerData)?payload.scannerData:[],dashboardData=Array.isArray(payload.dashboardData)?payload.dashboardData:[],accuracyData=Array.isArray(payload.accuracyData)?payload.accuracyData:[],selectedDashboard=selectDashboardRows(dashboardData),dashboardKeys=new Set(selectedDashboard.map(rowKey).filter(Boolean)),dashboardAccuracyData=accuracyData.filter(r=>dashboardKeys.has(rowKey(r))),scanner=await postReplaceSheet('SCANNER',scannerData),dashboard=await postDashboard(dashboardData),accuracy=await postAccuracyRows(dashboardAccuracyData);return{success:true,scanner,dashboard,accuracy,scannerRows:scannerData.length,dashboardRows:selectedDashboard.length,accuracyRows:dashboardAccuracyData.length};}
 function buildScannerStatus({status='SUCCESS',startedAt,universe='ALL',broker=process.env.BROKER||'UPSTOX',scanned=0,successfulScans=0,failedScans=0,callCandidates=0,putCandidates=0,tradeCount=0,watchCount=0,rejectCount=0,elapsedSeconds=0}={}){const completedAt=new Date(),started=startedAt instanceof Date?startedAt:new Date(startedAt||completedAt),ist=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(completedAt).replace(',','');return{status:String(status).toUpperCase(),lastScanTime:completedAt.toISOString(),lastScanTimeIST:ist,lastScanSource:process.env.GITHUB_ACTIONS?'GitHub Actions':'Local',broker:String(broker||'UPSTOX').toUpperCase(),universe:String(universe||'ALL').toUpperCase(),stocksScanned:Number(scanned)||0,successfulScans:Number(successfulScans)||0,failedScans:Number(failedScans)||0,callCandidates:Number(callCandidates)||0,putCandidates:Number(putCandidates)||0,tradeCount:Number(tradeCount)||0,watchCount:Number(watchCount)||0,rejectCount:Number(rejectCount)||0,elapsedSeconds:Number(elapsedSeconds)||0,durationMs:Math.max(0,completedAt.getTime()-started.getTime())};}
-module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,tradeEligible,rr,score,magnitude,direction,normalizeSignedScore,buildAccuracyRow,postAccuracyRows,buildScannerStatus,DASHBOARD_MAX_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard};
+module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,tradeEligible,rr,score,magnitude,direction,normalizeSignedScore,buildAccuracyRow,postAccuracyRows,buildScannerStatus,DASHBOARD_MAX_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard,ACCURACY_HEADERS};
