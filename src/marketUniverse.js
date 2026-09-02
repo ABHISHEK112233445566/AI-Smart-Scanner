@@ -2,7 +2,14 @@ const NSE_EQUITY_SEGMENT = "NSE_EQ";
 const NSE_FO_SEGMENT = "NSE_FO";
 
 function normalizeSymbol(v) {
-  return String(v || "").trim().toUpperCase().replace(/\s+/g, "").replace(/-EQ$/i, "");
+  return String(v || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/^NSE[_:]?EQ[|:]/, "")
+    .replace(/^NSE[|:]/, "")
+    .replace(/\.NS$/i, "")
+    .replace(/-EQ$/i, "");
 }
 
 function isNseEquity(i) {
@@ -21,13 +28,24 @@ function isNseDerivative(i) {
 }
 
 function getUnderlyingSymbol(i) {
-  return normalizeSymbol(
+  const direct = normalizeSymbol(
     i?.underlying_symbol ??
     i?.underlyingSymbol ??
     i?.underlying_stock_symbol ??
     i?.underlyingStockSymbol ??
     i?.underlying
   );
+  if (direct) return direct;
+
+  const trading = normalizeSymbol(i?.trading_symbol ?? i?.tradingSymbol ?? i?.symbol);
+  const type = String(i?.instrument_type ?? "").toUpperCase();
+  if (type === "OPTSTK" || type === "FUTSTK") {
+    return trading
+      .replace(/\d{1,2}[A-Z]{3}\d{2,4}$/i, "")
+      .replace(/\d{4,8}$/i, "")
+      .replace(/(CE|PE)$/i, "");
+  }
+  return "";
 }
 
 /**
