@@ -15,7 +15,9 @@ function isNseEquity(i) {
 function isNseDerivative(i) {
   const segment = String(i?.segment || "").toUpperCase();
   const exchange = String(i?.exchange || "").toUpperCase();
-  return segment === NSE_FO || (exchange === "NSE" && ["OPTSTK", "FUTSTK"].includes(String(i?.instrument_type || "").toUpperCase()));
+  const type = String(i?.instrument_type || "").toUpperCase();
+  return segment === NSE_FO_SEGMENT ||
+    (exchange === "NSE" && ["OPTSTK", "FUTSTK"].includes(type));
 }
 
 function getUnderlyingSymbol(i) {
