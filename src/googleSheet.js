@@ -24,6 +24,7 @@ function direction(row={}){const d=String(row.direction??row.finalDirection??row
 function normalizeSignedScore(row={}){const s=score(row),d=direction(row),m=Math.min(100,Math.abs(s));return d==='BULLISH'?m:d==='BEARISH'?-m:0;}
 function tradeEligible(row={}){const decision=String(row.decision??row.optionsDecision??'').trim().toUpperCase();return decision==='TRADE';}
 function optionType(row={}){const v=String(row.optionType??row.optionSymbol??'').toUpperCase();if(v.includes('PUT')||v.includes(' PE')||v==='PE')return'PE';if(v.includes('CALL')||v.includes(' CE')||v==='CE')return'CE';return direction(row)==='BEARISH'?'PE':direction(row)==='BULLISH'?'CE':'';}
+function rowKey(row={}){return String(row?.symbol??row?.stock??row?.tradingSymbol??'').trim().toUpperCase();}
 
 function dashboardRow(row={}){
   const type=optionType(row);
@@ -44,17 +45,12 @@ function dashboardRow(row={}){
   };
 }
 
-// Dashboard is intentionally NOT gated by TRADE/WATCH/REJECT or score thresholds.
-// It shows the best available option-ready stocks from the Top-20 universe.
 function selectDashboardRows(rows=[]){
   return (Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>{
     const hasContract=Boolean(r.optionInstrumentKey||r.optionSymbol||r.recommendedStrike||r.optionType);
     const ltp=n(r.optionPremiumEntry??r.optionLTP??r.optionEntry);
     return hasContract&&ltp!==null&&ltp>0;
   }).sort((a,b)=>{
-    // Scores are signed: bullish is positive and bearish is negative.
-    // Dashboard ranking must compare strength by magnitude, otherwise every
-    // bearish candidate is pushed below bullish candidates and PE disappears.
     const ar=magnitude(a), br=magnitude(b);
     const ac=n(a.optionsConfidence??a.confidence)??0;
     const bc=n(b.optionsConfidence??b.confidence)??0;
@@ -70,11 +66,9 @@ function buildSheetPayload(sheet,objects=[]){
   const seen=new Set();
   REQUIRED_OI_HEADERS.forEach(h=>{if(!seen.has(h)){seen.add(h);headers.push(h);}});
   rows.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));
-
   const uniqueHeaders=[];
   const headerSet=new Set();
   for(const h of headers){if(!headerSet.has(h)){headerSet.add(h);uniqueHeaders.push(h);}}
-
   const outRows=rows.map(row=>uniqueHeaders.map(h=>{
     if(h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore')return normalizeSignedScore(row);
     return cleanCell(row[h]);
@@ -88,6 +82,6 @@ async function postReplaceSheet(sheet,objects){const response=await postToGoogle
 async function postDashboard(rows){const response=await postToGoogleSheet(buildDashboardPayload(rows));if(response?.data?.success===false)throw new Error(`Google Sheets rejected Dashboard: ${response.data.error||'unknown error'}`);return response?.data||{};}
 function buildAccuracyRow(row={}){const r=addOIMood(row),signed=normalizeSignedScore(r),d=direction(r),now=new Date().toISOString();return{...r,predictionId:String(r.predictionId??r.predictionID??`${r.symbol||r.stock||'UNKNOWN'}_${Date.now()}`).trim(),accuracyPredictionTime:r.accuracyPredictionTime||r.predictionTime||r.timestamp||now,accuracySnapshotTime:now,livePrice:n(r.livePrice??r.currentPrice??r.ltp??r.price),predictedDirection:r.predictedDirection||d,predictedScore:signed,predictedEntry:n(r.predictedEntry??r.stockEntry??r.entry),predictedStopLoss:n(r.predictedStopLoss??r.stockStopLoss??r.stopLoss),predictedTarget1:n(r.predictedTarget1??r.stockTarget1??r.target1),predictedTarget2:n(r.predictedTarget2??r.stockTarget2??r.target2),predictedRiskReward:rr(r),evaluationStatus:r.evaluationStatus||'PENDING',actualPrice:n(r.actualPrice),evaluationResult:r.evaluationResult||'PENDING'};}
 async function postAccuracyRows(rows=[]){const list=(Array.isArray(rows)?rows:[]).filter(Boolean);if(!list.length)return{success:true,rowCount:0};const enriched=list.map(buildAccuracyRow),headers=[],seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});enriched.forEach(row=>Object.keys(row).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));const response=await postToGoogleSheet({action:'appendRows',sheet:'ACCURACY',headers,rows:enriched.map(row=>headers.map(h=>h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore'?normalizeSignedScore(row):cleanCell(row[h]))),timestamp:new Date().toISOString()});if(response?.data?.success===false)throw new Error(`Google Sheets rejected ACCURACY: ${response.data.error||'unknown error'}`);return response?.data||{};}
-async function updateGoogleSheet(payload={}){if(!payload||typeof payload!=='object')throw new Error('Google Sheet payload must be an object');if(String(payload.action||'').trim()==='scanner_status'){const response=await postToGoogleSheet({action:'scanner_status',scannerStatus:payload.scannerStatus||payload.status||{}});if(response?.data?.success===false)throw new Error(`Google Sheets rejected SCANNER_STATUS: ${response.data.error||'unknown error'}`);return response?.data||{};}const scannerData=Array.isArray(payload.scannerData)?payload.scannerData:[],dashboardData=Array.isArray(payload.dashboardData)?payload.dashboardData:[],accuracyData=Array.isArray(payload.accuracyData)?payload.accuracyData:[],scanner=await postReplaceSheet('SCANNER',scannerData),dashboard=await postDashboard(dashboardData),accuracy=await postAccuracyRows(accuracyData);return{success:true,scanner,dashboard,accuracy,scannerRows:scannerData.length,dashboardRows:selectDashboardRows(dashboardData).length,accuracyRows:accuracyData.length};}
+async function updateGoogleSheet(payload={}){if(!payload||typeof payload!=='object')throw new Error('Google Sheet payload must be an object');if(String(payload.action||'').trim()==='scanner_status'){const response=await postToGoogleSheet({action:'scanner_status',scannerStatus:payload.scannerStatus||payload.status||{}});if(response?.data?.success===false)throw new Error(`Google Sheets rejected SCANNER_STATUS: ${response.data.error||'unknown error'}`);return response?.data||{};}const scannerData=Array.isArray(payload.scannerData)?payload.scannerData:[],dashboardData=Array.isArray(payload.dashboardData)?payload.dashboardData:[],accuracyData=Array.isArray(payload.accuracyData)?payload.accuracyData:[],selectedDashboard=selectDashboardRows(dashboardData),dashboardKeys=new Set(selectedDashboard.map(rowKey).filter(Boolean)),dashboardAccuracyData=accuracyData.filter(r=>dashboardKeys.has(rowKey(r))),scanner=await postReplaceSheet('SCANNER',scannerData),dashboard=await postDashboard(dashboardData),accuracy=await postAccuracyRows(dashboardAccuracyData);return{success:true,scanner,dashboard,accuracy,scannerRows:scannerData.length,dashboardRows:selectedDashboard.length,accuracyRows:dashboardAccuracyData.length};}
 function buildScannerStatus({status='SUCCESS',startedAt,universe='ALL',broker=process.env.BROKER||'UPSTOX',scanned=0,successfulScans=0,failedScans=0,callCandidates=0,putCandidates=0,tradeCount=0,watchCount=0,rejectCount=0,elapsedSeconds=0}={}){const completedAt=new Date(),started=startedAt instanceof Date?startedAt:new Date(startedAt||completedAt),ist=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(completedAt).replace(',','');return{status:String(status).toUpperCase(),lastScanTime:completedAt.toISOString(),lastScanTimeIST:ist,lastScanSource:process.env.GITHUB_ACTIONS?'GitHub Actions':'Local',broker:String(broker||'UPSTOX').toUpperCase(),universe:String(universe||'ALL').toUpperCase(),stocksScanned:Number(scanned)||0,successfulScans:Number(successfulScans)||0,failedScans:Number(failedScans)||0,callCandidates:Number(callCandidates)||0,putCandidates:Number(putCandidates)||0,tradeCount:Number(tradeCount)||0,watchCount:Number(watchCount)||0,rejectCount:Number(rejectCount)||0,elapsedSeconds:Number(elapsedSeconds)||0,durationMs:Math.max(0,completedAt.getTime()-started.getTime())};}
 module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,tradeEligible,rr,score,magnitude,direction,normalizeSignedScore,buildAccuracyRow,postAccuracyRows,buildScannerStatus,DASHBOARD_MAX_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard};
