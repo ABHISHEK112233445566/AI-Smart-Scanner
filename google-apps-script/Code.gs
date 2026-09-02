@@ -29,7 +29,62 @@ function getSpreadsheet(){var spreadsheet=SpreadsheetApp.getActiveSpreadsheet();
 function getOrCreateSheet(spreadsheet,sheetName){return spreadsheet.getSheetByName(sheetName)||spreadsheet.insertSheet(sheetName);}
 function replaceSheet(sheetName,headers,rows){var sheet=getOrCreateSheet(getSpreadsheet(),sheetName);removeExistingFilter(sheet);sheet.clear();sheet.getRange(1,1,1,headers.length).setValues([headers]);if(rows.length){var output=[];for(var i=0;i<rows.length;i++)output.push(normalizeRow(rows[i],headers.length));sheet.getRange(2,1,output.length,headers.length).setValues(output);}lightFormat(sheet,rows.length+1,headers.length,sheetName);SpreadsheetApp.flush();return{rowCount:rows.length,columnCount:headers.length};}
 function appendRows(sheetName,headers,rows){var sheet=getOrCreateSheet(getSpreadsheet(),sheetName);if(sheet.getLastRow()===0){sheet.getRange(1,1,1,headers.length).setValues([headers]);lightFormat(sheet,1,headers.length,sheetName);}else{var existingCount=sheet.getLastColumn(),existingHeaders=sheet.getRange(1,1,1,existingCount).getValues()[0];if(sheetName==="ACCURACY")return appendAccuracyRows(sheet,existingHeaders,headers,rows);if(existingCount!==headers.length)throw new Error("Header column mismatch for sheet '"+sheetName+"'. Existing: "+existingCount+", Incoming: "+headers.length);for(var h=0;h<headers.length;h++)if(String(existingHeaders[h]).trim()!==String(headers[h]).trim())throw new Error("Header mismatch at column "+(h+1)+" in sheet '"+sheetName+"'. Expected: '"+existingHeaders[h]+"', received: '"+headers[h]+"'");}if(!rows.length){SpreadsheetApp.flush();return{rowCount:0,columnCount:headers.length};}var output=[];for(var i=0;i<rows.length;i++)output.push(normalizeRow(rows[i],headers.length));sheet.getRange(sheet.getLastRow()+1,1,output.length,headers.length).setValues(output);SpreadsheetApp.flush();return{rowCount:output.length,columnCount:headers.length};}
-function appendAccuracyRows(sheet,existingHeaders,incomingHeaders,rows){if(!rows.length)return{rowCount:0,columnCount:existingHeaders.length};var incomingMap={};for(var i=0;i<incomingHeaders.length;i++){var k=String(incomingHeaders[i]).trim().toLowerCase();if(k)incomingMap[k]=i;}var output=[];for(var r=0;r<rows.length;r++){var source=Array.isArray(rows[r])?rows[r]:[],target=[];for(var c=0;c<existingHeaders.length;c++){var key=String(existingHeaders[c]).trim().toLowerCase();target.push(key&&incomingMap[key]!==undefined?normalizeCell(source[incomingMap[key]]):"");}output.push(target);}sheet.getRange(sheet.getLastRow()+1,1,output.length,existingHeaders.length).setValues(output);SpreadsheetApp.flush();return{rowCount:output.length,columnCount:existingHeaders.length};}
+
+// ACCURACY HISTORY POLICY:
+// 1) Keep only records from yesterday onward (IST).
+// 2) Incoming accuracy rows are already restricted by Node to Dashboard TOP 5.
+// 3) Deduplicate by recordId so the second status update cannot duplicate rows.
+// 4) Preserve yesterday's dashboard records so they can be evaluated historically.
+function appendAccuracyRows(sheet,existingHeaders,incomingHeaders,rows){
+  var tz="Asia/Kolkata";
+  var todayKey=Utilities.formatDate(new Date(),tz,"yyyy-MM-dd");
+  var today=new Date(todayKey+"T00:00:00+05:30");
+  var cutoff=new Date(today.getTime()-24*60*60*1000);
+  var cutoffKey=Utilities.formatDate(cutoff,tz,"yyyy-MM-dd");
+  var incomingMap={};
+  for(var i=0;i<incomingHeaders.length;i++){var k=String(incomingHeaders[i]).trim().toLowerCase();if(k)incomingMap[k]=i;}
+
+  var lastRow=sheet.getLastRow();
+  var lastColumn=sheet.getLastColumn();
+  var existingData=lastRow>=2&&lastColumn>=1?sheet.getRange(2,1,lastRow-1,lastColumn).getValues():[];
+  var dateCol=findHeaderColumn(existingHeaders,"date");
+  var timestampCol=findHeaderColumn(existingHeaders,"timestamp");
+  var idCol=findHeaderColumn(existingHeaders,"recordId");
+  var symbolCol=findHeaderColumn(existingHeaders,"symbol");
+  var kept=[];
+  var seen={};
+
+  for(var r=0;r<existingData.length;r++){
+    var row=existingData[r];
+    var dateValue=dateCol!==-1?row[dateCol]:timestampCol!==-1?row[timestampCol]:"";
+    var keyDate="";
+    if(dateValue instanceof Date)keyDate=Utilities.formatDate(dateValue,tz,"yyyy-MM-dd");
+    else if(dateValue){var parsed=new Date(String(dateValue));if(!isNaN(parsed.getTime()))keyDate=Utilities.formatDate(parsed,tz,"yyyy-MM-dd");else keyDate=String(dateValue).slice(0,10);}
+    if(keyDate<cutoffKey)continue;
+    var id=idCol!==-1?String(row[idCol]||"").trim():"";
+    if(id){if(seen[id])continue;seen[id]=true;}
+    kept.push(row);
+  }
+
+  for(var rr=0;rr<rows.length;rr++){
+    var source=Array.isArray(rows[rr])?rows[rr]:[];
+    var target=[];
+    for(var c=0;c<existingHeaders.length;c++){
+      var key=String(existingHeaders[c]).trim().toLowerCase();
+      target.push(key&&incomingMap[key]!==undefined?normalizeCell(source[incomingMap[key]]):"");
+    }
+    var incomingId=idCol!==-1?String(target[idCol]||"").trim():"";
+    if(incomingId&&seen[incomingId])continue;
+    if(incomingId)seen[incomingId]=true;
+    kept.push(target);
+  }
+
+  if(lastRow>1)sheet.getRange(2,1,lastRow-1,lastColumn).clearContent();
+  if(kept.length)sheet.getRange(2,1,kept.length,existingHeaders.length).setValues(kept);
+  lightFormat(sheet,kept.length+1,existingHeaders.length,"ACCURACY");
+  SpreadsheetApp.flush();
+  return{rowCount:rows.length,columnCount:existingHeaders.length,retainedRows:kept.length,cutoffDate:cutoffKey};
+}
 
 function getAccuracyRows(limit){var sheet=getOrCreateSheet(getSpreadsheet(),"ACCURACY"),lastRow=sheet.getLastRow(),lastColumn=sheet.getLastColumn();if(lastRow<2||lastColumn<1)return[];var headers=sheet.getRange(1,1,1,lastColumn).getValues()[0],data=sheet.getRange(2,1,lastRow-1,lastColumn).getValues(),count=Math.max(1,Math.min(Number(limit)||100,500)),start=Math.max(0,data.length-count),rows=[];for(var r=start;r<data.length;r++){var obj={};for(var c=0;c<headers.length;c++)obj[String(headers[c])]=data[r][c];rows.push(obj);}return rows;}
 
@@ -46,5 +101,5 @@ function normalizeRow(row,columnCount){if(!Array.isArray(row))row=[];var output=
 function normalizeCell(value){if(value===null||value===undefined)return"";if(Object.prototype.toString.call(value)==="[object Date]")return isNaN(value.getTime())?"":value;if(typeof value==="number")return isFinite(value)?value:"";if(typeof value==="boolean")return value;if(typeof value==="object")try{return JSON.stringify(value);}catch(_){return String(value);}return String(value);}
 function normalizeNumber(value){var number=Number(value);return isFinite(number)?number:0;}
 function jsonResponse(object){return ContentService.createTextOutput(JSON.stringify(object)).setMimeType(ContentService.MimeType.JSON);}
-function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",version:"V8",status:"RUNNING",lockWaitMs:LOCK_WAIT_MS,accuracyHeaderCompatible:true,liveAccuracyReadUpdate:true,performanceMode:true,supportedActions:["replaceSheet","appendRows","getAccuracyRows","updateAccuracy","scanner_status"],supportedSheets:Object.keys(ALLOWED_SHEETS),timestamp:new Date().toISOString()});}
+function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",version:"V8",status:"RUNNING",lockWaitMs:LOCK_WAIT_MS,accuracyHeaderCompatible:true,liveAccuracyReadUpdate:true,performanceMode:true,supportedActions:["replaceSheet","appendRows","getAccuracyRows","updateAccuracy","scanner_status"],supportedSheets:Object.keys(ALLOWED_SHEETS),accuracyHistoryPolicy:"yesterday_onward_dashboard_only_deduplicated",timestamp:new Date().toISOString()});}
 function startScannerFromSheet(){var token=PropertiesService.getScriptProperties().getProperty("GITHUB_TOKEN");if(!token)throw new Error("GITHUB_TOKEN is not configured in Script Properties.");var owner="ABHISHEK112233445566",repo="AI-Smart-Scanner",workflow="scanner.yml",branch="master",url="https://api.github.com/repos/"+owner+"/"+repo+"/actions/workflows/"+workflow+"/dispatches",response=UrlFetchApp.fetch(url,{method:"post",headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"},payload:JSON.stringify({ref:branch}),muteHttpExceptions:true}),code=response.getResponseCode(),body=response.getContentText();if(code!==204)throw new Error("GitHub workflow trigger failed. HTTP "+code+": "+body);return"Scanner started successfully.";}
