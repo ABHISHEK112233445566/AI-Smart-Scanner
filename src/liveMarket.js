@@ -6,15 +6,63 @@ const TOP_OPTION_STOCKS=100;
 const MIN_VOLUME=1;
 const MIN_OI=1;
 const QUOTE_CHUNK_SIZE=100;
-const QUOTE_RETRIES=3;
+const QUOTE_RETRIES=2;
+const QUOTE_CONCURRENCY=5;
+const INSTRUMENT_CONCURRENCY=250;
 function n(v,f=0){const x=Number(v);return Number.isFinite(x)?x:f;}
 function normalizeSymbol(v){return String(v||"").trim().toUpperCase().replace(/\s+/g,"").replace(/^NSE[_:]?EQ[|:]/,"").replace(/^NSE[|:]/,"").replace(/\.NS$/i,"").replace(/-EQ$/i,"");}
 function normalizeQuoteMap(data){const out=[];for(const[key,value]of Object.entries(data||{})){if(!value||typeof value!=="object")continue;out.push({instrumentKey:value.instrument_token||value.instrumentKey||key,symbol:value.symbol||"",price:n(value.last_price??value.lastPrice),volume:n(value.volume??value.volume_traded??value.volumeTraded),oi:n(value.oi??value.open_interest??value.openInterest),previousOI:n(value.prev_oi??value.previous_oi??value.previousOI),oiDayHigh:n(value.oi_day_high),oiDayLow:n(value.oi_day_low),timestamp:value.timestamp||null,lastTradeTime:value.last_trade_time||value.lastTradeTime||null,raw:value});}return out;}
 async function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
-async function upstoxFullQuotes(instrumentKeys){const token=process.env.UPSTOX_ACCESS_TOKEN;if(!token)throw new Error("UPSTOX_ACCESS_TOKEN is missing");const keys=[...new Set((instrumentKeys||[]).filter(Boolean))];if(!keys.length)return[];let lastError=null;for(let attempt=1;attempt<=QUOTE_RETRIES;attempt++){try{const response=await axios.get(`${UPSTOX_BASE}/v2/market-quote/quotes`,{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:`Bearer ${token}`},timeout:20000,decompress:true,maxContentLength:10*1024*1024,maxBodyLength:10*1024*1024});return normalizeQuoteMap(response?.data?.data);}catch(error){lastError=error;const message=error?.message||String(error);console.warn(`⚠️ Upstox quote request failed (attempt ${attempt}/${QUOTE_RETRIES}, keys=${keys.length}): ${message}`);if(attempt<QUOTE_RETRIES)await sleep(1000*attempt);}}throw lastError||new Error("Upstox live quote request failed");}
-async function resolveEquityKeys(symbols,broker){const rows=[];for(const symbol of symbols){try{const instrument=await broker.getInstrument(symbol);const key=instrument?.instrument_key||instrument?.instrumentKey||null;if(key)rows.push({symbol,key});}catch(_){} }return rows;}
-async function rankByLiveVolume(symbols,broker,limit){const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];const resolved=await resolveEquityKeys(source,broker);if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");let quotes=[];let failedChunks=0;for(let i=0;i<resolved.length;i+=QUOTE_CHUNK_SIZE){const chunk=resolved.slice(i,i+QUOTE_CHUNK_SIZE);try{const result=await upstoxFullQuotes(chunk.map(x=>x.key));const byKey=new Map(result.map(q=>[q.instrumentKey,q]));for(const item of chunk){const q=byKey.get(item.key);if(q)quotes.push({symbol:item.symbol,instrumentKey:item.key,...q});}}catch(error){failedChunks++;console.warn(`⚠️ Skipping failed live-volume quote chunk ${i+1}-${Math.min(i+QUOTE_CHUNK_SIZE,resolved.length)}: ${error?.message||error}`);}}
-const valid=quotes.filter(q=>q.price>0&&q.volume>=MIN_VOLUME);console.log(`LIVE VOLUME QUOTES: ${valid.length}/${resolved.length} valid; failedChunks=${failedChunks}`);if(!valid.length)throw new Error("Live market volume unavailable for scanner universe");valid.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));const top=valid.slice(0,Math.min(limit,valid.length)).map((q,index)=>({...q,liveVolumeRank:index+1,volumeConfirmed:q.volume>=MIN_VOLUME,liveMarketConfirmed:true,liveQuoteTimestamp:q.timestamp||q.lastTradeTime||null}));return{top,allQuotes:valid,universeSize:source.length,failedQuoteChunks:failedChunks};}
+async function upstoxFullQuotes(instrumentKeys){const token=process.env.UPSTOX_ACCESS_TOKEN;if(!token)throw new Error("UPSTOX_ACCESS_TOKEN is missing");const keys=[...new Set((instrumentKeys||[]).filter(Boolean))];if(!keys.length)return[];let lastError=null;for(let attempt=1;attempt<=QUOTE_RETRIES;attempt++){try{const response=await axios.get(`${UPSTOX_BASE}/v2/market-quote/quotes`,{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:`Bearer ${token}`},timeout:12000,decompress:true,maxContentLength:10*1024*1024,maxBodyLength:10*1024*1024});return normalizeQuoteMap(response?.data?.data);}catch(error){lastError=error;const message=error?.message||String(error);console.warn(`⚠️ Upstox quote request failed (attempt ${attempt}/${QUOTE_RETRIES}, keys=${keys.length}): ${message}`);if(attempt<QUOTE_RETRIES)await sleep(500*attempt);}}throw lastError||new Error("Upstox live quote request failed");}
+async function resolveEquityKeys(symbols,broker){
+  const source=[...new Set((symbols||[]).map(normalizeSymbol).filter(Boolean))];
+  if(broker&&typeof broker.loadInstruments==="function"){
+    try{
+      const master=await broker.loadInstruments();
+      const map=new Map();
+      for(const item of Array.isArray(master)?master:[]){
+        const segment=String(item?.segment||"").toUpperCase(),exchange=String(item?.exchange||"").toUpperCase(),type=String(item?.instrument_type||"").toUpperCase();
+        if(!(segment==="NSE_EQ"||(exchange==="NSE"&&type==="EQ")))continue;
+        const symbol=normalizeSymbol(item?.trading_symbol||item?.symbol);
+        const key=item?.instrument_key||item?.instrumentKey;
+        if(symbol&&key&&!map.has(symbol))map.set(symbol,key);
+      }
+      const resolved=source.map(symbol=>({symbol,key:map.get(symbol)||null})).filter(x=>x.key);
+      console.log(`⚡ Instrument lookup optimized: ${resolved.length}/${source.length} NSE equities resolved from master`);
+      if(resolved.length)return resolved;
+    }catch(error){console.warn(`⚠️ Instrument-master lookup failed, using broker fallback: ${error?.message||error}`);}
+  }
+  const rows=[];
+  for(let i=0;i<source.length;i+=INSTRUMENT_CONCURRENCY){
+    const batch=source.slice(i,i+INSTRUMENT_CONCURRENCY);
+    const result=await Promise.all(batch.map(async symbol=>{try{const instrument=await broker.getInstrument(symbol);const key=instrument?.instrument_key||instrument?.instrumentKey||null;return key?{symbol,key}:null;}catch(_){return null;}}));
+    rows.push(...result.filter(Boolean));
+  }
+  return rows;
+}
+async function mapConcurrent(items,worker,concurrency){
+  const out=new Array(items.length);let cursor=0;
+  async function run(){while(true){const i=cursor++;if(i>=items.length)return;try{out[i]=await worker(items[i],i);}catch(error){out[i]={error};}}}
+  await Promise.all(Array.from({length:Math.min(concurrency,items.length)},run));
+  return out;
+}
+async function rankByLiveVolume(symbols,broker,limit){
+  const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];
+  const resolved=await resolveEquityKeys(source,broker);
+  if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");
+  const chunks=[];for(let i=0;i<resolved.length;i+=QUOTE_CHUNK_SIZE)chunks.push(resolved.slice(i,i+QUOTE_CHUNK_SIZE));
+  const results=await mapConcurrent(chunks,async chunk=>{
+    try{return await upstoxFullQuotes(chunk.map(x=>x.key));}
+    catch(error){console.warn(`⚠️ Skipping failed live-volume quote chunk (${chunk.length}): ${error?.message||error}`);return[];}
+  },QUOTE_CONCURRENCY);
+  let quotes=[];for(let i=0;i<results.length;i++){const result=Array.isArray(results[i])?results[i]:[];const byKey=new Map(result.map(q=>[q.instrumentKey,q]));for(const item of chunks[i]){const q=byKey.get(item.key);if(q)quotes.push({symbol:item.symbol,instrumentKey:item.key,...q});}}
+  const valid=quotes.filter(q=>q.price>0&&q.volume>=MIN_VOLUME);
+  console.log(`LIVE VOLUME QUOTES: ${valid.length}/${resolved.length} valid; quoteChunks=${chunks.length}`);
+  if(!valid.length)throw new Error("Live market volume unavailable for scanner universe");
+  valid.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));
+  const top=valid.slice(0,Math.min(limit,valid.length)).map((q,index)=>({...q,liveVolumeRank:index+1,volumeConfirmed:q.volume>=MIN_VOLUME,liveMarketConfirmed:true,liveQuoteTimestamp:q.timestamp||q.lastTradeTime||null}));
+  return{top,allQuotes:valid,universeSize:source.length,failedQuoteChunks:results.filter(r=>!Array.isArray(r)||!r.length).length};
+}
 async function getTop500ByLiveVolume(symbols,broker,limit=TOP_NSE_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(TOP_NSE_STOCKS,Math.max(1,limit)));}
 function getTop100OptionStocks(top500Rows,optionEligibleSymbols,limit=TOP_OPTION_STOCKS){const rowsInput=Array.isArray(top500Rows)?top500Rows:[];const eligible=new Set((Array.isArray(optionEligibleSymbols)?optionEligibleSymbols:[]).map(normalizeSymbol).filter(Boolean));const rows=rowsInput.filter(r=>eligible.has(normalizeSymbol(r?.symbol??r?.tradingSymbol??r?.stock)));rows.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));return rows.slice(0,Math.min(TOP_OPTION_STOCKS,Math.max(1,limit))).map((r,index)=>({...r,optionUniverseRank:index+1,optionEligible:true}));}
 async function getTop20ByLiveVolume(symbols,broker,limit=MAX_TOP_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(MAX_TOP_STOCKS,Math.max(1,limit)));}
