@@ -12,8 +12,8 @@ jobs:
     name: Run AI Smart Scanner
     runs-on: ubuntu-latest
 
-    # npm start must contain the 30-minute scanning loop.
-    # GitHub keeps this workflow alive for the trading session.
+    # Manual runs execute exactly ONE scan and then finish.
+    # Scheduled runs keep the existing 30-minute scanner scheduler.
     timeout-minutes: 420
 
     env:
@@ -21,18 +21,8 @@ jobs:
       GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
 
     steps:
-
-      # ======================================================
-      # CHECKOUT
-      # ======================================================
-
       - name: Checkout scanner
         uses: actions/checkout@v5
-
-
-      # ======================================================
-      # NODE
-      # ======================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -40,64 +30,44 @@ jobs:
           node-version: 22
           cache: npm
 
-
-      # ======================================================
-      # DEPENDENCIES
-      # ======================================================
-
       - name: Install dependencies
         run: npm ci
-
-
-      # ======================================================
-      # CONFIGURATION CHECK
-      # ======================================================
 
       - name: Verify required secrets
         shell: bash
         run: |
           set -euo pipefail
-
           echo "========================================"
           echo "     VERIFY SCANNER CONFIGURATION"
           echo "========================================"
-
           if [ -z "${UPSTOX_ACCESS_TOKEN:-}" ]; then
             echo "::error::UPSTOX_ACCESS_TOKEN secret is missing."
             exit 1
           fi
-
           echo "UPSTOX_ACCESS_TOKEN: OK"
-
           if [ -z "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
             echo "::error::GOOGLE_SHEET_WEBHOOK_URL secret is missing."
             exit 1
           fi
-
           echo "GOOGLE_SHEET_WEBHOOK_URL: OK"
-
-          echo "========================================"
           echo "Configuration verified."
-          echo "========================================"
-
-
-      # ======================================================
-      # RUN SCANNER
-      # ======================================================
 
       - name: Run AI Smart Scanner
         id: scanner
+        shell: bash
         run: |
+          set -euo pipefail
           echo "========================================"
           echo "       STARTING AI SMART SCANNER"
           echo "========================================"
 
-          npm start
-
-
-      # ======================================================
-      # RESULT
-      # ======================================================
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run detected: running ONE scan only."
+            npm run scan-once
+          else
+            echo "Scheduled run detected: starting scanner scheduler."
+            npm start
+          fi
 
       - name: Scanner result
         if: always()
@@ -106,22 +76,14 @@ jobs:
           echo "========================================"
           echo "       AI SMART SCANNER RESULT"
           echo "========================================"
-
           if [ "${{ steps.scanner.outcome }}" = "success" ]; then
             echo "Scanner completed successfully."
           else
             echo "::error::Scanner failed."
             echo "Check the scanner logs above."
           fi
-
           echo "========================================"
-
-
-      # ======================================================
-      # WORKFLOW END
-      # ======================================================
 
       - name: Complete workflow
         if: always()
-        run: |
-          echo "AI Scanner workflow finished."
+        run: echo "AI Scanner workflow finished."
