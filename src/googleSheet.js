@@ -51,7 +51,7 @@ function selectDashboardRows(rows=[]){
     const ar=magnitude(a),br=magnitude(b);
     const ac=n(a.optionsConfidence??a.confidence)??0,bc=n(b.optionsConfidence??b.confidence)??0;
     const ao=hasUsableOptionData(a)?1:0,bo=hasUsableOptionData(b)?1:0;
-    return (br+bc+bo*0.01)-(ar+ac+ao*0.01);
+    return (br+bc+bo*.01)-(ar+ac+ao*.01);
   });
 
   const above80=valid.filter(r=>magnitude(r)>=80);
@@ -165,6 +165,6 @@ function buildScannerStatus(status={}){
 }
 
 module.exports={
-  updateGoogleSheet,buildScannerStatus,buildSheetPayload,buildDashboardPayload,buildAccuracyPayload,selectDashboardRows,toIST,
+  updateGoogleSheet,buildScannerStatus,buildSheetPayload,buildDashboardPayload,buildAccuracyPayload,selectDashboardRows,toIST,getGoogleSheetUrl,
   ACCURACY_HEADERS,DASHBOARD_HEADERS,REQUIRED_OI_HEADERS,MIN_CONFIDENCE,MIN_RR,DASHBOARD_MAX_ROWS,MIN_DASHBOARD_ROWS
 };
