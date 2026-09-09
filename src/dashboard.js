@@ -1,17 +1,17 @@
 // ============================================================
-// AI SMART SCANNER - DASHBOARD ENGINE V3
+// AI SMART SCANNER - DASHBOARD ENGINE V4
 // ============================================================
-// Dashboard uses STOCK price levels only.
-// Score gate = 85 in the direction of the trade.
-// CALL: score >= +85
-// PUT : score <= -85
-// Confidence is a separate quality gate.
-// Option premium is never used for stock Entry / SL / Target.
+// Dashboard is based on the STOCK scanner score, not rankingScore,
+// finalScore, AI/options confidence, or option premium.
+// ALL directional stocks with ABS(scannerScore) >= 80 are eligible.
+// If fewer than 5 qualify, fill remaining slots with the strongest
+// directional scanner scores. Option TRADE/WATCH/REJECT does not
+// invalidate an otherwise qualifying stock.
 // ============================================================
 
-const DASHBOARD_MIN_SCORE = 85;
-const DASHBOARD_MIN_CONFIDENCE = 85;
-const DASHBOARD_MAX_ROWS = 10;
+const DASHBOARD_MIN_SCORE = 80;
+const DASHBOARD_MIN_CONFIDENCE = 0;
+const DASHBOARD_MAX_ROWS = 5;
 
 function safeNumber(value, fallback = 0) {
     const n = Number(value);
@@ -24,10 +24,7 @@ function getNestedValue(object, paths = []) {
         let current = object;
         let valid = true;
         for (const part of String(path).split(".")) {
-            if (current === null || current === undefined || typeof current !== "object" || !(part in current)) {
-                valid = false;
-                break;
-            }
+            if (current === null || current === undefined || typeof current !== "object" || !(part in current)) { valid = false; break; }
             current = current[part];
         }
         if (valid) return current;
@@ -36,29 +33,14 @@ function getNestedValue(object, paths = []) {
 }
 
 function getISTDateParts(date = new Date()) {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
-    }).formatToParts(date);
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(date);
     const values = {};
     for (const part of parts) if (part.type !== "literal") values[part.type] = part.value;
     return values;
 }
-
-function getISTTimestamp(date = new Date()) {
-    const p = getISTDateParts(date);
-    return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+05:30`;
-}
-
-function getISTMinutes(date = new Date()) {
-    const p = getISTDateParts(date);
-    return Number(p.hour) * 60 + Number(p.minute);
-}
-
-function getISTWeekday(date = new Date()) {
-    const p = getISTDateParts(date);
-    return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day))).getUTCDay();
-}
+function getISTTimestamp(date = new Date()) { const p = getISTDateParts(date); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+05:30`; }
+function getISTMinutes(date = new Date()) { const p = getISTDateParts(date); return Number(p.hour) * 60 + Number(p.minute); }
+function getISTWeekday(date = new Date()) { const p = getISTDateParts(date); return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day))).getUTCDay(); }
 
 function getOptionType(option) {
     if (!option || typeof option !== "object") return "";
@@ -70,93 +52,33 @@ function getOptionType(option) {
     if (/\bPE\b$/.test(symbol) || symbol.endsWith("PE")) return "PUT";
     return "";
 }
+function getDecision(option) { return String(option?.optionsDecision ?? option?.optionDecision ?? option?.decision ?? "").trim().toUpperCase(); }
+function getConfidence(option) { return safeNumber(getNestedValue(option, ["optionsConfidence", "optionConfidence", "confidence", "score.confidence", "decision.confidence"])); }
 
-function getDecision(option) {
-    return String(option?.optionsDecision ?? option?.optionDecision ?? option?.decision ?? "").trim().toUpperCase();
-}
-
-function getConfidence(option) {
-    return safeNumber(getNestedValue(option, ["optionsConfidence", "optionConfidence", "confidence", "score.confidence", "decision.confidence"]));
-}
-
-function getScore(option) {
-    return safeNumber(getNestedValue(option, ["rankingScore", "finalScore", "aiFinalScore", "scannerScore", "score"]));
-}
-
-function getStockPrice(option) {
-    return safeNumber(getNestedValue(option, ["price", "stockPrice", "underlyingPrice"]));
-}
-
-function getStockEntry(option) {
-    return safeNumber(getNestedValue(option, ["stockEntry", "stock_entry", "entry", "tradeSetup.stockEntry", "tradeSetup.entry"]));
-}
-
-function getStockStopLoss(option) {
-    return safeNumber(getNestedValue(option, ["stockStopLoss", "stock_stop_loss", "stopLoss", "tradeSetup.stockStopLoss", "tradeSetup.stopLoss"]));
-}
-
-function getStockTarget1(option) {
-    return safeNumber(getNestedValue(option, ["stockTarget1", "stock_target_1", "target1", "tradeSetup.stockTarget1", "tradeSetup.target1"]));
-}
-
-function getStockTarget2(option) {
-    return safeNumber(getNestedValue(option, ["stockTarget2", "stock_target_2", "target2", "tradeSetup.stockTarget2", "tradeSetup.target2"]));
-}
-
-function getStockRiskReward(option) {
-    return safeNumber(getNestedValue(option, ["stockRiskReward", "riskReward", "stockRiskRewardRatio"]));
-}
-
-function getADX(option) {
-    const value = getNestedValue(option, ["adx", "ADX", "indicators.adx", "indicatorData.adx"]);
-    if (value && typeof value === "object") return safeNumber(value.adx ?? value.value, 0);
-    return value === undefined || value === null || value === "" ? "" : safeNumber(value, value);
-}
-
-function getMood(option) {
-    return String(getNestedValue(option, ["oiMood", "OIMood", "oi_mood", "mood", "optionMood"]) ?? "").trim().toUpperCase();
-}
-
-function getStockName(option) {
-    return String(option?.stock ?? option?.symbol ?? option?.name ?? "").trim();
-}
-
-function validateStockSetup(option) {
-    const type = getOptionType(option);
-    const entry = getStockEntry(option);
-    const sl = getStockStopLoss(option);
-    const t1 = getStockTarget1(option);
-    const t2 = getStockTarget2(option);
-    const rr = getStockRiskReward(option);
-    const price = getStockPrice(option);
-
-    if (!type || entry <= 0 || sl <= 0 || rr <= 0 || price <= 0) return false;
-    const target = t2 > 0 ? t2 : t1;
-    if (target <= 0) return false;
-
-    if (type === "CALL") return sl < entry && target > entry;
-    if (type === "PUT") return sl > entry && target < entry;
-    return false;
-}
-
-function isScoreQualified(option) {
-    const type = getOptionType(option);
-    const score = getScore(option);
-
-    // Signed AI score: bullish is positive, bearish is negative.
-    if (type === "CALL") return score >= DASHBOARD_MIN_SCORE;
-    if (type === "PUT") return score <= -DASHBOARD_MIN_SCORE;
-    return false;
-}
-
-function scoreStrength(option) {
-    return Math.abs(getScore(option));
-}
+// IMPORTANT: scannerScore is authoritative. Do not fall back to ranking/final score.
+function getScore(option) { return safeNumber(getNestedValue(option, ["scannerScore", "score"])); }
+function scoreStrength(option) { return Math.abs(getScore(option)); }
+function getStockPrice(option) { return safeNumber(getNestedValue(option, ["price", "stockPrice", "underlyingPrice"])); }
+function getStockEntry(option) { return safeNumber(getNestedValue(option, ["stockEntry", "stock_entry", "entry", "tradeSetup.stockEntry", "tradeSetup.entry"])); }
+function getStockStopLoss(option) { return safeNumber(getNestedValue(option, ["stockStopLoss", "stock_stop_loss", "stopLoss", "tradeSetup.stockStopLoss", "tradeSetup.stopLoss"])); }
+function getStockTarget1(option) { return safeNumber(getNestedValue(option, ["stockTarget1", "stock_target_1", "target1", "tradeSetup.stockTarget1", "tradeSetup.target1"])); }
+function getStockTarget2(option) { return safeNumber(getNestedValue(option, ["stockTarget2", "stock_target_2", "target2", "tradeSetup.stockTarget2", "tradeSetup.target2"])); }
+function getStockRiskReward(option) { return safeNumber(getNestedValue(option, ["stockRiskReward", "riskReward", "stockRiskRewardRatio"])); }
+function getADX(option) { const value = getNestedValue(option, ["adx", "ADX", "indicators.adx", "indicatorData.adx"]); if (value && typeof value === "object") return safeNumber(value.adx ?? value.value, 0); return value === undefined || value === null || value === "" ? "" : safeNumber(value, value); }
+function getMood(option) { return String(getNestedValue(option, ["oiMood", "OIMood", "oi_mood", "mood", "optionMood"]) ?? "").trim().toUpperCase(); }
+function getStockName(option) { return String(option?.stock ?? option?.symbol ?? option?.name ?? "").trim(); }
 
 function getDashboardUniverse(results) {
     if (Array.isArray(results?.allResults)) return results.allResults;
     return Array.isArray(results) ? results : [];
 }
+
+function isDirectional(option) {
+    const d = String(option?.direction ?? option?.stockDirection ?? option?.technicalDirection ?? "").trim().toUpperCase();
+    return ["BULLISH", "BEARISH", "LONG", "SHORT", "BUY", "SELL", "CALL", "PUT", "CE", "PE"].includes(d);
+}
+
+function isScoreQualified(option) { return isDirectional(option) && scoreStrength(option) >= DASHBOARD_MIN_SCORE; }
 
 function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const scanResults = getDashboardUniverse(results);
@@ -176,30 +98,23 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const watchCount = decisions.filter(o => getDecision(o) === "WATCH").length;
     const rejectCount = decisions.filter(o => getDecision(o) === "REJECT").length;
 
-    const qualityCandidates = decisions.filter(option =>
-        isScoreQualified(option) &&
-        getConfidence(option) >= DASHBOARD_MIN_CONFIDENCE &&
-        (getDecision(option) === "TRADE" || getDecision(option) === "WATCH") &&
-        (getOptionType(option) === "CALL" || getOptionType(option) === "PUT") &&
-        option.contractAvailable === true &&
-        option.optionPriceAvailable === true &&
-        validateStockSetup(option)
-    );
-
-    // Rank by absolute score strength, while preserving the signed score.
-    const sortedOptions = [...qualityCandidates].sort((a, b) =>
+    // Build dashboard directly from scanner results. Option decisions are statistics only.
+    const directional = scanResults.filter(isDirectional);
+    const ranked = [...directional].sort((a, b) =>
         (scoreStrength(b) - scoreStrength(a)) ||
-        (getConfidence(b) - getConfidence(a)) ||
-        (getStockRiskReward(b) - getStockRiskReward(a))
+        (getConfidence(b) - getConfidence(a))
     );
+    const strong = ranked.filter(isScoreQualified);
+    const selected = strong.length >= DASHBOARD_MAX_ROWS ? strong : ranked.slice(0, DASHBOARD_MAX_ROWS);
 
-    const top10 = sortedOptions.slice(0, DASHBOARD_MAX_ROWS).map((option, index) => {
-        const type = getOptionType(option);
+    const top10 = selected.map((option, index) => {
+        const direction = String(option.direction ?? option.stockDirection ?? "").toUpperCase();
+        const type = ["BEARISH", "SHORT", "SELL", "PUT", "PE"].includes(direction) ? "PE" : "CE";
         const target = getStockTarget2(option) > 0 ? getStockTarget2(option) : getStockTarget1(option);
         return {
             rank: index + 1,
             stock: getStockName(option),
-            cePe: type === "CALL" ? "CE" : "PE",
+            cePe: type,
             score: getScore(option),
             entry: getStockEntry(option),
             stopLoss: getStockStopLoss(option),
@@ -208,67 +123,24 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
             adx: getADX(option),
             confidence: getConfidence(option),
             riskReward: getStockRiskReward(option),
-            decision: getDecision(option),
+            decision: getDecision(option) || "SCANNER",
             strike: safeNumber(option.optionStrike ?? option.recommendedStrike, 0),
             optionLTP: safeNumber(option.optionLTP, 0),
             optionSymbol: option.optionSymbol || option.tradingSymbol || ""
         };
     });
 
-    const strongBuy = qualityCandidates.length;
-    let marketMood = "NEUTRAL";
-    if (callCount > putCount) marketMood = "BULLISH";
-    else if (putCount > callCount) marketMood = "BEARISH";
-
+    const marketMood = ranked.filter(r => getScore(r) > 0).length > ranked.filter(r => getScore(r) < 0).length ? "BULLISH" : ranked.filter(r => getScore(r) < 0).length > ranked.filter(r => getScore(r) > 0).length ? "BEARISH" : "NEUTRAL";
     const headers = ["Stock", "CE / PE", "Score", "Stock Entry", "Stock SL", "Stock Target", "Mood", "ADX"];
-    const summary = {
-        "Last Scan": lastScan,
-        "Market Status": marketStatus,
-        "Total Stocks": total,
-        "Successful Scans": successfulScans,
-        "Failed Scans": failedScans,
-        "Strong Setups (±85+)": strongBuy,
-        "Market Mood": marketMood,
-        CALL: callCount,
-        PUT: putCount,
-        "No Direction": noDirectionCount,
-        TRADE: tradeCount,
-        "WATCH Decisions": watchCount,
-        REJECT: rejectCount
-    };
+    const summary = { "Last Scan": lastScan, "Market Status": marketStatus, "Total Stocks": total, "Successful Scans": successfulScans, "Failed Scans": failedScans, "Strong Setups (±80+)": strong.length, "Market Mood": marketMood, CALL: callCount, PUT: putCount, "No Direction": noDirectionCount, TRADE: tradeCount, "WATCH Decisions": watchCount, REJECT: rejectCount };
 
     return {
-        generatedAt: lastScan,
-        summary,
-        headers,
-        top10,
-        top10Count: top10.length,
-        lastScan,
-        marketStatus,
-        totalStocks: total,
-        successfulScans,
-        failedScans,
-        strongBuy,
-        buy: 0,
-        watch: 0,
-        avoid: 0,
-        mood: marketMood,
-        callCount,
-        putCount,
-        noDirectionCount,
-        tradeCount,
-        watchCount,
-        rejectCount,
-        dashboardMinScore: DASHBOARD_MIN_SCORE,
-        dashboardMinConfidence: DASHBOARD_MIN_CONFIDENCE,
-        dashboardFilter: "CALL score >= +85 OR PUT score <= -85 + CONFIDENCE >= 85 + VALID CONTRACT + LIVE LTP + VALID STOCK LEVELS + VALID STOCK R:R"
+        generatedAt: lastScan, summary, headers, top10, top10Count: top10.length, lastScan, marketStatus, totalStocks: total,
+        successfulScans, failedScans, strongBuy: strong.length, buy: 0, watch: 0, avoid: 0, mood: marketMood,
+        callCount, putCount, noDirectionCount, tradeCount, watchCount, rejectCount,
+        dashboardMinScore: DASHBOARD_MIN_SCORE, dashboardMinConfidence: DASHBOARD_MIN_CONFIDENCE,
+        dashboardFilter: "ALL directional stocks with ABS(scannerScore) >= 80; if fewer than 5 qualify, fill to 5 by strongest scannerScore"
     };
 }
 
-module.exports = {
-    buildDashboard,
-    validateStockSetup,
-    DASHBOARD_MIN_SCORE,
-    DASHBOARD_MIN_CONFIDENCE,
-    DASHBOARD_MAX_ROWS
-};
+module.exports = { buildDashboard, isScoreQualified, DASHBOARD_MIN_SCORE, DASHBOARD_MIN_CONFIDENCE, DASHBOARD_MAX_ROWS };
