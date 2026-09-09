@@ -12,7 +12,9 @@ module.exports = {
     MPIN: process.env.MPIN || "",
     TOTP_SECRET: process.env.TOTP_SECRET || "",
     GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || "",
-    SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "NIFTY500").trim().toUpperCase(),
+    // Architecture: whole NSE universe -> top 500 -> technical scan -> option top 100/top 20.
+    // Keep an explicit override available through SCANNER_UNIVERSE for compatibility.
+    SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "WHOLE_NSE").trim().toUpperCase(),
     BANKNIFTY_ENABLED: true,
     BANKNIFTY_SYMBOL: "BANKNIFTY",
     BANKNIFTY_FULL_CONSTITUENTS: true,
