@@ -24,16 +24,15 @@ async function enrichUnderlyingOI(rows=[]){return Promise.all((Array.isArray(row
 function merge(stocks,decisions){const m=new Map((Array.isArray(decisions)?decisions:[]).map(r=>[key(r),r]));return stocks.map(s=>m.has(key(s))?{...s,...m.get(key(s))}:s);}
 function chooseOne(decisions){return(Array.isArray(decisions)?decisions:[]).filter(r=>decision(r)==="TRADE").sort((a,b)=>(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,ONE_TRADE_LIMIT);}
 function rankOptionReady(rows){return[...(Array.isArray(rows)?rows:[])].filter(r=>hasOptionContract(r)&&optionLtpValid(r)).sort((a,b)=>(score(b)-score(a))||(confidence(b)-confidence(a))).slice(0,TOP_SCANNER_STOCKS);}
-// Dashboard policy: keep every score >=80, then fill remaining slots up to 5 with the highest-ranked valid directional rows.
+// Dashboard policy: keep every score >=80; only when none qualify, use the top 5 valid directional rows.
 function selectDashboardCandidates(rows){
  const valid=[...(Array.isArray(rows)?rows:[])].filter(Boolean).filter(r=>{
   const d=String(r?.direction??r?.finalDirection??"").trim().toUpperCase();
   return ["BULLISH","BEARISH","LONG","SHORT","BUY","SELL","CALL","PUT","CE","PE"].includes(d);
  }).sort((a,b)=>(score(b)-score(a))||(confidence(b)-confidence(a)));
  const above80=valid.filter(r=>score(r)>=DASHBOARD_MIN_SCORE);
- const selected=[...above80];
- for(const row of valid){if(selected.length>=DASHBOARD_FALLBACK_ROWS)break;if(!selected.includes(row))selected.push(row);}
- return selected.slice(0,DASHBOARD_FALLBACK_ROWS);
+ if(above80.length>0)return above80;
+ return valid.slice(0,DASHBOARD_FALLBACK_ROWS);
 }
 async function evaluateDashboardAccuracy(rows=[],broker){const evaluated=[];for(const row of Array.isArray(rows)?rows:[]){const record=createAccuracyRecord(row,new Date());try{const symbol=row?.instrumentKey||row?.symbol||row?.stock;if(!symbol)throw new Error("Missing instrument/symbol");const candles=await broker.getHistoricalData(symbol,"FIVE_MINUTE");evaluateAccuracy(record,candles,new Date());}catch(e){record.evaluationStatus=`LIVE_DATA_FAILED:${e?.message||e}`;record.targetSLReached="PENDING";record.evaluationDate=new Date().toISOString();console.error(`Accuracy live-data failed for ${key(row)}: ${e?.message||e}`);}evaluated.push({...row,...record});}return evaluated;}
 async function main(){const started=new Date();console.log("\n=== AI SMART SCANNER V13 ===");const brokerName=String(process.env.BROKER||"UPSTOX").trim().toUpperCase();setBroker(brokerName);const broker=getActiveBroker();await broker.login();try{await loadInstruments()}catch(e){console.log(`Instrument load warning: ${e?.message||e}`)}try{await loadSymbolMaster()}catch(e){console.log(`Symbol master warning: ${e?.message||e}`)}const universe=await getWholeNseUniverse(broker);console.log(`Universe source: ${universe.name} | WHOLE_NSE=${universe.symbols.length} | optionEligible=${universe.optionEligibleCount}`);const top500Ranking=await getTop500ByLiveVolume(universe.symbols,broker,500),top500=Array.isArray(top500Ranking?.top)?top500Ranking.top:[];if(!top500.length)throw new Error("Live Top 500 ranking returned no stocks");const top100Result=getTop100OptionStocks(top500,universe.optionEligibleSymbols,100),top100=Array.isArray(top100Result)?top100Result:[];if(!top100.length)throw new Error(`No option-eligible stocks found in Top 500 (top500=${top500.length})`);const top20=top100.slice(0,TOP_SCANNER_STOCKS),top20Symbols=new Set(top20.map(x=>String(x.symbol).trim().toUpperCase())),liveMetaBySymbol=new Map(top20.map(x=>[String(x.symbol).toUpperCase(),x]));
