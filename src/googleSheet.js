@@ -7,12 +7,9 @@ const {calculateOIMoodForStock}=require('./oiMood');
 const DASHBOARD_MIN_ROWS=5;
 const DASHBOARD_SCORE=Number(config.THRESHOLDS?.DASHBOARD_MIN_SCORE??config.DASHBOARD_MIN_SCORE??80);
 const MIN_CONFIDENCE=Number(config.THRESHOLDS?.MIN_CONFIDENCE??70);
-// Accuracy sheet has its own confidence gate. This must NOT inherit the
-// general scanner confidence threshold because the Accuracy sheet requires 80+.
 const ACCURACY_MIN_CONFIDENCE=80;
 const MIN_RR=Number(config.THRESHOLDS?.MIN_RR??1.5);
 const REQUIRED_OI_HEADERS=['oiMood','oiSentiment','oiDataAvailable','oiPriceChangePercent','oiChangePercent'];
-// Volume is informational only. It must NEVER be used as a dashboard rejection gate.
 const DASHBOARD_HEADERS=['stockPrice','symbol','optionType','entryPrice','bestStrike','optionLTP','confidence','target','stopLoss','oiMood','volume','avgVolume5','volumeRatio5','volumeConfirmed5'];
 const ACCURACY_HEADERS=['recordId','predictionTime','symbol','stockPrice','optionType','confidence','predictedEntry','target','stopLoss','currentPrice','targetSLReached','slReason','resultTime','resultPrice','accuracyPercent'];
 const GOOGLE_TIMEOUT=120000;
@@ -23,16 +20,8 @@ function magnitude(r={}){return Math.min(100,Math.abs(score(r)));}
 function direction(r={}){const d=String(r.direction??r.finalDirection??r.optionType??'').trim().toUpperCase();if(['CALL','CE','BUY','BULLISH','UP','LONG'].includes(d))return'BULLISH';if(['PUT','PE','SELL','BEARISH','DOWN','SHORT'].includes(d))return'BEARISH';return'SIDEWAYS';}
 function optionType(r={}){const v=String(r.optionType??r.optionSymbol??'').toUpperCase();if(v.includes('PUT')||v==='PE'||v.includes(' PE'))return'PE';if(v.includes('CALL')||v==='CE'||v.includes(' CE'))return'CE';return direction(r)==='BEARISH'?'PE':direction(r)==='BULLISH'?'CE':'';}
 function addOIMood(r={}){const x=r&&typeof r==='object'?r:{};let m=null;try{m=calculateOIMoodForStock(x);}catch(_){ }return{...x,oiMood:String(x.oiMood??x.OIMood??x.oi_mood??m?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(x.oiSentiment??x.OISentiment??m?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:m?.dataAvailable===true||x.oiDataAvailable===true,oiPriceChangePercent:n(x.oiPriceChangePercent??m?.priceChangePercent)??0,oiChangePercent:n(x.oiChangePercent??m?.oiChangePercent)??0};}
-// Dashboard selection: all >= threshold; otherwise fill to 5 from the highest-scoring valid directional rows.
-function selectDashboardRows(rows=[]){
- const list=(Array.isArray(rows)?rows:[]).filter(Boolean).map(addOIMood).filter(r=>direction(r)!=='SIDEWAYS');
- const ranked=[...list].sort((a,b)=>{const ds=magnitude(b)-magnitude(a);if(ds)return ds;return(n(b.confidence)??0)-(n(a.confidence)??0);});
- const above=ranked.filter(r=>magnitude(r)>=DASHBOARD_SCORE);
- if(above.length>=DASHBOARD_MIN_ROWS)return above;
- const selected=[...above];
- for(const row of ranked){if(selected.length>=DASHBOARD_MIN_ROWS)break;if(!selected.includes(row))selected.push(row);}
- return selected;
-}
+// Dashboard: maximum 5 rows. Prefer scores >=80; if none qualify, use the top 5 valid directional rows.
+function selectDashboardRows(rows=[]){const list=(Array.isArray(rows)?rows:[]).filter(Boolean).map(addOIMood).filter(r=>direction(r)!=='SIDEWAYS');const ranked=[...list].sort((a,b)=>{const ds=magnitude(b)-magnitude(a);if(ds)return ds;return(n(b.confidence)??0)-(n(a.confidence)??0);});const above=ranked.filter(r=>magnitude(r)>=DASHBOARD_SCORE);return(above.length?above:ranked).slice(0,DASHBOARD_MIN_ROWS);}
 function dashboardRow(r={}){return{stockPrice:n(r.stockPrice??r.price??r.livePrice??r.currentPrice??r.ltp),symbol:String(r.symbol??r.stock??r.tradingSymbol??'').trim(),optionType:optionType(r),entryPrice:n(r.stockEntry??r.underlyingEntry??r.marketEntry??r.entry??r.stockPrice??r.price??r.currentPrice),bestStrike:n(r.recommendedStrike??r.optionStrike??r.atmStrike),optionLTP:n(r.optionPremiumEntry??r.optionLTP??r.optionEntry),confidence:n(r.optionsConfidence??r.confidence),target:n(r.stockTarget1??r.target1??r.target),stopLoss:n(r.stockStopLoss??r.stopLoss),oiMood:String(r.oiMood??'UNKNOWN'),volume:n(r.volume),avgVolume5:n(r.avgVolume5),volumeRatio5:n(r.volumeRatio5),volumeConfirmed5:r.volumeConfirmed5===true};}
 function clean(v){if(v==null)return'';if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function toIST(v){if(!v)return'';const d=v instanceof Date?new Date(v.getTime()):new Date(v);if(Number.isNaN(d.getTime()))return String(v);const p=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(d).reduce((o,x)=>(o[x.type]=x.value,o),{});return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} IST`;}
