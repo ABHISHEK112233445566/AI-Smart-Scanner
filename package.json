@@ -7,7 +7,7 @@
     "start": "node src/scheduler.js",
     "dev": "node src/scheduler.js",
     "scan-once": "node src/app.js",
-    "test": "node --check src/app.js && node --check src/scheduler.js && node --check src/config.js && node --check src/optionsDecisionEngine.js && node --check src/googleSheet.js && node --check src/liveAccuracyEvaluator.js"
+    "test": "node --check src/app.js && node --check src/scheduler.js && node --check src/config.js && node --check src/optionsDecisionEngine.js && node --check src/googleSheet.js && node --check src/liveAccuracyEvaluator.js && node --check src/breakout.js && node --check src/breakoutCore.js && node --check src/chartPatterns.js && node --check src/patternContext.js && node --check src/rankingEngine.js"
   },
   "keywords": [
     "stock",
