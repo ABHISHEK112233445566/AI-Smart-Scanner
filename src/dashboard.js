@@ -1,20 +1,19 @@
 // ============================================================
-// AI SMART SCANNER - DASHBOARD ENGINE V5
+// AI SMART SCANNER - DASHBOARD ENGINE V6
 // ============================================================
-// Dashboard rule:
-// 1) Include ALL valid directional stocks with ABS(scannerScore) >= 80.
-// 2) If fewer than 5 such stocks exist, fill to 5 with the strongest
-//    remaining valid directional candidates.
-// 3) Never use rankingScore/finalScore/option premium as the primary
-//    dashboard score. scannerScore is authoritative for this sheet.
-// 4) Do not show AVOID / NO_DIRECTION candidates on the Dashboard.
-//    Option TRADE/WATCH status is informational and does not invalidate
-//    an otherwise valid scanner candidate.
+// Dashboard rules:
+// 1) Use scannerScore as the authoritative Dashboard score.
+// 2) Include every valid directional candidate with ABS(score) >= 5.
+// 3) This naturally includes every 80+ candidate.
+// 4) Exclude AVOID, REJECT and NO_DIRECTION candidates.
+// 5) Do not artificially limit the Dashboard to five rows.
+// 6) Option TRADE/WATCH status does not remove a valid stock setup.
 // ============================================================
 
-const DASHBOARD_MIN_SCORE = 80;
+const DASHBOARD_MIN_SCORE = 5;
+const DASHBOARD_STRONG_SCORE = 80;
 const DASHBOARD_MIN_CONFIDENCE = 0;
-const DASHBOARD_MAX_ROWS = 5;
+const DASHBOARD_MAX_ROWS = 0; // 0 means unlimited
 
 function safeNumber(value, fallback = 0) {
     const n = Number(value);
@@ -39,19 +38,12 @@ function getNestedValue(object, paths = []) {
 }
 
 function getISTDateParts(date = new Date()) {
-    const parts = new Intl.DateTimeFormat("en-GB", {
+    return Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
         timeZone: "Asia/Kolkata",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
         hourCycle: "h23"
-    }).formatToParts(date);
-    const values = {};
-    for (const part of parts) if (part.type !== "literal") values[part.type] = part.value;
-    return values;
+    }).formatToParts(date).filter(p => p.type !== "literal").map(p => [p.type, p.value]));
 }
 
 function getISTTimestamp(date = new Date()) {
@@ -70,13 +62,12 @@ function getISTWeekday(date = new Date()) {
 }
 
 function getOptionType(option) {
-    if (!option || typeof option !== "object") return "";
-    const direct = String(option.optionType ?? option.option_type ?? option.finalDirection ?? option.direction ?? "").trim().toUpperCase();
-    if (["CALL", "CE", "BULLISH"].includes(direct)) return "CALL";
-    if (["PUT", "PE", "BEARISH"].includes(direct)) return "PUT";
-    const symbol = String(option.optionSymbol ?? option.option_symbol ?? option.tradingSymbol ?? option.trading_symbol ?? "").trim().toUpperCase();
-    if (/\bCE\b$/.test(symbol) || symbol.endsWith("CE")) return "CALL";
-    if (/\bPE\b$/.test(symbol) || symbol.endsWith("PE")) return "PUT";
+    const direct = String(option?.optionType ?? option?.option_type ?? option?.finalDirection ?? option?.direction ?? option?.stockDirection ?? "").trim().toUpperCase();
+    if (["CALL", "CE", "BULLISH", "LONG", "BUY"].includes(direct)) return "CALL";
+    if (["PUT", "PE", "BEARISH", "SHORT", "SELL"].includes(direct)) return "PUT";
+    const symbol = String(option?.optionSymbol ?? option?.option_symbol ?? option?.tradingSymbol ?? option?.trading_symbol ?? "").trim().toUpperCase();
+    if (symbol.endsWith("CE")) return "CALL";
+    if (symbol.endsWith("PE")) return "PUT";
     return "";
 }
 
@@ -88,17 +79,12 @@ function getConfidence(option) {
     return safeNumber(getNestedValue(option, ["optionsConfidence", "optionConfidence", "confidence", "score.confidence", "decision.confidence"]));
 }
 
-// scannerScore is authoritative for Dashboard selection.
 function getScore(option) {
     return safeNumber(getNestedValue(option, ["scannerScore", "score"]));
 }
 
 function scoreStrength(option) {
     return Math.abs(getScore(option));
-}
-
-function getStockPrice(option) {
-    return safeNumber(getNestedValue(option, ["price", "stockPrice", "underlyingPrice"]));
 }
 
 function getStockEntry(option) {
@@ -136,13 +122,16 @@ function getStockName(option) {
 }
 
 function getDashboardUniverse(results) {
-    if (Array.isArray(results?.allResults)) return results.allResults;
-    return Array.isArray(results) ? results : [];
+    return Array.isArray(results?.allResults) ? results.allResults : Array.isArray(results) ? results : [];
 }
 
 function isDirectional(option) {
-    const d = String(option?.direction ?? option?.stockDirection ?? option?.technicalDirection ?? "").trim().toUpperCase();
-    return ["BULLISH", "BEARISH", "LONG", "SHORT", "BUY", "SELL", "CALL", "PUT", "CE", "PE"].includes(d);
+    const values = [
+        option?.direction, option?.stockDirection, option?.technicalDirection,
+        option?.patternDirection, option?.finalDirection, option?.optionType,
+        option?.cePe, option?.side
+    ].map(value => String(value ?? "").trim().toUpperCase());
+    return values.some(value => ["BULLISH", "BEARISH", "LONG", "SHORT", "BUY", "SELL", "CALL", "PUT", "CE", "PE"].includes(value));
 }
 
 function isAvoid(option) {
@@ -153,16 +142,15 @@ function isAvoid(option) {
 }
 
 function isScoreQualified(option) {
-    return isDirectional(option) && !isAvoid(option) && scoreStrength(option) >= DASHBOARD_MIN_SCORE;
+    return isDashboardCandidate(option) && scoreStrength(option) >= DASHBOARD_STRONG_SCORE;
 }
 
 function isDashboardCandidate(option) {
     if (!option || typeof option !== "object") return false;
-    if (!isDirectional(option)) return false;
-    if (isAvoid(option)) return false;
+    if (!isDirectional(option) || isAvoid(option)) return false;
     const name = getStockName(option);
     const score = getScore(option);
-    return Boolean(name) && Number.isFinite(score) && score !== 0;
+    return Boolean(name) && Number.isFinite(score) && score !== 0 && scoreStrength(option) >= DASHBOARD_MIN_SCORE;
 }
 
 function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
@@ -183,22 +171,16 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
     const watchCount = decisions.filter(o => getDecision(o) === "WATCH").length;
     const rejectCount = decisions.filter(o => getDecision(o) === "REJECT").length;
 
-    // Dashboard is intentionally independent of option decision status.
-    // First take ALL valid 80+ scanner-score candidates. If fewer than five
-    // exist, fill the remaining slots with the strongest valid candidates.
-    const validDirectional = scanResults.filter(isDashboardCandidate);
-    const ranked = [...validDirectional].sort((a, b) =>
+    const ranked = [...scanResults.filter(isDashboardCandidate)].sort((a, b) =>
         (scoreStrength(b) - scoreStrength(a)) ||
         (getConfidence(b) - getConfidence(a)) ||
-        (getStockName(a).localeCompare(getStockName(b)))
+        getStockName(a).localeCompare(getStockName(b))
     );
     const strong = ranked.filter(isScoreQualified);
-    const selected = strong.length >= DASHBOARD_MAX_ROWS
-        ? strong
-        : ranked.slice(0, DASHBOARD_MAX_ROWS);
+    const selected = DASHBOARD_MAX_ROWS > 0 ? ranked.slice(0, DASHBOARD_MAX_ROWS) : ranked;
 
     const top10 = selected.map((option, index) => {
-        const direction = String(option.direction ?? option.stockDirection ?? "").toUpperCase();
+        const direction = String(option.direction ?? option.stockDirection ?? option.technicalDirection ?? option.patternDirection ?? option.finalDirection ?? option.optionType ?? option.cePe ?? "").toUpperCase();
         const type = ["BEARISH", "SHORT", "SELL", "PUT", "PE"].includes(direction) ? "PE" : "CE";
         const target = getStockTarget2(option) > 0 ? getStockTarget2(option) : getStockTarget1(option);
         return {
@@ -231,6 +213,7 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         "Successful Scans": successfulScans,
         "Failed Scans": failedScans,
         "Strong Setups (±80+)": strong.length,
+        "Minimum Qualified Score": DASHBOARD_MIN_SCORE,
         "Market Mood": marketMood,
         CALL: callCount,
         PUT: putCount,
@@ -263,9 +246,19 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         watchCount,
         rejectCount,
         dashboardMinScore: DASHBOARD_MIN_SCORE,
+        dashboardStrongScore: DASHBOARD_STRONG_SCORE,
         dashboardMinConfidence: DASHBOARD_MIN_CONFIDENCE,
-        dashboardFilter: "ALL valid directional stocks with ABS(scannerScore) >= 80; if fewer than 5 qualify, fill to 5 with strongest valid candidates; AVOID/NO_DIRECTION excluded"
+        dashboardMaxRows: DASHBOARD_MAX_ROWS,
+        dashboardFilter: "ALL valid directional stocks with ABS(scannerScore) >= 5; this includes every ±80+ stock; AVOID/REJECT/NO_DIRECTION excluded"
     };
 }
 
-module.exports = { buildDashboard, isScoreQualified, DASHBOARD_MIN_SCORE, DASHBOARD_MIN_CONFIDENCE, DASHBOARD_MAX_ROWS };
+module.exports = {
+    buildDashboard,
+    isScoreQualified,
+    isDashboardCandidate,
+    DASHBOARD_MIN_SCORE,
+    DASHBOARD_STRONG_SCORE,
+    DASHBOARD_MIN_CONFIDENCE,
+    DASHBOARD_MAX_ROWS
+};
