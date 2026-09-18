@@ -54,7 +54,7 @@ async function getOptionLiquidityConfirmation(row,broker){
   }catch(error){return{confirmed:false,reason:"LIVE_OPTION_LIQUIDITY_ERROR:"+String(error?.message||error)};}
 }
 async function filterOptionEligibleStocks(topRows,broker,limit=TOP_OPTION_STOCKS){
-  const input=(Array.isArray(topRows)?topRows:[]).slice(0,OPTION_LIQUIDITY_CANDIDATE_POOL);
+  const input=(Array.isArray(topRows)?topRows:[]).filter(row=>row?.volumeConfirmed5===true&&row?.qualified===true).slice(0,OPTION_LIQUIDITY_CANDIDATE_POOL);
   const confirmed=[];
   const target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit));
   const concurrency=8;
