@@ -11,17 +11,17 @@ const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getWholeNseUniverse}=require("./marketUniverse");
 const {getTop500ByLiveVolume,getTop100OptionStocks,filterOptionEligibleStocks}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
-const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=50,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
+const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=50,STOCK_SCAN_CONCURRENCY=4,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
 const key=r=>String(r?.stock??r?.symbol??r?.name??"").trim().toUpperCase();
 const decision=r=>String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
 // Dashboard/quality ranking is based on the scanner's actual score. Use magnitude
 // so strong bearish setups (for example -80) are treated the same as +80.
-const score=r=>Math.abs(num(r?.scannerScore??r?.score));
+const score=r=>Math.abs(num(r?.finalScore??r?.rankingScore??r?.scannerScore??r?.score));
 const confidence=r=>num(r?.optionsConfidence??r?.confidence);
 const hasOptionContract=r=>Boolean(r?.optionInstrumentKey||r?.optionSymbol||r?.recommendedStrike||r?.optionType);
 const optionLtpValid=r=>num(r?.optionPremiumEntry)>0;
-async function scanInBatches(symbols){const all=[];for(let i=0;i<symbols.length;i+=STOCK_BATCH_SIZE){const batch=symbols.slice(i,i+STOCK_BATCH_SIZE);console.log(`STOCK BATCH ${i+1}-${Math.min(i+STOCK_BATCH_SIZE,symbols.length)}`);try{const result=await scanStocks(batch,{runMtf:false,concurrency:12});const rows=Array.isArray(result?.allResults)?result.allResults:(Array.isArray(result)?result:[]);all.push(...rows);}catch(e){console.error(`Batch failed: ${e?.message||e}`);for(const s of batch)all.push({stock:s,symbol:s,qualified:false,rejectionReason:"BATCH_ERROR"});}}const map=new Map();for(const r of all)map.set(key(r),r);const unique=[...map.values()];return{allResults:unique,qualified:unique.filter(r=>r?.qualified===true),rejected:unique.filter(r=>r?.qualified===false)};}
+async function scanInBatches(symbols){const all=[];for(let i=0;i<symbols.length;i+=STOCK_BATCH_SIZE){const batch=symbols.slice(i,i+STOCK_BATCH_SIZE);console.log(`STOCK BATCH ${i+1}-${Math.min(i+STOCK_BATCH_SIZE,symbols.length)}`);try{const result=await scanStocks(batch,{runMtf:false,concurrency:STOCK_SCAN_CONCURRENCY});const rows=Array.isArray(result?.allResults)?result.allResults:(Array.isArray(result)?result:[]);all.push(...rows);}catch(e){console.error(`Batch failed: ${e?.message||e}`);for(const s of batch)all.push({stock:s,symbol:s,qualified:false,rejectionReason:"BATCH_ERROR"});}}const map=new Map();for(const r of all)map.set(key(r),r);const unique=[...map.values()];return{allResults:unique,qualified:unique.filter(r=>r?.qualified===true),rejected:unique.filter(r=>r?.qualified===false)};}
 async function enrichUnderlyingOI(rows=[]){return Promise.all((Array.isArray(rows)?rows:[]).map(async r=>{try{const oi=await getUnderlyingOIMood({instrumentKey:r.instrumentKey,currentPrice:num(r.currentPrice??r.price),previousPrice:num(r.previousPrice??r.prevPrice??r.previousClose)});return{...r,oiMood:oi.mood||"UNKNOWN",oiSentiment:oi.sentiment||"UNKNOWN",oiDataAvailable:oi.dataAvailable===true,oiPriceChangePercent:num(oi.priceChangePercent),oiChangePercent:num(oi.oiChangePercent),oi:num(oi.oi),previousOI:num(oi.previousOI),underlyingOISource:oi.source||"",underlyingOIReason:oi.reason||""};}catch(e){return{...r,oiMood:"UNKNOWN",oiSentiment:"UNKNOWN",oiDataAvailable:false,oiPriceChangePercent:0,oiChangePercent:0,underlyingOIReason:`ENRICHMENT_FAILED:${e?.message||e}`};}}));}
 function merge(stocks,decisions){const m=new Map((Array.isArray(decisions)?decisions:[]).map(r=>[key(r),r]));return stocks.map(s=>m.has(key(s))?{...s,...m.get(key(s))}:s);}
 function chooseOne(decisions){return(Array.isArray(decisions)?decisions:[]).filter(r=>decision(r)==="TRADE").sort((a,b)=>(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,ONE_TRADE_LIMIT);}
