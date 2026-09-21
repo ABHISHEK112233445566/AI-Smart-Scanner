@@ -155,7 +155,7 @@ async function getOptionLiquidityConfirmation(row,broker){
 }
 
 async function filterOptionEligibleStocks(topRows,broker,limit=TOP_OPTION_STOCKS){
- const input=(Array.isArray(topRows)?topRows:[]).filter(row=>row?.volumeConfirmed5===true&&row?.qualified===true).slice(0,OPTION_LIQUIDITY_CANDIDATE_POOL),confirmed=[],target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit)),concurrency=8;
+ const input=(Array.isArray(topRows)?topRows:[]).filter(row=>row?.qualified===true).slice(0,OPTION_LIQUIDITY_CANDIDATE_POOL),confirmed=[],target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit)),concurrency=8;
  for(let i=0;i<input.length;i+=concurrency){
    const batch=input.slice(i,i+concurrency),checked=await Promise.all(batch.map(async row=>({row,liquidity:await getOptionLiquidityConfirmation(row,broker)})));
    for(const x of checked){if(x.liquidity.confirmed)confirmed.push({...x.row,optionEligible:true,optionLiquidityConfirmed:true,optionLiquidityReason:x.liquidity.reason,optionLiquidityVolume:x.liquidity.optionVolume,optionLiquidityOI:x.liquidity.optionOI,optionLiquiditySide:x.liquidity.selectedSide,optionLiquidityLTP:x.liquidity.optionLTP,optionLiquidityContract:x.liquidity.optionInstrumentKey,optionLiquidityExpiry:x.liquidity.optionExpiry});if(confirmed.length>=target)break;}
