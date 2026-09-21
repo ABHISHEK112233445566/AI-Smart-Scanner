@@ -3,9 +3,7 @@
 // ============================================================
 // Scanner score is the stock's primary directional technical score.
 // +100 = strongest bullish, 0 = neutral, -100 = strongest bearish.
-// Dashboard/Accuracy use ABS(scannerScore) for threshold checks.
-// Ranking/options may add secondary quality information, but must NOT
-// overwrite scannerScore.
+// Intraday volume uses session-pace confirmation when available.
 // ============================================================
 
 const { calculateTradeSetup } = require("./tradeSetup");
@@ -61,13 +59,26 @@ function getOBVDirection(indicators) {
     return "UNKNOWN";
 }
 
+function volumeConfirmed(indicators = {}) {
+    // IMPORTANT:
+    // Daily candles are incomplete during market hours. Raw daily
+    // volume / full-day 5-day average therefore looks artificially low.
+    // Prefer the session-pace ratio calculated by indicators.js.
+    if (indicators.volumeConfirmed5 === true) return true;
+    if (String(indicators.volumeConfirmed5 ?? "").trim().toUpperCase() === "TRUE") return true;
+    const pace = num(indicators.volumePaceRatio5, NaN);
+    if (Number.isFinite(pace)) return pace >= 1;
+    const rvol = num(indicators.rvol, NaN);
+    return Number.isFinite(rvol) && rvol >= 1.2;
+}
+
 function bullishConditions(indicators = {}, price = 0) {
     const ema20 = num(indicators.ema20), ema50 = num(indicators.ema50);
     const ema100 = num(indicators.ema100), ema200 = num(indicators.ema200);
     const vwap = num(indicators.vwap), rsi = num(indicators.rsi);
     const macd = getMACD(indicators), adx = getADX(indicators);
     const st = getSupertrend(indicators), obv = getOBVDirection(indicators);
-    const bb = getBollinger(indicators), rvol = num(indicators.rvol);
+    const bb = getBollinger(indicators), volConfirmed = volumeConfirmed(indicators);
     return [
         ema20 > 0 && price > ema20,
         ema50 > 0 && price > ema50,
@@ -80,8 +91,8 @@ function bullishConditions(indicators = {}, price = 0) {
         macd.value > macd.signal,
         macd.histogram > 0,
         bb > 0 && price > bb,
-        rvol >= 1.2,
-        indicators.volumeSpike === true,
+        volConfirmed,
+        volConfirmed,
         obv === "BULLISH",
         adx.value > 25,
         adx.pdi > adx.mdi
@@ -94,7 +105,7 @@ function bearishConditions(indicators = {}, price = 0) {
     const vwap = num(indicators.vwap), rsi = num(indicators.rsi);
     const macd = getMACD(indicators), adx = getADX(indicators);
     const st = getSupertrend(indicators), obv = getOBVDirection(indicators);
-    const bb = getBollinger(indicators), rvol = num(indicators.rvol);
+    const bb = getBollinger(indicators), volConfirmed = volumeConfirmed(indicators);
     return [
         ema20 > 0 && price < ema20,
         ema50 > 0 && price < ema50,
@@ -107,8 +118,8 @@ function bearishConditions(indicators = {}, price = 0) {
         macd.value < macd.signal,
         macd.histogram < 0,
         bb > 0 && price < bb,
-        rvol >= 1.2,
-        indicators.volumeSpike === true,
+        volConfirmed,
+        volConfirmed,
         obv === "BEARISH",
         adx.value > 25,
         adx.mdi > adx.pdi
@@ -198,8 +209,7 @@ function getRating(score, direction = "SIDEWAYS") {
 function getQualityStatus(scoreData, data) {
     const d = obj(data), s = obj(scoreData), magnitude = Math.abs(num(s.scannerScore ?? s.score));
     const adx = num(d.adx?.adx ?? d.adxValue);
-    const rvol = num(d.rvol);
-    const volumeConfirmed = d.volumeConfirmed === true || d.volumeSpike === true || rvol >= 1.2;
+    const volumeOk = volumeConfirmed(d);
     const trendConfirmed = s.direction !== "SIDEWAYS";
     const rsi = num(d.rsi);
     const momentumConfirmed = (s.direction === "BULLISH" && rsi >= 50) || (s.direction === "BEARISH" && rsi <= 50);
@@ -208,7 +218,7 @@ function getQualityStatus(scoreData, data) {
         scannerQuality: magnitude >= QUALIFY_SCORE,
         trendConfirmed,
         momentumConfirmed,
-        volumeConfirmed,
+        volumeConfirmed: volumeOk,
         breakoutConfirmed,
         strongTrend: adx >= 20,
         tradeQuality: magnitude >= QUALIFY_SCORE && trendConfirmed && momentumConfirmed
@@ -251,7 +261,6 @@ function calculateScore(data) {
     return {
         ...data,
         ...safeTrade,
-        // These are authoritative and intentionally assigned LAST.
         score: scoreData.scannerScore,
         scannerScore: scoreData.scannerScore,
         aiScore: scoreData.scannerScore,
