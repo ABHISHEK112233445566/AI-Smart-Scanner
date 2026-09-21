@@ -537,14 +537,16 @@ async function getInstrumentKey(
 
 async function getHistoricalData(
     symbol,
-    interval = "ONE_DAY"
+    interval = "ONE_DAY",
+    options = {}
 ) {
 
     return await forwardAsync(
         "getHistoricalData",
         [
             symbol,
-            interval
+            interval,
+            options
         ]
     );
 
