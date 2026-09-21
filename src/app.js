@@ -11,7 +11,7 @@ const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getWholeNseUniverse}=require("./marketUniverse");
 const {getTop500ByLiveVolume,getTop100OptionStocks,filterOptionEligibleStocks}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
-const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=10,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
+const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=50,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
 const key=r=>String(r?.stock??r?.symbol??r?.name??"").trim().toUpperCase();
 const decision=r=>String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
