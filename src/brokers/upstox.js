@@ -1,4 +1,4 @@
-const axios=require("axios");const zlib=require("zlib");const BASE_URL="https://api.upstox.com",IST="Asia/Kolkata";const REQUEST_MIN_INTERVAL_MS=Math.max(200,Number(process.env.UPSTOX_REQUEST_MIN_INTERVAL_MS||250));
+const axios=require("axios");const zlib=require("zlib");const BASE_URL="https://api.upstox.com",IST="Asia/Kolkata";const REQUEST_MIN_INTERVAL_MS=Math.max(350,Number(process.env.UPSTOX_REQUEST_MIN_INTERVAL_MS||400));
 const MAX_429_RETRIES=Math.max(1,Number(process.env.UPSTOX_MAX_429_RETRIES||5));
 let lastApiRequestAt=0;
 let apiQueue=Promise.resolve();
