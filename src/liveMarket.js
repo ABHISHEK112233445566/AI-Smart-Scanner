@@ -1,3 +1,4 @@
+const {upstoxApiGet}=require("./brokers/upstox");
 const axios=require("axios");
 const UPSTOX_BASE="https://api.upstox.com";
 const MAX_TOP_STOCKS=20;
@@ -16,7 +17,7 @@ function normalizeQuoteMap(data){const out=[];for(const[key,value]of Object.entr
 async function upstoxFullQuotes(instrumentKeys){
  const token=process.env.UPSTOX_ACCESS_TOKEN;if(!token)throw new Error("UPSTOX_ACCESS_TOKEN is missing");
  const keys=[...new Set((instrumentKeys||[]).filter(Boolean))];if(!keys.length)return[];
- const response=await axios.get(`${UPSTOX_BASE}/v2/market-quote/quotes`,{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:`Bearer ${token}`},timeout:15000});
+ const response=await upstoxApiGet(`${UPSTOX_BASE}/v2/market-quote/quotes`,{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:`Bearer ${token}`},timeout:15000},"bulk market quotes");
  return normalizeQuoteMap(response?.data?.data);
 }
 
