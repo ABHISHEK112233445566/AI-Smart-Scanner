@@ -65,9 +65,9 @@ async function evaluateDashboardAccuracy(rows=[],broker){const evaluated=[];for(
 async function main(){const started=new Date();console.log("\n=== AI SMART SCANNER V13 ===");const brokerName=String(process.env.BROKER||"UPSTOX").trim().toUpperCase();setBroker(brokerName);const broker=getActiveBroker();await broker.login();try{await loadInstruments()}catch(e){console.log(`Instrument load warning: ${e?.message||e}`)}try{await loadSymbolMaster()}catch(e){console.log(`Symbol master warning: ${e?.message||e}`)}const universe=await getWholeNseUniverse(broker);console.log(`Universe source: ${universe.name} | WHOLE_NSE=${universe.symbols.length} | optionEligible=${universe.optionEligibleCount}`);const top500Ranking=await getTop500ByLiveVolume(universe.symbols,broker,500),top500=Array.isArray(top500Ranking?.top)?top500Ranking.top:[];if(!top500.length)throw new Error("Live Top 500 ranking returned no stocks");
 
 // EQUITY PATH: unchanged. Equity continues to use the existing live Top-500 -> Top-100 -> Top-20 path.
-const top100=getTop100OptionStocks(top500,universe.optionEligibleSymbols,100);if(!top100.length)throw new Error(\`No option-eligible stocks found in Top 500 (top500=\${top500.length}, contractEligible=0)\`);
+const top100=getTop100OptionStocks(top500,universe.optionEligibleSymbols,100);if(!top100.length)throw new Error(`No option-eligible stocks found in Top 500 (top500=${}top500.length}, contractEligible=0)`);
 const top20=top100.slice(0,TOP_SCANNER_STOCKS);const scanUniverse=top20.map(x=>x.symbol).filter(Boolean);
-console.log(\`EQUITY PATH: live Top-500=\${top500.length} | existing Top-100=\${top100.length} | existing Top-20=\${scanUniverse.length}\`);
+console.log(`EQUITY PATH: live Top-500=${}top500.length} | existing Top-100=${}top100.length} | existing Top-20=${}scanUniverse.length}`);
 const top20Scan=await scanInBatches(scanUniverse);const equityScannerData=top20Scan.allResults;
 
 // OPTION PATH: fixed 100-stock option-buying universe. This is deliberately independent of the equity universe.
@@ -76,7 +76,7 @@ const optionLiveRanking=await getTop500ByLiveVolume(optionUniverseSymbols,broker
 const optionLiveRows=Array.isArray(optionLiveRanking?.top)?optionLiveRanking.top:[];
 if(!optionLiveRows.length)throw new Error("Option universe returned no live market data");
 const optionScanUniverse=optionLiveRows.map(x=>x.symbol).filter(Boolean);
-console.log(\`OPTION PATH: fixed universe=\${optionUniverseSymbols.length} | live quotes=\${optionLiveRows.length} | option scan=\${optionScanUniverse.length}\`);
+console.log(`OPTION PATH: fixed universe=${}optionUniverseSymbols.length} | live quotes=${}optionLiveRows.length} | option scan=${}optionScanUniverse.length}`);
 const optionScan=await scanInBatches(optionScanUniverse);
 const optionUniverseRows=optionScan.allResults;
 const optionLiveMetaBySymbol=new Map(optionLiveRows.map(x=>[String(x.symbol).toUpperCase(),x]));
