@@ -45,12 +45,16 @@ function getOBVDirection(indicators) {
 }
 
 function volumeConfirmed(indicators = {}) {
-    if (indicators.volumeConfirmed5 === true) return true;
-    if (String(indicators.volumeConfirmed5 ?? "").trim().toUpperCase() === "TRUE") return true;
+    // Never trust a stale/derived boolean when the underlying volume ratios exist.
+    // A displayed TRUE with RVOL 0.07 or pace ratio 0.09 is not confirmation.
     const pace = num(indicators.volumePaceRatio5, NaN);
     if (Number.isFinite(pace)) return pace >= 1;
+    const ratio = num(indicators.volumeRatio5, NaN);
+    if (Number.isFinite(ratio)) return ratio >= 1;
     const rvol = num(indicators.rvol, NaN);
-    return Number.isFinite(rvol) && rvol >= 1.2;
+    if (Number.isFinite(rvol)) return rvol >= 1.2;
+    if (indicators.volumeConfirmed5 === true) return true;
+    return String(indicators.volumeConfirmed5 ?? "").trim().toUpperCase() === "TRUE";
 }
 
 function bullishConditions(indicators = {}, price = 0) {
