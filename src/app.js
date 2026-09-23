@@ -13,6 +13,19 @@ const {getTop500ByLiveVolume,getTop20ByLiveVolume,getTop100OptionStocks,filterOp
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=25,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
 
+const OPTION_BUYING_UNIVERSE=[
+"RELIANCE","HDFCBANK","ICICIBANK","SBIN","AXISBANK","KOTAKBANK","BHARTIARTL","TCS","INFY","HCLTECH",
+"WIPRO","LT","M&M","MARUTI","TATAMOTORS","SUNPHARMA","ADANIENT","ADANIPORTS","TATASTEEL","HINDALCO",
+"JSWSTEEL","BAJFINANCE","BAJAJFINSV","SHRIRAMFIN","INDUSINDBK","BANKBARODA","PNB","CANBK","NTPC","POWERGRID",
+"ONGC","BPCL","BEL","HAL","TATAPOWER","TATACONSUM","TITAN","TRENT","ULTRACEMCO","EICHERMOT",
+"TECHM","LTIM","COFORGE","PERSISTENT","MARICO","HINDUNILVR","ITC","NESTLEIND","ASIANPAINT","TATACHEM",
+"CIPLA","DRREDDY","DIVISLAB","LUPIN","TORNTPHARM","APOLLOHOSP","MUTHOOTFIN","MANAPPURAM","PFC","RECLTD",
+"REC","SAIL","COALINDIA","VEDL","NMDC","NATIONALUM","GAIL","IOC","HINDPETRO","IGL",
+"TVSMOTOR","BAJAJ-AUTO","HEROMOTOCO","ASHOKLEY","DLF","ABB","SIEMENS","BHEL","CUMMINSIND","POLYCAB",
+"DIXON","BHARATFORG","EXIDEIND","MOTHERSON","AARTIIND","BIOCON","AUROPHARMA","GLENMARK","LAURUSLABS","GRANULES",
+"JINDALSTEL","MGL","INDUSTOWER","IRCTC","INDIGO","IEX","CHOLAFIN","FEDERALBNK","RBLBANK","PVRINOX"
+];
+
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
 const key=r=>String(r?.stock??r?.symbol??r?.name??"").trim().toUpperCase();
 const decision=r=>String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
@@ -65,26 +78,30 @@ const equityScan=await scanInBatches(equityScanUniverse);
 const equityScannerData=equityScan.allResults;
 
 // SEPARATE OPTION PATH:
-// WHOLE NSE -> live Top-500 -> F&O-eligible Top-100 -> LIVE OPTION PREFLIGHT -> Top-20.
-const top100=getTop100OptionStocks(top500,universe.optionEligibleSymbols,100);
-if(!top100.length)throw new Error(`No option-eligible stocks found in Top 500 (top500=${top500.length}, contractEligible=${universe.optionEligibleCount||0})`);
-const optionPreflight=await filterOptionEligibleStocks(top100,broker,100);
-if(!optionPreflight.length)throw new Error(`No live-tradable option candidates found before Top 20 (top500=${top500.length}, top100=${top100.length})`);
+// Fixed 100-stock option-buying universe -> live ranking -> LIVE OPTION PREFLIGHT -> Top-20.
+// This path is deliberately independent of the equity universe.
+const optionUniverseSymbols=[...new Set(OPTION_BUYING_UNIVERSE.map(s=>String(s).trim().toUpperCase()).filter(Boolean))];
+const optionLiveRanking=await getTop500ByLiveVolume(optionUniverseSymbols,broker,optionUniverseSymbols.length);
+const optionLiveRows=Array.isArray(optionLiveRanking?.top)?optionLiveRanking.top:[];
+if(!optionLiveRows.length)throw new Error("Option universe returned no live market data");
+console.log(`OPTION UNIVERSE: fixed=${optionUniverseSymbols.length} | live quotes=${optionLiveRows.length}`);
+const optionPreflight=await filterOptionEligibleStocks(optionLiveRows,broker,TOP_SCANNER_STOCKS);
+if(!optionPreflight.length)throw new Error(`No live-tradable option candidates found in fixed 100-stock universe (universe=${optionUniverseSymbols.length})`);
 const top20=optionPreflight.slice(0,TOP_SCANNER_STOCKS);
 const optionScanUniverse=top20.map(x=>x.symbol).filter(Boolean);
-console.log(`OPTION PIPELINE: live Top-500=${top500.length} | F&O Top-100=${top100.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`);
+console.log(`OPTION PIPELINE: fixed-100=${optionUniverseSymbols.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`);
 const optionUniverseScan=await scanInBatches(optionScanUniverse);
 const optionUniverseRows=optionUniverseScan.allResults;
+const optionLiveMetaBySymbol=new Map(optionLiveRows.map(x=>[String(x.symbol).toUpperCase(),x]));
 const optionRowsWithLiveMeta=optionUniverseRows.map(r=>{
   const pre=optionPreflight.find(x=>key(x)===key(r));
-  // Preflight eligibility only means an option contract exists/liquidity was found.
-  // Final option eligibility is decided AFTER the stock scanner qualifies the setup.
-  return pre?{...r,...pre,optionEligible:r.qualified===true&&r.volumeConfirmed5===true}:r;
+  const live=optionLiveMetaBySymbol.get(key(r))||{};
+  return pre?{...r,...live,...pre,optionEligible:r.qualified===true&&r.volumeConfirmed5===true}:r;
 });
 const enriched=await enrichUnderlyingOI(optionRowsWithLiveMeta);
 let decisions=[];try{decisions=await calculateOptionsDecisions(enriched)}catch(e){console.error(`Options engine failed: ${e?.message||e}`)}const merged=merge(enriched,decisions).map(r=>({...r,optionEligible:r.qualified===true&&['TRADE','WATCH'].includes(decision(r))&&hasOptionContract(r)&&optionLtpValid(r)})),optionReady=rankOptionReady(merged),dashboardRows=selectDashboardCandidates(merged),finalTrade=chooseOne(optionReady);console.log(`OPTION INTERNAL SCAN: ${enriched.length} preflight-valid Top-20 rows`);console.log(`DASHBOARD SELECTION: ${dashboardRows.length} rows | >=${DASHBOARD_MIN_SCORE} magnitude: ${dashboardRows.filter(r=>score(r)>=DASHBOARD_MIN_SCORE).length}`);const scannerData=merged.map(r=>{const setupEntry=num(r.stockEntry??r.entry);const finalOptionEligible=r.qualified===true&&r.volumeConfirmed5===true&&['TRADE','WATCH'].includes(decision(r))&&hasOptionContract(r)&&optionLtpValid(r);return{...r,optionEligible:finalOptionEligible,entry:setupEntry,stockEntry:setupEntry,underlyingEntry:setupEntry,marketEntry:setupEntry,triggerPrice:setupEntry,stockStopLoss:num(r.stockStopLoss??r.stopLoss),stockTarget1:num(r.stockTarget1??r.target1),stockTarget2:num(r.stockTarget2??r.target2)}});const scannerMap=new Map();
 for(const r of equityScannerData)scannerMap.set(key(r),r);
 for(const r of scannerData)scannerMap.set(key(r),{...scannerMap.get(key(r)),...r});
 const combinedScannerData=[...scannerMap.values()];
-const accuracyInput=dashboardRows.map(r=>{const full=merged.find(s=>key(s)===key(r));return full?{...full,...r}:r;});const accuracyData=await evaluateDashboardAccuracy(accuracyInput,broker);let core=false,strategy=false;try{await updateGoogleSheet({scannerData:combinedScannerData,dashboardData:dashboardRows,accuracyData});core=true}catch(e){console.error(`Sheet update failed: ${e?.message||e}`)}try{const liveAccuracy=await evaluateLiveAccuracy(broker);console.log(`📡 LIVE ACCURACY REFRESH: found=${liveAccuracy.found} evaluated=${liveAccuracy.evaluated} updated=${liveAccuracy.updated} skipped=${liveAccuracy.skipped}`);}catch(e){console.error(`Live Accuracy refresh failed: ${e?.message||e}`)}try{await updateStrategySheets(combinedScannerData,decisions,equityScannerData);strategy=true}catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}try{await buildDashboard(enriched,decisions,universe.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};const elapsed=((Date.now()-started.getTime())/1000).toFixed(1),status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:combinedScannerData.length,successfulScans:combinedScannerData.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:combinedScannerData.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}return{universe,top500,equityTop20:equityScanUniverse,top100OptionStocks:top100,optionPreflight,top20,optionUniverseRows:optionUniverseRows,optionReadyTop20:optionReady,scannerData:combinedScannerData,completeScannerData:equityScannerData,optionScannerData:enriched,optionDecisions:decisions,finalDashboard:dashboardRows,finalTrade,scannerStatus:status};}
+const accuracyInput=dashboardRows.map(r=>{const full=merged.find(s=>key(s)===key(r));return full?{...full,...r}:r;});const accuracyData=await evaluateDashboardAccuracy(accuracyInput,broker);let core=false,strategy=false;try{await updateGoogleSheet({scannerData:combinedScannerData,dashboardData:dashboardRows,accuracyData});core=true}catch(e){console.error(`Sheet update failed: ${e?.message||e}`)}try{const liveAccuracy=await evaluateLiveAccuracy(broker);console.log(`📡 LIVE ACCURACY REFRESH: found=${liveAccuracy.found} evaluated=${liveAccuracy.evaluated} updated=${liveAccuracy.updated} skipped=${liveAccuracy.skipped}`);}catch(e){console.error(`Live Accuracy refresh failed: ${e?.message||e}`)}try{await updateStrategySheets(combinedScannerData,decisions,equityScannerData);strategy=true}catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}try{await buildDashboard(enriched,decisions,universe.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};const elapsed=((Date.now()-started.getTime())/1000).toFixed(1),status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:combinedScannerData.length,successfulScans:combinedScannerData.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:combinedScannerData.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}return{universe,top500,equityTop20:equityScanUniverse,optionBuyingUniverse:OPTION_BUYING_UNIVERSE,optionUniverseSymbols,optionLiveRows,optionPreflight,top20,optionUniverseRows:optionUniverseRows,optionReadyTop20:optionReady,scannerData:combinedScannerData,completeScannerData:equityScannerData,optionScannerData:enriched,optionDecisions:decisions,finalDashboard:dashboardRows,finalTrade,scannerStatus:status};}
 if(require.main===module)main().catch(e=>{console.error(`FATAL: ${e?.stack||e}`);process.exitCode=1});module.exports={main,scanInBatches,chooseOne,rankOptionReady,selectDashboardCandidates,enrichUnderlyingOI,evaluateDashboardAccuracy};
