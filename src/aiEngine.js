@@ -45,8 +45,8 @@ function getOBVDirection(indicators) {
 }
 
 function volumeConfirmed(indicators = {}) {
-    // Never trust a stale/derived boolean when the underlying volume ratios exist.
-    // A displayed TRUE with RVOL 0.07 or pace ratio 0.09 is not confirmation.
+    // Quality/confirmation only. Do not feed the derived intraday boolean
+    // back into directional scoring.
     const pace = num(indicators.volumePaceRatio5, NaN);
     if (Number.isFinite(pace)) return pace >= 1;
     const ratio = num(indicators.volumeRatio5, NaN);
@@ -60,7 +60,7 @@ function volumeConfirmed(indicators = {}) {
 function bullishConditions(indicators = {}, price = 0) {
     const ema20=num(indicators.ema20), ema50=num(indicators.ema50), ema100=num(indicators.ema100), ema200=num(indicators.ema200);
     const vwap=num(indicators.vwap), rsi=num(indicators.rsi), macd=getMACD(indicators), adx=getADX(indicators);
-    const st=getSupertrend(indicators), obv=getOBVDirection(indicators), bb=getBollinger(indicators), vol=volumeConfirmed(indicators);
+    const st=getSupertrend(indicators), obv=getOBVDirection(indicators), bb=getBollinger(indicators), rvol=num(indicators.rvol);
     return [
         ema20>0 && price>ema20,
         ema50>0 && price>ema50,
@@ -73,7 +73,8 @@ function bullishConditions(indicators = {}, price = 0) {
         macd.value>macd.signal,
         macd.histogram>0,
         bb>0 && price>bb,
-        vol,
+        rvol>=1.2,
+        indicators.volumeSpike===true,
         obv==="BULLISH",
         adx.value>25,
         adx.pdi>adx.mdi
@@ -82,7 +83,7 @@ function bullishConditions(indicators = {}, price = 0) {
 function bearishConditions(indicators = {}, price = 0) {
     const ema20=num(indicators.ema20), ema50=num(indicators.ema50), ema100=num(indicators.ema100), ema200=num(indicators.ema200);
     const vwap=num(indicators.vwap), rsi=num(indicators.rsi), macd=getMACD(indicators), adx=getADX(indicators);
-    const st=getSupertrend(indicators), obv=getOBVDirection(indicators), bb=getBollinger(indicators), vol=volumeConfirmed(indicators);
+    const st=getSupertrend(indicators), obv=getOBVDirection(indicators), bb=getBollinger(indicators), rvol=num(indicators.rvol);
     return [
         ema20>0 && price<ema20,
         ema50>0 && price<ema50,
@@ -95,16 +96,18 @@ function bearishConditions(indicators = {}, price = 0) {
         macd.value<macd.signal,
         macd.histogram<0,
         bb>0 && price<bb,
-        vol,
+        rvol>=1.2,
+        indicators.volumeSpike===true,
         obv==="BEARISH",
         adx.value>25,
         adx.mdi>adx.pdi
     ];
 }
 
-// Exactly 100 points. The previous implementation had 16 conditions
-// but only 80 total possible points, and counted volume twice.
-const WEIGHTS = [5,5,5,5,5,5,10,8,8,4,5,8,7,10,10];
+// Directional scoring remains the proven 16-factor model.
+// Volume confirmation is deliberately not duplicated or replaced by
+// intraday pace inside the direction engine.
+const WEIGHTS = [5,5,5,5,5,5,10,8,8,4,5,5,5,5,10,10];
 
 function scoreConditions(conditions) {
     let score=0;
