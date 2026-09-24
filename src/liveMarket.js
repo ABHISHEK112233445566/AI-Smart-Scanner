@@ -146,10 +146,10 @@ async function getOptionLiquidityConfirmation(row,broker){
    if(!usable.length)return{confirmed:false,reason:"NO_VALID_OPTION_CONTRACT"};
    const expiry=[...new Set(usable.map(c=>normalizeExpiry(c?.expiry??c?.expiry_date)).filter(Boolean))].sort()[0],sameExpiry=usable.filter(c=>normalizeExpiry(c?.expiry??c?.expiry_date)===expiry),strikes=[...new Set(sameExpiry.map(c=>n(c?.strike_price??c?.strike)).filter(v=>v>0))].sort((a,b)=>a-b);
    if(!strikes.length)return{confirmed:false,reason:"NO_VALID_OPTION_STRIKES"};
-   const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]),selected=[];
-   for(const side of ["CE","PE"]){const candidates=sameExpiry.filter(c=>optionType(c)===side).sort((a,b)=>Math.abs(n(a?.strike_price??a?.strike)-atm)-Math.abs(n(b?.strike_price??b?.strike)-atm));if(candidates[0])selected.push(candidates[0]);}
-   const keys=selected.map(c=>c.instrument_key||c.instrumentKey).filter(Boolean),quotes=await upstoxFullQuotes(keys),byKey=new Map(quotes.map(q=>[q.instrumentKey,q]));
-   const sides=selected.map(c=>{const key=c.instrument_key||c.instrumentKey,q=byKey.get(key),volume=n(q?.volume),oi=n(q?.oi);return{contract:c,side:optionType(c),optionSymbol:c.trading_symbol||c.tradingsymbol||"",optionInstrumentKey:key,optionStrike:n(c?.strike_price??c?.strike),optionExpiry:expiry,optionLTP:n(q?.price),optionVolume:volume,optionOI:oi,confirmed:volume>=MIN_OPTION_VOLUME&&oi>=MIN_OPTION_OI&&n(q?.price)>0&&n(c?.strike_price??c?.strike)>0&&Boolean(key)};});
+   const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]),selectedContracts=[];
+   for(const side of ["CE","PE"]){const candidates=sameExpiry.filter(c=>optionType(c)===side).sort((a,b)=>Math.abs(n(a?.strike_price??a?.strike)-atm)-Math.abs(n(b?.strike_price??b?.strike)-atm));if(candidates[0])selectedContracts.push(candidates[0]);}
+   const keys=selectedContracts.map(c=>c.instrument_key||c.instrumentKey).filter(Boolean),quotes=await upstoxFullQuotes(keys),byKey=new Map(quotes.map(q=>[q.instrumentKey,q]));
+   const sides=selectedContracts.map(c=>{const key=c.instrument_key||c.instrumentKey,q=byKey.get(key),volume=n(q?.volume),oi=n(q?.oi);return{contract:c,side:optionType(c),optionSymbol:c.trading_symbol||c.tradingsymbol||"",optionInstrumentKey:key,optionStrike:n(c?.strike_price??c?.strike),optionExpiry:expiry,optionLTP:n(q?.price),optionVolume:volume,optionOI:oi,confirmed:volume>=MIN_OPTION_VOLUME&&oi>=MIN_OPTION_OI&&n(q?.price)>0&&n(c?.strike_price??c?.strike)>0&&Boolean(key)};});
    // Preflight runs before scanner direction is known. Never silently choose CE
    // as the default. A side selected here must match the eventual direction.
    const direction=String(row?.direction||row?.stockDirection||"").toUpperCase();
