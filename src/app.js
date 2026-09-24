@@ -85,10 +85,10 @@ if(!optionPreflight.length) {
 }
 const top20=optionPreflight.slice(0,TOP_SCANNER_STOCKS);
 const optionScanUniverse=top20.map(x=>x.symbol).filter(Boolean);
-console.log(`OPTION PIPELINE: fixed-100=${optionUniverseSymbols.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`);
+console.log(`OPTION PIPELINE: Top-100=${optionUniverseSymbols.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`);
 const optionUniverseScan=await scanInBatches(optionScanUniverse);
 const optionUniverseRows=optionUniverseScan.allResults;
-const optionLiveMetaBySymbol=new Map(optionLiveRows.map(x=>[String(x.symbol).toUpperCase(),x]));
+const optionLiveMetaBySymbol=new Map(optionTop100Rows.map(x=>[String(x.symbol).toUpperCase(),x]));
 const optionRowsWithLiveMeta=optionUniverseRows.map(r=>{
   const pre=optionPreflight.find(x=>key(x)===key(r));
   const live=optionLiveMetaBySymbol.get(key(r))||{};
