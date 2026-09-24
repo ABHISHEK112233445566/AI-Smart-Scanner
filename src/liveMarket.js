@@ -150,8 +150,28 @@ async function getOptionLiquidityConfirmation(row,broker){
    for(const side of ["CE","PE"]){const candidates=sameExpiry.filter(c=>optionType(c)===side).sort((a,b)=>Math.abs(n(a?.strike_price??a?.strike)-atm)-Math.abs(n(b?.strike_price??b?.strike)-atm));if(candidates[0])selected.push(candidates[0]);}
    const keys=selected.map(c=>c.instrument_key||c.instrumentKey).filter(Boolean),quotes=await upstoxFullQuotes(keys),byKey=new Map(quotes.map(q=>[q.instrumentKey,q]));
    const sides=selected.map(c=>{const key=c.instrument_key||c.instrumentKey,q=byKey.get(key),volume=n(q?.volume),oi=n(q?.oi);return{contract:c,side:optionType(c),optionSymbol:c.trading_symbol||c.tradingsymbol||"",optionInstrumentKey:key,optionStrike:n(c?.strike_price??c?.strike),optionExpiry:expiry,optionLTP:n(q?.price),optionVolume:volume,optionOI:oi,confirmed:volume>=MIN_OPTION_VOLUME&&oi>=MIN_OPTION_OI&&n(q?.price)>0&&n(c?.strike_price??c?.strike)>0&&Boolean(key)};});
-   const expectedSide=String(row?.direction||row?.stockDirection||"").toUpperCase()==="BEARISH"?"PE":String(row?.direction||row?.stockDirection||"").toUpperCase()==="BULLISH"?"CE":"";const confirmedSide=sides.find(x=>x.side===expectedSide&&x.confirmed)||sides.find(x=>x.confirmed);
-   return{confirmed:Boolean(confirmedSide),reason:confirmedSide?"LIVE_OPTION_LIQUIDITY_CONFIRMED":"INSUFFICIENT_LIVE_OPTION_LIQUIDITY",selectedSide:confirmedSide?.side||"",selectedContract:confirmedSide?.contract||null,optionVolume:confirmedSide?.optionVolume||0,optionOI:confirmedSide?.optionOI||0,optionLTP:confirmedSide?.optionLTP||0,optionSymbol:confirmedSide?.optionSymbol||"",optionInstrumentKey:confirmedSide?.optionInstrumentKey||"",optionStrike:confirmedSide?.optionStrike||0,optionExpiry:confirmedSide?.optionExpiry||expiry,sides};
+   // Preflight runs before scanner direction is known. Never silently choose CE
+   // as the default. A side selected here must match the eventual direction.
+   const direction=String(row?.direction||row?.stockDirection||"").toUpperCase();
+   const expectedSide=direction==="BEARISH"?"PE":direction==="BULLISH"?"CE":"";
+   const confirmedSide=expectedSide?sides.find(x=>x.side===expectedSide&&x.confirmed):null;
+   const anyConfirmed=sides.find(x=>x.confirmed)||null;
+   const selected=confirmedSide||null;
+   return{
+     confirmed:Boolean(confirmedSide||anyConfirmed),
+     reason:anyConfirmed?"LIVE_OPTION_LIQUIDITY_AVAILABLE":"INSUFFICIENT_LIVE_OPTION_LIQUIDITY",
+     selectedSide:selected?.side||"",
+     selectedContract:selected?.contract||null,
+     optionVolume:selected?.optionVolume||0,
+     optionOI:selected?.optionOI||0,
+     optionLTP:selected?.optionLTP||0,
+     optionSymbol:selected?.optionSymbol||"",
+     optionInstrumentKey:selected?.optionInstrumentKey||"",
+     optionStrike:selected?.optionStrike||0,
+     optionExpiry:selected?.optionExpiry||expiry,
+     availableOptionSides:sides.filter(x=>x.confirmed).map(x=>x.side),
+     sides
+   };
  }catch(error){return{confirmed:false,reason:"LIVE_OPTION_LIQUIDITY_ERROR:"+String(error?.message||error)};}
 }
 
@@ -159,7 +179,7 @@ async function filterOptionEligibleStocks(topRows,broker,limit=TOP_OPTION_STOCKS
  const input=(Array.isArray(topRows)?topRows:[]).filter(row=>n(row?.price)>0&&n(row?.volume)>=MIN_VOLUME).slice(0,OPTION_LIQUIDITY_CANDIDATE_POOL),confirmed=[],target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit)),concurrency=8;
  for(let i=0;i<input.length;i+=concurrency){
    const batch=input.slice(i,i+concurrency),checked=await Promise.all(batch.map(async row=>({row,liquidity:await getOptionLiquidityConfirmation(row,broker)})));
-   for(const x of checked){if(x.liquidity.confirmed)confirmed.push({...x.row,optionEligible:true,optionLiquidityConfirmed:true,optionLiquidityReason:x.liquidity.reason,optionLiquidityVolume:x.liquidity.optionVolume,optionLiquidityOI:x.liquidity.optionOI,optionLiquiditySide:x.liquidity.selectedSide,optionLiquidityLTP:x.liquidity.optionLTP,optionLiquidityContract:x.liquidity.optionInstrumentKey,optionLiquidityContractData:x.liquidity.selectedContract||null,optionLiquidityExpiry:x.liquidity.optionExpiry});if(confirmed.length>=target)break;}
+   for(const x of checked){if(x.liquidity.confirmed)confirmed.push({...x.row,optionEligible:true,optionLiquidityConfirmed:true,optionLiquidityReason:x.liquidity.reason,optionLiquidityVolume:x.liquidity.optionVolume,optionLiquidityOI:x.liquidity.optionOI,optionLiquiditySide:x.liquidity.selectedSide,optionLiquidityLTP:x.liquidity.optionLTP,optionLiquidityContract:x.liquidity.optionInstrumentKey,optionLiquidityContractData:x.liquidity.selectedContract||null,optionLiquidityExpiry:x.liquidity.optionExpiry,optionLiquidityAvailableSides:x.liquidity.availableOptionSides||[]});if(confirmed.length>=target)break;}
    if(confirmed.length>=target)break;
  }
  confirmed.sort((a,b)=>(b.volume-a.volume)||(b.optionLiquidityVolume-a.optionLiquidityVolume)||(b.optionLiquidityOI-a.optionLiquidityOI));
