@@ -76,16 +76,16 @@ const optionLiveRanking=await getTop500ByLiveVolume(optionUniverseSymbols,broker
 const optionLiveRows=Array.isArray(optionLiveRanking?.top)?optionLiveRanking.top:[];
 if(!optionLiveRows.length) throw new Error("Canonical option universe returned no live market data");
 console.log(`OPTION UNIVERSE: canonical=100 | live quotes=${optionLiveRows.length}`);
-const optionPreflight=await filterOptionEligibleStocks(optionTop100Rows,broker,TOP_SCANNER_STOCKS);
+const optionPreflight=await filterOptionEligibleStocks(optionLiveRows,broker,TOP_SCANNER_STOCKS);
 if(!optionPreflight.length) {
-  throw new Error(`No live-tradable option candidates found after option preflight (top500=${top500.length}, optionUniverse=${optionUniverseSymbols.length})`);
+  throw new Error(`No live-tradable option candidates found after option preflight (canonical100=${optionUniverseSymbols.length}, liveQuotes=${optionLiveRows.length})`);
 }
 const top20=optionPreflight.slice(0,TOP_SCANNER_STOCKS);
 const optionScanUniverse=top20.map(x=>x.symbol).filter(Boolean);
 console.log(`OPTION PIPELINE: Top-100=${optionUniverseSymbols.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`);
 const optionUniverseScan=await scanInBatches(optionScanUniverse);
 const optionUniverseRows=optionUniverseScan.allResults;
-const optionLiveMetaBySymbol=new Map(optionTop100Rows.map(x=>[String(x.symbol).toUpperCase(),x]));
+const optionLiveMetaBySymbol=new Map(optionLiveRows.map(x=>[String(x.symbol).toUpperCase(),x]));
 const optionRowsWithLiveMeta=optionUniverseRows.map(r=>{
   const pre=optionPreflight.find(x=>key(x)===key(r));
   const live=optionLiveMetaBySymbol.get(key(r))||{};
