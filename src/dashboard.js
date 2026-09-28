@@ -177,7 +177,8 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         getStockName(a).localeCompare(getStockName(b))
     );
     const strong = ranked.filter(isScoreQualified);
-    const actionable = ranked.filter(option => option?.qualified === true && !String(option?.rejectionReason ?? "").toUpperCase().includes("ERROR"));\n    const selected = actionable.slice(0, DASHBOARD_MAX_ROWS);
+    const actionable = ranked.filter(option => option?.qualified === true && !String(option?.rejectionReason ?? "").toUpperCase().includes("ERROR"));
+    const selected = actionable.slice(0, DASHBOARD_MAX_ROWS);
 
     const top10 = selected.map((option, index) => {
         const direction = String(option.direction ?? option.stockDirection ?? option.technicalDirection ?? option.patternDirection ?? option.finalDirection ?? option.optionType ?? option.cePe ?? "").toUpperCase();
@@ -213,7 +214,8 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         "Successful Scans": successfulScans,
         "Failed Scans": failedScans,
         "Strong Setups (±80+)": strong.length,
-        "Minimum Qualified Score": DASHBOARD_MIN_SCORE,\n        "Actionable Top Setups": selected.length,
+        "Minimum Qualified Score": DASHBOARD_MIN_SCORE,
+        "Actionable Top Setups": selected.length,
         "Market Mood": marketMood,
         CALL: callCount,
         PUT: putCount,
