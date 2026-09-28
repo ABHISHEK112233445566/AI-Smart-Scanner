@@ -9,7 +9,7 @@ const {buildDashboard}=require("./dashboard");
 const {createAccuracyRecord,evaluateAccuracy}=require("./accuracyTracker");
 const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getWholeNseUniverse}=require("./marketUniverse");
-const {getTop500ByLiveVolume,getTop20ByLiveVolume,getTop100OptionStocks,filterOptionEligibleStocks}=require("./liveMarket");
+const {getTop500ByLiveVolume,getTop20ByLiveVolume,filterOptionEligibleStocks}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 const ONE_TRADE_LIMIT=1,STOCK_BATCH_SIZE=25,TOP_SCANNER_STOCKS=20,DASHBOARD_MIN_SCORE=80,DASHBOARD_FALLBACK_ROWS=5;
@@ -70,44 +70,27 @@ const dividendScan=await scanInBatches(dividendUniverseSymbols);
 const dividendScannerData=[...equityScannerData,...dividendScan.allResults];
 
 // SEPARATE OPTION PATH:
-// Options are derived dynamically from the CURRENT broker instrument master.
-// 1) WHOLE_NSE is built from the complete Upstox NSE instrument master.
-// 2) Top-500 is ranked by live underlying volume.
-// 3) Top-100 is the intersection of those Top-500 stocks with current NSE_FO
-//    equity-option underlyings, ranked by the same live underlying liquidity.
-// 4) Only those 100 are preflighted for live option liquidity.
-// 5) The first 20 valid option candidates become the option scanner input.
-//
-// IMPORTANT: No hard-coded 100-stock option list is used here.
-const top100OptionRows=getTop100OptionStocks(
-  top500,
-  universe.optionEligibleSymbols,
-  100
-);
-if(!top100OptionRows.length){
-  throw new Error(
-    `No current F&O option-eligible stocks found inside live Top 500 (top500=${top500.length}, optionEligible=${universe.optionEligibleCount})`
-  );
-}
-console.log(
-  `OPTION UNIVERSE: WHOLE_NSE=${universe.symbols.length} | Top-500=${top500.length} | current F&O eligible in Top-500=${top100OptionRows.length}`
-);
-
+// Options are derived dynamically from the CURRENT live Top-500 universe.
+// There is intentionally NO hard-coded 100-stock option universe.
+// The option branch first checks live option liquidity and then sends the
+// strongest valid candidates into the scanner. This restores the original
+// dynamic Top-500 -> option-liquidity -> Top-20 pipeline while preserving
+// the current AI, chart-pattern, scoring, OI and dashboard logic.
 const optionPreflight=await filterOptionEligibleStocks(
-  top100OptionRows,
+  top500,
   broker,
   TOP_SCANNER_STOCKS
 );
 if(!optionPreflight.length){
   throw new Error(
-    `No live-tradable option candidates found after option preflight (Top-500=${top500.length}, F&O Top-100=${top100OptionRows.length})`
+    `No live-tradable option candidates found in live Top 500 (top500=${top500.length}, optionLiquidityPool=dynamic)`
   );
 }
 
 const top20=optionPreflight.slice(0,TOP_SCANNER_STOCKS);
 const optionScanUniverse=top20.map(x=>x.symbol).filter(Boolean);
 console.log(
-  `OPTION PIPELINE: WHOLE_NSE=${universe.symbols.length} | Top-500=${top500.length} | F&O Top-100=${top100OptionRows.length} | preflight-valid=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`
+  `OPTION PIPELINE: WHOLE_NSE=${universe.symbols.length} | Top-500=${top500.length} | live option candidates=${optionPreflight.length} | Top-20=${optionScanUniverse.length}`
 );
 
 const optionUniverseScan=await scanInBatches(optionScanUniverse);
