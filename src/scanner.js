@@ -55,7 +55,12 @@ const intraday15=await getHistoricalData(instrumentKey,"FIFTEEN_MINUTE");
 const intraday5=await getHistoricalData(instrumentKey,"FIVE_MINUTE");
 const live15=latestValidCandle(intraday15),live5=latestValidCandle(intraday5),liveCandle=live5||live15;
 const last=latestValidCandle(daily),lastIndex=daily.length-1,previousClose=lastIndex>0?toNumber(daily[lastIndex-1]?.close):0;
-const historicalPrice=toNumber(liveCandle?.close||last?.close);if(historicalPrice<=0)throw new Error("Invalid historical stock price");\n// LIVE QUOTE IS THE AUTHORITATIVE UNDERLYING PRICE. Historical 5m/15m candles\n// can lag the current market and must never overwrite the live setup price.\nlet liveQuote=null;try{liveQuote=await getQuote(instrumentKey);}catch(e){console.warn(`⚠️ Live quote unavailable for ${stockSymbol}: ${e?.message||e}`);}\nconst liveQuotePrice=toNumber(liveQuote?.data?.[instrumentKey]?.last_price??liveQuote?.last_price??liveQuote?.ltp);\nconst price=liveQuotePrice>0?liveQuotePrice:historicalPrice;if(price<=0)throw new Error("Invalid live stock price");\nif(liveQuotePrice>0){\n  indicatorsLivePriceGuard=true;\n}
+const historicalPrice=toNumber(liveCandle?.close||last?.close);if(historicalPrice<=0)throw new Error("Invalid historical stock price");
+// LIVE QUOTE IS THE AUTHORITATIVE UNDERLYING PRICE. Historical 5m/15m candles
+// can lag the current market and must never overwrite the live setup price.
+let liveQuote=null;try{liveQuote=await getQuote(instrumentKey);}catch(e){console.warn(`⚠️ Live quote unavailable for ${stockSymbol}: ${e?.message||e}`);}
+const liveQuotePrice=toNumber(liveQuote?.data?.[instrumentKey]?.last_price??liveQuote?.last_price??liveQuote?.ltp);
+const price=liveQuotePrice>0?liveQuotePrice:historicalPrice;if(price<=0)throw new Error("Invalid live stock price");
 const indicators=safeObject(await calculateIndicators(daily));indicators.price=price;
 const intraday15Indicators=safeObject(await calculateIndicators(intraday15));
 const intraday5Indicators=safeObject(await calculateIndicators(intraday5));
