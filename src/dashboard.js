@@ -13,7 +13,7 @@
 const DASHBOARD_MIN_SCORE = 5;
 const DASHBOARD_STRONG_SCORE = 80;
 const DASHBOARD_MIN_CONFIDENCE = 0;
-const DASHBOARD_MAX_ROWS = 0; // 0 means unlimited
+const DASHBOARD_MAX_ROWS = 5; // Dashboard always shows exactly the top 5 actionable setups
 
 function safeNumber(value, fallback = 0) {
     const n = Number(value);
@@ -177,7 +177,7 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         getStockName(a).localeCompare(getStockName(b))
     );
     const strong = ranked.filter(isScoreQualified);
-    const selected = DASHBOARD_MAX_ROWS > 0 ? ranked.slice(0, DASHBOARD_MAX_ROWS) : ranked;
+    const actionable = ranked.filter(option => option?.qualified === true && !String(option?.rejectionReason ?? "").toUpperCase().includes("ERROR"));\n    const selected = actionable.slice(0, DASHBOARD_MAX_ROWS);
 
     const top10 = selected.map((option, index) => {
         const direction = String(option.direction ?? option.stockDirection ?? option.technicalDirection ?? option.patternDirection ?? option.finalDirection ?? option.optionType ?? option.cePe ?? "").toUpperCase();
@@ -213,7 +213,7 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         "Successful Scans": successfulScans,
         "Failed Scans": failedScans,
         "Strong Setups (±80+)": strong.length,
-        "Minimum Qualified Score": DASHBOARD_MIN_SCORE,
+        "Minimum Qualified Score": DASHBOARD_MIN_SCORE,\n        "Actionable Top Setups": selected.length,
         "Market Mood": marketMood,
         CALL: callCount,
         PUT: putCount,
@@ -249,7 +249,7 @@ function buildDashboard(results = [], optionDecisions = [], totalStocks = 0) {
         dashboardStrongScore: DASHBOARD_STRONG_SCORE,
         dashboardMinConfidence: DASHBOARD_MIN_CONFIDENCE,
         dashboardMaxRows: DASHBOARD_MAX_ROWS,
-        dashboardFilter: "ALL valid directional stocks with ABS(scannerScore) >= 5; this includes every ±80+ stock; AVOID/REJECT/NO_DIRECTION excluded"
+        dashboardFilter: "TOP 5 actionable qualified directional setups; AVOID/REJECT/scan-error rows excluded"
     };
 }
 
