@@ -8,7 +8,7 @@ const MIN_VOLUME=1;
 const MIN_OI=1;
 const MIN_OPTION_VOLUME=Math.max(1,Number(process.env.MIN_OPTION_VOLUME||5000));
 const MIN_OPTION_OI=Math.max(1,Number(process.env.MIN_OPTION_OI||10000));
-const OPTION_LIQUIDITY_CANDIDATE_POOL=200;
+const OPTION_LIQUIDITY_CANDIDATE_POOL=500;
 
 function n(v,f=0){const x=Number(v);return Number.isFinite(x)?x:f;}
 function normalizeSymbol(v){return String(v||"").trim().toUpperCase().replace(/\s+/g,"").replace(/^NSE[_:]?EQ[|:]/,"").replace(/^NSE[|:]/,"").replace(/\.NS$/i,"").replace(/-EQ$/i,"");}
