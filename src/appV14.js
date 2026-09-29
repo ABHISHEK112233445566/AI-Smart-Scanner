@@ -8,12 +8,12 @@ const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
 const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getFastTradingUniverse}=require("./marketUniverse");
-const {getTop500ByLiveVolume,filterOptionEligibleStocks}=require("./liveMarket");
+const {getTop500ByLiveVolume}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 
 const STOCK_BATCH_SIZE=Math.max(10,Number(process.env.STOCK_BATCH_SIZE||25));
-const TOP_500=500;
+const TOP_500=100;
 const TOP_100=100;
 const TOP_20=20;
 const TOP_5=5;
