@@ -142,8 +142,8 @@ async function main(){
   try{await loadInstruments()}catch(e){console.log(`Instrument load warning: ${e?.message||e}`)}
   try{await loadSymbolMaster()}catch(e){console.log(`Symbol master warning: ${e?.message||e}`)}
 
-  const universe=await getFastTradingUniverse(broker);
-  console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
+  const fnoUniverse=await getFastTradingUniverse(broker);\n  const equityUniverse=await getNifty500Universe();
+  console.log(`FAST F&O UNIVERSE: ${fnoUniverse.symbols.length}`);\n  console.log(`NIFTY 500 EQUITY UNIVERSE: ${equityUniverse.symbols.length}`);
 
   // OPTION UNIVERSE: use the Dhan Options Stocks List as the membership
   // universe, then intersect it with Upstox instruments/live F&O quotes.
@@ -161,7 +161,7 @@ async function main(){
   const topRanking=await getTop500ByLiveVolume(equityUniverse.symbols,broker,equityUniverse.symbols.length);
   const liveFnoRows=Array.isArray(topRanking?.top)?topRanking.top:[];
   if(!liveFnoRows.length)throw new Error("Live F&O ranking returned no stocks");
-  console.log(`LIVE F&O COVERAGE: ${liveFnoRows.length}/${universe.symbols.length} underlyings have live quotes`);
+  console.log(`LIVE NIFTY 500 COVERAGE: ${liveFnoRows.length}/${equityUniverse.symbols.length} underlyings have live quotes`);
 
   // ---------------- EQUITY PIPELINE ----------------
   // Equity remains independent from option eligibility. The candidate pool is
@@ -184,7 +184,7 @@ async function main(){
   const optionUniverseRows=liveFnoRows.filter(r=>optionUniverseSymbols.includes(key(r)));
   const optionEligible=await collectOptionEligible(optionUniverseRows,broker);
   if(!optionEligible.length){
-    console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${universe.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);
+    console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${fnoUniverse.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);
   }
   const top100=optionEligible.slice(0,TOP_100);
   console.log(`OPTION PIPELINE: Dhan universe=${optionUniverseSymbols.length} → live quoted=${optionUniverseRows.length} → option preflight=${Math.min(optionUniverseRows.length,OPTION_PREFLIGHT_POOL)} first → Top-100=${top100.length}`);
@@ -234,7 +234,7 @@ async function main(){
   const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:equityUniverse.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
   try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}
 
-  console.log(`✅ V14 COMPLETE in ${elapsed}s | FNO=${universe.symbols.length} | LiveFNO=${liveFnoRows.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
+  console.log(`✅ V14 COMPLETE in ${elapsed}s | FNO=${fnoUniverse.symbols.length} | LiveFNO=${liveFnoRows.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
   return{universe:equityUniverse,fnoUniverse,liveFnoRows,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
 }
 
