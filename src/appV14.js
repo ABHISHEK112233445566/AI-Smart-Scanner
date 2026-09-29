@@ -74,12 +74,23 @@ function rankTop(rows,limit){
   return[...(Array.isArray(rows)?rows:[])].sort((a,b)=>(score(b)-score(a))||(confidence(b)-confidence(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,limit);
 }
 
+function optionContractSide(r){
+  const c=r?.optionLiquidityContractData;
+  const s=String(c?.instrument_type??c?.option_type??c?.optionType??"").trim().toUpperCase();
+  if(["CE","CALL"].includes(s)||String(c?.trading_symbol??c?.tradingSymbol??"").toUpperCase().endsWith(" CE"))return"CE";
+  if(["PE","PUT"].includes(s)||String(c?.trading_symbol??c?.tradingSymbol??"").toUpperCase().endsWith(" PE"))return"PE";
+  return"";
+}
 function validOptionRow(r){
   const strike=num(r?.bestStrike??r?.optionStrike??r?.recommendedStrike);
   const ltp=num(r?.optionPremiumEntry??r?.optionLTP??r?.optionLtp);
   const instrument=String(r?.optionInstrumentKey??r?.optionInstrument??r?.optionKey??"").trim();
   const side=String(r?.optionType??"").trim().toUpperCase();
-  return strike>0&&ltp>0&&Boolean(instrument)&&["CALL","PUT","CE","PE"].includes(side);
+  const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";
+  const contractSide=optionContractSide(r);
+  const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
+  const gatePassed=r?.gates?.basePassed===true||r?.pipeline?.optionsTradeGatePassed===true;
+  return strike>0&&ltp>0&&Boolean(instrument)&&Boolean(expected)&&(!contractSide||contractSide===expected)&&decision!=="REJECT"&&gatePassed;
 }
 
 function sanitizeOptionRow(r){
@@ -90,7 +101,10 @@ function sanitizeOptionRow(r){
 
 function rankDashboard(rows){
   const list=(Array.isArray(rows)?rows:[]).filter(validOptionRow).map(sanitizeOptionRow);
-  return list.sort((a,b)=>(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,TOP_5);
+  return list.sort((a,b)=>{
+    const da=decision(a)==="TRADE"?2:1,db=decision(b)==="TRADE"?2:1;
+    return (db-da)||(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward));
+  }).slice(0,TOP_5);
 }
 
 function buildEquityCandidates(liveRows){
