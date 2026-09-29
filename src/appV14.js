@@ -8,7 +8,7 @@ const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
 const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getFastTradingUniverse}=require("./marketUniverse");
-const {getTop500ByLiveVolume,filterOptionEligibleStocks}=require("./liveMarket");
+const {getTop500ByLiveVolume,filterOptionEligibleStocks,getTopMovers}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 
@@ -17,6 +17,7 @@ const TOP_100=100;
 const TOP_20=20;
 const TOP_5=5;
 const TOP_EQUITY=50;
+const OPTION_PREFLIGHT_POOL=Math.max(TOP_100,Number(process.env.OPTION_PREFLIGHT_POOL||120));
 const ONE_TRADE_LIMIT=1;
 
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
@@ -93,9 +94,48 @@ function rankDashboard(rows){
   return list.sort((a,b)=>(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,TOP_5);
 }
 
+function buildEquityCandidates(liveRows){
+  const rows=Array.isArray(liveRows)?liveRows:[];
+  const bySymbol=new Map(rows.map(r=>[key(r),r]));
+  const selected=[];
+  const add=row=>{const k=key(row);if(!k||selected.some(x=>key(x)===k))return;selected.push(row);};
+
+  // Keep the original volume-ranked Top-50 backbone.
+  for(const row of rows.slice(0,TOP_EQUITY))add(row);
+
+  // Protect strong market movers from disappearing merely because their raw
+  // traded volume ranks below the Top-50. Replace the weakest volume entries
+  // while keeping the equity scan capped at exactly 50 stocks.
+  const movers=getTopMovers(rows,Math.max(20,Number(process.env.EQUITY_MOVER_POOL||30)));
+  for(const mover of movers){
+    if(selected.length<TOP_EQUITY){add(bySymbol.get(key(mover))||mover);continue;}
+    if(selected.some(x=>key(x)===key(mover)))continue;
+    const weakestIndex=selected.reduce((wi,row,i)=>num(row.volume)<num(selected[wi].volume)?i:wi,0);
+    if(num(mover.volume)>num(selected[weakestIndex].volume))selected[weakestIndex]=bySymbol.get(key(mover))||mover;
+  }
+  return selected.slice(0,TOP_EQUITY);
+}
+
+async function collectOptionEligible(liveRows,broker){
+  const rows=Array.isArray(liveRows)?liveRows:[];
+  const firstPool=Math.min(rows.length,OPTION_PREFLIGHT_POOL);
+  let eligible=await filterOptionEligibleStocks(rows.slice(0,firstPool),broker,TOP_100);
+
+  // Only expand the expensive contract/quote preflight if the first ranked
+  // pool cannot supply the requested 100 candidates. This prevents hundreds
+  // of unnecessary option-contract API calls on every run.
+  if(eligible.length<TOP_100&&firstPool<rows.length){
+    const remainder=await filterOptionEligibleStocks(rows.slice(firstPool),broker,TOP_100-eligible.length);
+    const merged=new Map();
+    for(const row of [...eligible,...remainder])merged.set(key(row),row);
+    eligible=[...merged.values()].sort((a,b)=>(num(b.volume)-num(a.volume))||(num(b.optionLiquidityVolume)-num(a.optionLiquidityVolume))||(num(b.optionLiquidityOI)-num(a.optionLiquidityOI))).slice(0,TOP_100);
+  }
+  return eligible.map((r,index)=>({...r,optionUniverseRank:index+1}));
+}
+
 async function main(){
   const started=new Date();
-  console.log("\n=== AI SMART SCANNER V14 | SEPARATE FAST OPTIONS PIPELINE ===");
+  console.log("\n=== AI SMART SCANNER V14 | SEPARATE FAST EQUITY + OPTIONS PIPELINES ===");
   const brokerName=String(process.env.BROKER||"UPSTOX").trim().toUpperCase();
   setBroker(brokerName);
   const broker=getActiveBroker();
@@ -106,34 +146,37 @@ async function main(){
   const universe=await getFastTradingUniverse(broker);
   console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
 
-  // ---------------- LIVE UNDERLYING STAGE ----------------
-  // Keep the fast F&O universe so we do NOT return to the slow whole-NSE scan.
-  // But restore the broad Top-500 candidate pool. Equity and Options must not
-  // share the same final candidate/ranking pipeline.
+  // The current fast universe is the complete available F&O stock universe.
+  // Do not call it Top-500 when fewer than 500 F&O stocks are actually listed.
   const topRanking=await getTop500ByLiveVolume(universe.symbols,broker,universe.symbols.length);
   const liveFnoRows=Array.isArray(topRanking?.top)?topRanking.top:[];
   if(!liveFnoRows.length)throw new Error("Live F&O ranking returned no stocks");
   console.log(`LIVE F&O COVERAGE: ${liveFnoRows.length}/${universe.symbols.length} underlyings have live quotes`);
 
   // ---------------- EQUITY PIPELINE ----------------
-  // Preserve the current equity logic: Top-50 from the live Top-500, then Top-20.
-  const equityCandidates=liveFnoRows.slice(0,TOP_EQUITY);
+  // Equity remains independent from option eligibility. The candidate pool is
+  // volume-ranked Top-50 with a controlled mover-injection safeguard so a
+  // genuine high-momentum F&O stock cannot disappear solely on volume rank.
+  const equityCandidates=buildEquityCandidates(liveFnoRows);
   const equitySymbols=equityCandidates.map(x=>x.symbol).filter(Boolean);
+  console.log(`EQUITY CANDIDATES: ${equitySymbols.length} | volumeTop=${Math.min(TOP_EQUITY,liveFnoRows.length)} | moverProtection=ON`);
   const equityScan=await scanInBatches(equitySymbols);
   const equityTop20=rankTop(equityScan.allResults,TOP_20);
   const dividendSymbols=DIVIDEND_LONG_TERM_SYMBOLS.filter(s=>!equitySymbols.includes(s));
   const dividendScan=await scanInBatches(dividendSymbols);
   const dividendRows=[...dividendScan.allResults];
-  console.log(`EQUITY PIPELINE: Complete F&O live ranking → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
+  console.log(`EQUITY PIPELINE: Complete F&O live ranking → protected Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
 
   // ---------------- INDEPENDENT OPTIONS PIPELINE ----------------
-  // Restore the strong broad option-selection stage:
-  // Top-500 live underlying candidates → Top-100 with real option liquidity.
-  // This is intentionally NOT the same candidate list used by Equity.
-  const optionEligible=await filterOptionEligibleStocks(liveFnoRows,broker,TOP_100);
-  if(!optionEligible.length)throw new Error(`No live-tradable option candidates found in F&O universe (fno=${universe.symbols.length},liveQuotes=${liveFnoRows.length})`);
+  // Start option preflight with the highest-volume 120 underlyings instead of
+  // making contract+quote calls for the entire F&O universe. Expand only when
+  // fewer than 100 liquid candidates are actually found.
+  const optionEligible=await collectOptionEligible(liveFnoRows,broker);
+  if(!optionEligible.length){
+    console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${universe.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);
+  }
   const top100=optionEligible.slice(0,TOP_100);
-  console.log(`OPTION PIPELINE: F&O universe=${universe.symbols.length} → live quoted=${liveFnoRows.length} → Top-100 option-liquidity candidates=${top100.length}`);
+  console.log(`OPTION PIPELINE: F&O=${universe.symbols.length} → live quoted=${liveFnoRows.length} → option preflight=${Math.min(liveFnoRows.length,OPTION_PREFLIGHT_POOL)} first → Top-100=${top100.length}`);
 
   const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);
   const optionScan=await scanInBatches(optionSymbols);
@@ -146,8 +189,6 @@ async function main(){
   try{decisions=await calculateOptionsDecisions(oiRows)}catch(e){console.error(`Options engine failed: ${e?.message||e}`)}
   const decisionRows=mergeBySymbol(oiRows,decisions).map(sanitizeOptionRow);
 
-  // The SCANNER sheet receives exactly the Top-20 options pipeline rows.
-  // Dashboard receives exactly the best 5 rows from those 20 with real option data.
   const dashboardRows=rankDashboard(decisionRows);
   const finalTrade=dashboardRows.filter(r=>decision(r)==="TRADE").slice(0,ONE_TRADE_LIMIT);
 
@@ -155,7 +196,6 @@ async function main(){
   console.log(`DASHBOARD: option Top-5=${dashboardRows.length}`);
   console.log(`FINAL TRADE: ${finalTrade.length}`);
 
-  // Keep the existing sheet contracts. Options are passed separately from equity so they cannot contaminate equity calculations.
   let core=false,strategy=false;
   try{
     await updateGoogleSheet({scannerData:decisionRows,dashboardData:dashboardRows,accuracyData:[]});
@@ -188,4 +228,4 @@ async function main(){
 }
 
 if(require.main===module)main().catch(e=>{console.error(`FATAL: ${e?.stack||e}`);process.exitCode=1});
-module.exports={main,scanInBatches,rankTop,rankDashboard,validOptionRow,sanitizeOptionRow};
+module.exports={main,scanInBatches,rankTop,rankDashboard,validOptionRow,sanitizeOptionRow,buildEquityCandidates,collectOptionEligible};
