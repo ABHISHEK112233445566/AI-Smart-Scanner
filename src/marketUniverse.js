@@ -53,6 +53,23 @@ async function getFastTradingUniverse(broker){
 }
 function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(value===symbol)return true;return false;}
 
+async function getNifty500Universe(){
+  if(!axios||typeof axios.get!=="function")throw new Error("axios is unavailable for Nifty 500 universe");
+  const response=await axios.get(NIFTY500_URL,{timeout:30000,responseType:"text",headers:{"User-Agent":"Mozilla/5.0"}});
+  const raw=String(response.data||"").replace(/^\uFEFF/,"");
+  const lines=raw.split(/\r?\n/).filter(Boolean);
+  if(lines.length<450)throw new Error(`Nifty 500 constituent CSV returned too little data: ${lines.length} rows`);
+  const symbols=[];
+  for(const line of lines.slice(1)){
+    const cols=line.split(",").map(v=>String(v||"").trim().replace(/^"|"$/g,""));
+    const symbol=normalizeSymbol(cols[2]||cols[1]);
+    if(symbol&&symbol!=="SYMBOL")symbols.push(symbol);
+  }
+  const unique=[...new Set(symbols)];
+  if(unique.length<450)throw new Error(`Nifty 500 constituent list invalid: ${unique.length} symbols`);
+  return{name:"NIFTY_500",symbols:unique,universeSize:unique.length,source:NIFTY500_URL};
+}
+
 async function getWholeNseUniverse(broker){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable for whole-NSE universe');
   const instruments=await broker.loadInstruments();
