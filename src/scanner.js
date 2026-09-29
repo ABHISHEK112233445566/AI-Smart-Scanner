@@ -98,7 +98,7 @@ async function scanStocks(stocks){
     const batchResults=await Promise.all(batch.map(async(stock)=>{
       try{return await scanStock(stock);}
       catch(error){
-        return{stock,symbol:stock,qualified:false,rejectionReason:`SCAN_ERROR:\${error?.message||error}`};
+        return{stock,symbol:stock,qualified:false,rejectionReason:`SCAN_ERROR:${error?.message||error}`};
       }
     }));
     for(let i=0;i<batchResults.length;i++)results[start+i]=batchResults[i];
