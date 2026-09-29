@@ -1,0 +1,13 @@
+const assert=require("assert");
+const {validOptionRow,sanitizeOptionRow,rankDashboard}=require("./appV14");
+assert.strictEqual(validOptionRow({stockPrice:330.95,optionType:"CE",bestStrike:325,optionPremiumEntry:15.2,optionInstrumentKey:"TEST"}),true);
+assert.strictEqual(validOptionRow({stockPrice:330.95,optionType:"CE",bestStrike:0,optionPremiumEntry:15.2,optionInstrumentKey:"TEST"}),false);
+const bad=sanitizeOptionRow({stockPrice:330.95,optionType:"CE",entryPrice:330.95});
+assert.strictEqual(bad.optionEligible,false);
+assert.strictEqual(bad.optionDataValid,false);
+assert.strictEqual(bad.entryPrice,330.95);
+const good=sanitizeOptionRow({stockPrice:330.95,optionType:"CE",bestStrike:325,optionPremiumEntry:15.2,optionInstrumentKey:"TEST",confidence:80});
+assert.strictEqual(good.optionEntry,15.2);
+assert.strictEqual(good.entryPrice,15.2);
+assert.strictEqual(rankDashboard([good]).length,1);
+console.log("V14 pipeline tests passed");
