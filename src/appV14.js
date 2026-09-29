@@ -7,7 +7,7 @@ const {updateGoogleSheet,buildScannerStatus}=require("./googleSheet");
 const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
 const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
-const {getWholeNseUniverse}=require("./marketUniverse");
+const {getFastTradingUniverse}=require("./marketUniverse");
 const {getTop500ByLiveVolume,filterOptionEligibleStocks}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
@@ -104,11 +104,11 @@ async function main(){
   try{await loadInstruments()}catch(e){console.log(`Instrument load warning: ${e?.message||e}`)}
   try{await loadSymbolMaster()}catch(e){console.log(`Symbol master warning: ${e?.message||e}`)}
 
-  const universe=await getWholeNseUniverse(broker);
-  console.log(`WHOLE NSE: ${universe.symbols.length}`);
+  const universe=await getFastTradingUniverse(broker);
+  console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
 
   // ---------------- EQUITY PIPELINE ----------------
-  const top500Ranking=await getTop500ByLiveVolume(universe.symbols,broker,TOP_500);
+  const top500Ranking=await getTop500ByLiveVolume(universe.symbols,broker,Math.min(TOP_500,universe.symbols.length));
   const top500=Array.isArray(top500Ranking?.top)?top500Ranking.top:[];
   if(!top500.length)throw new Error("Live Top 500 ranking returned no stocks");
 
@@ -121,11 +121,11 @@ async function main(){
   console.log(`EQUITY PIPELINE: Top-500 live → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
 
   // ---------------- OPTIONS PIPELINE ----------------
-  // Whole NSE → live Top 500 → Top 100 option-eligible → scan Top 100 → rank Top 20 → option engine → Top 5 dashboard.
+  // Fast F&O universe → live Top 500 (or universe size) → Top 100 → scan Top 100 → rank Top 20 → option engine → Top 5 dashboard.
   const optionEligible=await filterOptionEligibleStocks(top500,broker,TOP_100);
   if(!optionEligible.length)throw new Error(`No live-tradable option candidates found in Top 500 (top500=${top500.length})`);
   const top100=optionEligible.slice(0,TOP_100);
-  console.log(`OPTION PIPELINE: Whole NSE=${universe.symbols.length} → Top-500=${top500.length} → Top-100=${top100.length}`);
+  console.log(`OPTION PIPELINE: Fast F&O universe=${universe.symbols.length} → Top-500=${top500.length} → Top-100=${top100.length}`);
 
   const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);
   const optionScan=await scanInBatches(optionSymbols);
@@ -175,7 +175,7 @@ async function main(){
   const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
   try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}
 
-  console.log(`✅ V14 COMPLETE in ${elapsed}s | Whole NSE=${universe.symbols.length} | Top500=${top500.length} | Top100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
+  console.log(`✅ V14 COMPLETE in ${elapsed}s | FastFNO=${universe.symbols.length} | Top500=${top500.length} | Top100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
   return{universe,top500,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
 }
 
