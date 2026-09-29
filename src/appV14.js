@@ -179,7 +179,7 @@ async function main(){
   const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
   try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}
 
-  console.log(`✅ V14 COMPLETE in ${elapsed}s | FastFNO=${universe.symbols.length} | Top500=${top500.length} | Top100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
+  console.log(`✅ V14 COMPLETE in ${elapsed}s | FastFNO=${universe.symbols.length} | Top100=${top100.length} | Top100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
   return{universe,top500,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
 }
 
