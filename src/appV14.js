@@ -145,6 +145,17 @@ async function main(){
   const universe=await getFastTradingUniverse(broker);
   console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
 
+  // OPTION UNIVERSE: use the Dhan Options Stocks List as the membership
+  // universe, then intersect it with Upstox instruments/live F&O quotes.
+  // Dhan defines which stocks are option-tradable; Upstox remains the
+  // execution/data authority for live price, volume, OI and option contracts.
+  const DHAN_OPTION_SYMBOLS=String(process.env.DHAN_OPTION_SYMBOLS||"")
+    .split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
+  const optionUniverseSymbols=DHAN_OPTION_SYMBOLS.length
+    ? universe.symbols.filter(s=>DHAN_OPTION_SYMBOLS.includes(String(s).toUpperCase()))
+    : universe.symbols;
+  console.log(`DHAN OPTION UNIVERSE: configured=${DHAN_OPTION_SYMBOLS.length} matchedUpstox=${optionUniverseSymbols.length}`);
+
   // The current fast universe is the complete available F&O stock universe.
   // Do not call it Top-500 when fewer than 500 F&O stocks are actually listed.
   const topRanking=await getTop500ByLiveVolume(universe.symbols,broker,universe.symbols.length);
@@ -170,12 +181,13 @@ async function main(){
   // Start option preflight with the highest-volume 120 underlyings instead of
   // making contract+quote calls for the entire F&O universe. Expand only when
   // fewer than 100 liquid candidates are actually found.
-  const optionEligible=await collectOptionEligible(liveFnoRows,broker);
+  const optionUniverseRows=liveFnoRows.filter(r=>optionUniverseSymbols.includes(key(r)));
+  const optionEligible=await collectOptionEligible(optionUniverseRows,broker);
   if(!optionEligible.length){
     console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${universe.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);
   }
   const top100=optionEligible.slice(0,TOP_100);
-  console.log(`OPTION PIPELINE: F&O=${universe.symbols.length} → live quoted=${liveFnoRows.length} → option preflight=${Math.min(liveFnoRows.length,OPTION_PREFLIGHT_POOL)} first → Top-100=${top100.length}`);
+  console.log(`OPTION PIPELINE: Dhan universe=${optionUniverseSymbols.length} → live quoted=${optionUniverseRows.length} → option preflight=${Math.min(optionUniverseRows.length,OPTION_PREFLIGHT_POOL)} first → Top-100=${top100.length}`);
 
   const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);
   const optionScan=await scanInBatches(optionSymbols);
