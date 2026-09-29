@@ -134,8 +134,7 @@ async function collectOptionEligible(liveRows,broker){
 
 async function main(){
   const started=new Date();
-  console.log("
-=== AI SMART SCANNER V14 | SEPARATE FAST EQUITY + OPTIONS PIPELINES ===");
+  console.log("\n=== AI SMART SCANNER V14 | SEPARATE FAST EQUITY + OPTIONS PIPELINES ===");
   const brokerName=String(process.env.BROKER||"UPSTOX").trim().toUpperCase();
   setBroker(brokerName);
   const broker=getActiveBroker();
