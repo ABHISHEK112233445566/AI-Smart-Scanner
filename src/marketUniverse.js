@@ -1,6 +1,6 @@
 const NSE_EQUITY_SEGMENT="NSE_EQ";
 const NSE_FO_SEGMENT="NSE_FO";
-const NSE_OPTION_TYPES=new Set(["CE","PE"]);
+const NSE_OPTION_TYPES=new Set(["CE","PE"]);\nconst axios=require("axios");\nconst NIFTY500_URL="https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv";
 
 function normalizeSymbol(v){return String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/^NSE[_:]?EQ[|:]/,'').replace(/^NSE[|:]/,'').replace(/\.NS$/i,'').replace(/-EQ$/i,'');}
 function isNseEquity(i){const segment=String(i?.segment||'').toUpperCase(),exchange=String(i?.exchange||'').toUpperCase(),type=String(i?.instrument_type||'').toUpperCase();return segment===NSE_EQUITY_SEGMENT||(exchange==='NSE'&&type==='EQ');}
@@ -64,4 +64,4 @@ async function getWholeNseUniverse(broker){
   return{name:'WHOLE_NSE',symbols:equities,universeSize:equities.length,optionEligibleSymbols:[...optionUnderlyings],optionEligibleCount:optionUnderlyings.size,source:'Upstox complete NSE instrument master'};
 }
 
-module.exports={getFastTradingUniverse,getWholeNseUniverse,normalizeSymbol,isNseEquity,isNseDerivative};
+module.exports={getFastTradingUniverse,getNifty500Universe,getWholeNseUniverse,normalizeSymbol,isNseEquity,isNseDerivative};
