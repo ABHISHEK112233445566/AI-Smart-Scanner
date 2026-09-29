@@ -12,7 +12,7 @@ const OPTION_LIQUIDITY_CANDIDATE_POOL=500;
 
 function n(v,f=0){const x=Number(v);return Number.isFinite(x)?x:f;}
 function normalizeSymbol(v){return String(v||"").trim().toUpperCase().replace(/\s+/g,"").replace(/^NSE[_:]?EQ[|:]/,"").replace(/^NSE[|:]/,"").replace(/\.NS$/i,"").replace(/-EQ$/i,"");}
-function normalizeQuoteMap(data){const out=[];for(const[key,value]of Object.entries(data||{})){if(!value||typeof value!=="object")continue;out.push({instrumentKey:value.instrument_token||value.instrumentKey||key,symbol:value.symbol||"",price:n(value.last_price??value.lastPrice),volume:n(value.volume??value.volume_traded??value.volumeTraded),oi:n(value.oi??value.open_interest??value.openInterest),previousOI:n(value.prev_oi??value.previous_oi??value.previousOI),oiDayHigh:n(value.oi_day_high),oiDayLow:n(value.oi_day_low),timestamp:value.timestamp||null,lastTradeTime:value.last_trade_time||value.lastTradeTime||null,raw:value});}return out;}
+function normalizeQuoteMap(data){const out=[];for(const[key,value]of Object.entries(data||{})){if(!value||typeof value!=="object")continue;out.push({instrumentKey:value.instrument_token||value.instrumentKey||key,symbol:value.symbol||"",price:n(value.last_price??value.lastPrice),previousClose:n(value.ohlc?.close??value.previous_close??value.previousClose??value.close),netChange:n(value.net_change??value.netChange),volume:n(value.volume??value.volume_traded??value.volumeTraded),oi:n(value.oi??value.open_interest??value.openInterest),previousOI:n(value.prev_oi??value.previous_oi??value.previousOI),oiDayHigh:n(value.oi_day_high),oiDayLow:n(value.oi_day_low),timestamp:value.timestamp||null,lastTradeTime:value.last_trade_time||value.lastTradeTime||null,raw:value});}return out;}
 
 async function upstoxFullQuotes(instrumentKeys){
  const token=process.env.UPSTOX_ACCESS_TOKEN;if(!token)throw new Error("UPSTOX_ACCESS_TOKEN is missing");
@@ -130,6 +130,7 @@ async function rankByLiveVolume(symbols,broker,limit){
 }
 
 async function getTop500ByLiveVolume(symbols,broker,limit=TOP_NSE_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(TOP_NSE_STOCKS,Math.max(1,limit)));}
+function getTopMovers(rows,limit=100){const valid=(Array.isArray(rows)?rows:[]).filter(r=>n(r?.price)>0&&n(r?.previousClose)>0&&n(r?.volume)>=MIN_VOLUME).map(r=>({...r,changePercent:((n(r.price)-n(r.previousClose))/n(r.previousClose))*100}));const gainers=[...valid].sort((a,b)=>(b.changePercent-a.changePercent)||(b.volume-a.volume)).slice(0,limit);const losers=[...valid].sort((a,b)=>(a.changePercent-b.changePercent)||(b.volume-a.volume)).slice(0,limit);const map=new Map();for(const r of [...gainers,...losers])map.set(normalizeSymbol(r.symbol),r);return[...map.values()];}
 function getTop100OptionStocks(top500Rows,optionEligibleSymbols,limit=TOP_OPTION_STOCKS){const rowsInput=Array.isArray(top500Rows)?top500Rows:[];const eligible=new Set((Array.isArray(optionEligibleSymbols)?optionEligibleSymbols:[]).map(normalizeSymbol).filter(Boolean));const rows=rowsInput.filter(r=>eligible.has(normalizeSymbol(r?.symbol??r?.tradingSymbol??r?.stock)));rows.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));return rows.slice(0,Math.min(TOP_OPTION_STOCKS,Math.max(1,limit))).map((r,index)=>({...r,optionUniverseRank:index+1,optionEligible:true}));}
 async function getTop20ByLiveVolume(symbols,broker,limit=MAX_TOP_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(MAX_TOP_STOCKS,Math.max(1,limit)));}
 
@@ -196,4 +197,4 @@ async function getOptionConfirmation(row,direction,broker){
  }catch(error){return{confirmed:false,reason:`LIVE_OPTION_CONFIRMATION_ERROR:${error?.message||error}`};}
 }
 
-module.exports={getTop20ByLiveVolume,getTop500ByLiveVolume,getTop100OptionStocks,filterOptionEligibleStocks,getOptionLiquidityConfirmation,getOptionConfirmation,upstoxFullQuotes,MAX_TOP_STOCKS,TOP_NSE_STOCKS,TOP_OPTION_STOCKS,MIN_OPTION_VOLUME,MIN_OPTION_OI};
+module.exports={getTop20ByLiveVolume,getTop500ByLiveVolume,getTop100OptionStocks,getTopMovers,filterOptionEligibleStocks,getOptionLiquidityConfirmation,getOptionConfirmation,upstoxFullQuotes,MAX_TOP_STOCKS,TOP_NSE_STOCKS,TOP_OPTION_STOCKS,MIN_OPTION_VOLUME,MIN_OPTION_OI};
