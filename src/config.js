@@ -12,7 +12,7 @@ module.exports = {
     MPIN: process.env.MPIN || "",
     TOTP_SECRET: process.env.TOTP_SECRET || "",
     GOOGLE_SHEET_URL: process.env.GOOGLE_SHEET_URL || "",
-    SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "WHOLE_NSE").trim().toUpperCase(),
+    SCANNER_UNIVERSE: (process.env.SCANNER_UNIVERSE || "FAST_FNO").trim().toUpperCase(),
     BANKNIFTY_ENABLED: true,
     BANKNIFTY_SYMBOL: "BANKNIFTY",
     BANKNIFTY_FULL_CONSTITUENTS: true,
