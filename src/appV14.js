@@ -107,29 +107,33 @@ async function main(){
   const universe=await getFastTradingUniverse(broker);
   console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
 
-  // ---------------- EQUITY PIPELINE ----------------
-  const top500Ranking=await getTop500ByLiveVolume(universe.symbols,broker,Math.min(TOP_500,universe.symbols.length));
-  const top500=Array.isArray(top500Ranking?.top)?top500Ranking.top:[];
-  if(!top500.length)throw new Error("Live Top 500 ranking returned no stocks");
+  // ---------------- SHARED LIVE/SCANNER STAGE ----------------
+  // One live-volume ranking and ONE full scanner pass are shared by the
+  // separate equity and options pipelines. Scanner calculations are unchanged;
+  // duplicate stock scans are removed.
+  const topRanking=await getTop500ByLiveVolume(universe.symbols,broker,Math.min(TOP_500,universe.symbols.length));
+  const top100=Array.isArray(topRanking?.top)?topRanking.top.slice(0,TOP_100):[];
+  if(!top100.length)throw new Error("Live ranking returned no stocks");
 
-  const equitySymbols=top500.slice(0,TOP_EQUITY).map(x=>x.symbol).filter(Boolean);
-  const equityScan=await scanInBatches(equitySymbols);
-  const equityTop20=rankTop(equityScan.allResults,TOP_20);
-  const dividendSymbols=DIVIDEND_LONG_TERM_SYMBOLS.filter(s=>!equitySymbols.includes(s));
+  const equityCandidates=top100.slice(0,TOP_EQUITY);
+  const sharedSymbols=top100.map(x=>x.symbol).filter(Boolean);
+  const sharedScan=await scanInBatches(sharedSymbols);
+  const sharedMap=new Map(sharedScan.allResults.map(r=>[key(r),r]));
+
+  // ---------------- EQUITY PIPELINE ----------------
+  const equityRows=equityCandidates.map(x=>sharedMap.get(key(x))).filter(Boolean);
+  const equityTop20=rankTop(equityRows,TOP_20);
+  const dividendSymbols=DIVIDEND_LONG_TERM_SYMBOLS.filter(s=>!sharedSymbols.includes(s));
   const dividendScan=await scanInBatches(dividendSymbols);
   const dividendRows=[...dividendScan.allResults];
-  console.log(`EQUITY PIPELINE: Top-500 live → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
+  console.log(`EQUITY PIPELINE: Top-100 shared live universe → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
 
   // ---------------- OPTIONS PIPELINE ----------------
-  // Fast F&O universe → live Top 500 (or universe size) → Top 100 → scan Top 100 → rank Top 20 → option engine → Top 5 dashboard.
-  const optionEligible=await filterOptionEligibleStocks(top500,broker,TOP_100);
-  if(!optionEligible.length)throw new Error(`No live-tradable option candidates found in Top 500 (top500=${top500.length})`);
-  const top100=optionEligible.slice(0,TOP_100);
-  console.log(`OPTION PIPELINE: Fast F&O universe=${universe.symbols.length} → Top-500=${top500.length} → Top-100=${top100.length}`);
+  // F&O eligibility is already guaranteed by the fast universe. Contract/LTP/OI
+  // lookups happen only after the scanner narrows the candidates to Top 20.
+  console.log(`OPTION PIPELINE: Fast F&O universe=${universe.symbols.length} → Top-100 shared scan=${top100.length}`);
 
-  const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);
-  const optionScan=await scanInBatches(optionSymbols);
-  const optionScanned=mergeBySymbol(optionScan.allResults,top100);
+  const optionScanned=sharedScan.allResults;
   const optionTop20=rankTop(optionScanned,TOP_20);
   console.log(`OPTION PIPELINE: scanned=${optionScanned.length} → Top-20 scanner=${optionTop20.length}`);
 
