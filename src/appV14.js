@@ -8,12 +8,12 @@ const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
 const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getFastTradingUniverse}=require("./marketUniverse");
-const {getTop500ByLiveVolume}=require("./liveMarket");
+const {getTop500ByLiveVolume,filterOptionEligibleStocks}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 
 const STOCK_BATCH_SIZE=Math.max(10,Number(process.env.STOCK_BATCH_SIZE||25));
-const TOP_500=100;
+const TOP_500=500;
 const TOP_100=100;
 const TOP_20=20;
 const TOP_5=5;
@@ -107,35 +107,39 @@ async function main(){
   const universe=await getFastTradingUniverse(broker);
   console.log(`FAST F&O UNIVERSE: ${universe.symbols.length}`);
 
-  // ---------------- SHARED LIVE/SCANNER STAGE ----------------
-  // One live-volume ranking and ONE full scanner pass are shared by the
-  // separate equity and options pipelines. Scanner calculations are unchanged;
-  // duplicate stock scans are removed.
+  // ---------------- LIVE UNDERLYING STAGE ----------------
+  // Keep the fast F&O universe so we do NOT return to the slow whole-NSE scan.
+  // But restore the broad Top-500 candidate pool. Equity and Options must not
+  // share the same final candidate/ranking pipeline.
   const topRanking=await getTop500ByLiveVolume(universe.symbols,broker,Math.min(TOP_500,universe.symbols.length));
-  const top100=Array.isArray(topRanking?.top)?topRanking.top.slice(0,TOP_100):[];
-  if(!top100.length)throw new Error("Live ranking returned no stocks");
-
-  const equityCandidates=top100.slice(0,TOP_EQUITY);
-  const sharedSymbols=top100.map(x=>x.symbol).filter(Boolean);
-  const sharedScan=await scanInBatches(sharedSymbols);
-  const sharedMap=new Map(sharedScan.allResults.map(r=>[key(r),r]));
+  const top500=Array.isArray(topRanking?.top)?topRanking.top.slice(0,TOP_500):[];
+  if(!top500.length)throw new Error("Live Top 500 ranking returned no stocks");
 
   // ---------------- EQUITY PIPELINE ----------------
-  const equityRows=equityCandidates.map(x=>sharedMap.get(key(x))).filter(Boolean);
-  const equityTop20=rankTop(equityRows,TOP_20);
-  const dividendSymbols=DIVIDEND_LONG_TERM_SYMBOLS.filter(s=>!sharedSymbols.includes(s));
+  // Preserve the current equity logic: Top-50 from the live Top-500, then Top-20.
+  const equityCandidates=top500.slice(0,TOP_EQUITY);
+  const equitySymbols=equityCandidates.map(x=>x.symbol).filter(Boolean);
+  const equityScan=await scanInBatches(equitySymbols);
+  const equityTop20=rankTop(equityScan.allResults,TOP_20);
+  const dividendSymbols=DIVIDEND_LONG_TERM_SYMBOLS.filter(s=>!equitySymbols.includes(s));
   const dividendScan=await scanInBatches(dividendSymbols);
   const dividendRows=[...dividendScan.allResults];
-  console.log(`EQUITY PIPELINE: Top-100 shared live universe → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
+  console.log(`EQUITY PIPELINE: Top-500 live → Top-50 scan → Top-20 output | rows=${equityTop20.length}`);
 
-  // ---------------- OPTIONS PIPELINE ----------------
-  // F&O eligibility is already guaranteed by the fast universe. Contract/LTP/OI
-  // lookups happen only after the scanner narrows the candidates to Top 20.
-  console.log(`OPTION PIPELINE: Fast F&O universe=${universe.symbols.length} → Top-100 shared scan=${top100.length}`);
+  // ---------------- INDEPENDENT OPTIONS PIPELINE ----------------
+  // Restore the strong broad option-selection stage:
+  // Top-500 live underlying candidates → Top-100 with real option liquidity.
+  // This is intentionally NOT the same candidate list used by Equity.
+  const optionEligible=await filterOptionEligibleStocks(top500,broker,TOP_100);
+  if(!optionEligible.length)throw new Error(`No live-tradable option candidates found in Top 500 (top500=${top500.length})`);
+  const top100=optionEligible.slice(0,TOP_100);
+  console.log(`OPTION PIPELINE: Fast F&O universe=${universe.symbols.length} → Top-500=${top500.length} → Top-100 option-eligible=${top100.length}`);
 
-  const optionScanned=sharedScan.allResults;
+  const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);
+  const optionScan=await scanInBatches(optionSymbols);
+  const optionScanned=mergeBySymbol(optionScan.allResults,top100);
   const optionTop20=rankTop(optionScanned,TOP_20);
-  console.log(`OPTION PIPELINE: scanned=${optionScanned.length} → Top-20 scanner=${optionTop20.length}`);
+  console.log(`OPTION PIPELINE: option-eligible scanned=${optionScanned.length} → Top-20 scanner=${optionTop20.length}`);
 
   const oiRows=await enrichUnderlyingOI(optionTop20);
   let decisions=[];
@@ -179,8 +183,8 @@ async function main(){
   const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
   try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}
 
-  console.log(`✅ V14 COMPLETE in ${elapsed}s | FastFNO=${universe.symbols.length} | Top100=${top100.length} | Top100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
-  return{universe,top500:top100,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
+  console.log(`✅ V14 COMPLETE in ${elapsed}s | FastFNO=${universe.symbols.length} | Top500=${top500.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
+  return{universe,top500,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
 }
 
 if(require.main===module)main().catch(e=>{console.error(`FATAL: ${e?.stack||e}`);process.exitCode=1});
