@@ -8,11 +8,9 @@ const {calculateOIMoodForStock}=require('./oiMood');
 const DASHBOARD_MIN_ROWS=5;
 const DASHBOARD_SCORE=Number(process.env.DASHBOARD_MIN_SCORE??5);
 const MIN_CONFIDENCE=Number(config.THRESHOLDS?.MIN_CONFIDENCE??70);
-const ACCURACY_MIN_CONFIDENCE=80;
 const MIN_RR=Number(config.THRESHOLDS?.MIN_RR??1.5);
 const REQUIRED_OI_HEADERS=['oiMood','oiSentiment','oiDataAvailable','oiPriceChangePercent','oiChangePercent'];
 const DASHBOARD_HEADERS=['stockPrice','symbol','optionType','entryPrice','bestStrike','optionLTP','confidence','target','stopLoss','oiMood','volume','avgVolume5','volumeRatio5','volumeConfirmed5'];
-const ACCURACY_HEADERS=['recordId','predictionTime','symbol','stockPrice','optionType','confidence','predictedEntry','target','stopLoss','currentPrice','targetSLReached','slReason','resultTime','resultPrice','accuracyPercent'];
 const GOOGLE_TIMEOUT=120000;
 
 function getGoogleSheetUrl(){
@@ -78,24 +76,6 @@ async function postToGoogleSheet(payload){
 async function postReplaceSheet(sheet,objects){const r=await postToGoogleSheet(buildSheetPayload(sheet,objects));return r?.data||{};}
 async function postDashboard(rows){const r=await postToGoogleSheet(buildDashboardPayload(rows));return r?.data||{};}
 
-function buildAccuracyRow(r={}){return{recordId:String(r.recordId??r.predictionId??`${r.symbol||r.stock||'UNKNOWN'}_${Date.now()}`),predictionTime:toIST(r.predictionTime||r.accuracyPredictionTime||r.timestamp||new Date()),symbol:String(r.symbol??r.stock??r.tradingSymbol??''),stockPrice:n(r.stockPrice??r.price??r.currentPrice),optionType:optionType(r),confidence:n(r.optionsConfidence??r.confidence),predictedEntry:n(r.predictedEntry??r.stockEntry??r.underlyingEntry??r.marketEntry??r.entry),target:n(r.predictedTarget1??r.stockTarget1??r.target1??r.target),stopLoss:n(r.predictedStopLoss??r.stockStopLoss??r.stopLoss),currentPrice:n(r.livePrice??r.currentPrice??r.ltp??r.price),targetSLReached:String(r.targetSLReached??'PENDING').toUpperCase(),slReason:String(r.slReason??''),resultTime:toIST(r.resultTime),resultPrice:n(r.resultPrice),accuracyPercent:n(r.accuracyPercent)};}
-
-async function postAccuracyRows(rows=[]){const list=(Array.isArray(rows)?rows:[]).filter(Boolean).filter(r=>(n(r.optionsConfidence??r.confidence)??0)>=ACCURACY_MIN_CONFIDENCE);if(!list.length)return{success:true,rowCount:0,filteredOut:(Array.isArray(rows)?rows.length:0)};const e=list.map(buildAccuracyRow);const payload={action:'appendRows',sheet:'ACCURACY',headers:ACCURACY_HEADERS,rows:e.map(x=>ACCURACY_HEADERS.map(h=>clean(x[h]))),timestamp:new Date().toISOString()};const r=await postToGoogleSheet(payload);return{...(r?.data||{}),filteredOut:(Array.isArray(rows)?rows.length:0)-list.length};}
-
-async function updateGoogleSheet(payload={}){
-    if(String(payload.action||'').trim()==='scanner_status'){
-        const r=await postToGoogleSheet({action:'scanner_status',scannerStatus:payload.scannerStatus||payload.status||{}});
-        return r?.data||{};
-    }
-    const scannerData=Array.isArray(payload.scannerData)?payload.scannerData:[];
-    const dashboardData=Array.isArray(payload.dashboardData)?payload.dashboardData:[];
-    const accuracyData=Array.isArray(payload.accuracyData)?payload.accuracyData:[];
-    const scanner=await postReplaceSheet('SCANNER',scannerData);
-    const dashboard=await postDashboard(dashboardData);
-    const accuracy=await postAccuracyRows(accuracyData);
-    return{success:true,scanner,dashboard,accuracy,scannerRows:scannerData.length,dashboardRows:selectDashboardRows(dashboardData).length,accuracyRows:accuracyData.length};
-}
-
 function buildScannerStatus(x={}){const now=new Date();return{status:String(x.status||'SUCCESS').toUpperCase(),lastScanTime:now.toISOString(),lastScanTimeIST:toIST(now),lastScanSource:process.env.GITHUB_ACTIONS?'GitHub Actions':'Local',broker:String(x.broker||process.env.BROKER||'UPSTOX').toUpperCase(),universe:String(x.universe||'ALL').toUpperCase(),stocksScanned:Number(x.scanned)||0,successfulScans:Number(x.successfulScans)||0,failedScans:Number(x.failedScans)||0,callCandidates:Number(x.callCandidates)||0,putCandidates:Number(x.putCandidates)||0,tradeCount:Number(x.tradeCount)||0,watchCount:Number(x.watchCount)||0,rejectCount:Number(x.rejectCount)||0,elapsedSeconds:Number(x.elapsedSeconds)||0,durationMs:Number(x.durationMs)||0};}
 
-module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,score,magnitude,direction,buildAccuracyRow,postAccuracyRows,buildScannerStatus,DASHBOARD_MAX_ROWS:DASHBOARD_MIN_ROWS,MIN_CONFIDENCE,ACCURACY_MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard,ACCURACY_HEADERS};
+module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,score,magnitude,direction,buildScannerStatus,DASHBOARD_MAX_ROWS:DASHBOARD_MIN_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard};
