@@ -78,5 +78,33 @@ const intradayTrigger=triggerAligned&&microAligned&&liveVWAP>0&&liveEMA20>0&&(st
 if(PIPELINE_CONFIG.PRE_SCORE_MIN>0&&Math.abs(rawScore)<PIPELINE_CONFIG.PRE_SCORE_MIN)return{stock:stockSymbol,symbol:stockSymbol,tradingSymbol:stockSymbol,instrumentKey,price,currentPrice:price,previousClose,direction:stockDirection,stockDirection,technicalDirection,score:clampSignedScore(scoreData.score),scannerScore:clampSignedScore(scoreData.score),aiScore:clampSignedScore(scoreData.score),aiFinalScore:rawScore,volume:toNumber(indicators.volume),avgVolume5:toNumber(indicators.avgVolume5),volumeRatio5:toNumber(indicators.volumeRatio5),volumePaceRatio5:toNumber(indicators.volumePaceRatio5),volumeConfirmed5:safeBoolean(indicators.volumeConfirmed5),qualified:false,rejectionReason:"LOW_SCORE",momentumScore,pipeline:{preFilter:"LOW_SCORE",momentumScore,mtfChecked:false,optionsChecked:false}};const tradeInput=buildTradeInput(price,indicators,sr,pivot,stockDirection),trade=safeObject(await calculateTradeSetup(tradeInput,{optionType:stockDirection==="BULLISH"?"CALL":"PUT"})),mtf=safeObject(await getMultiTimeframeAnalysis(stockSymbol)),analysis=buildStockAnalysis({stockSymbol,instrumentKey,latestPrice:price,indicators,scoreData,trade,sr,breakout,mtf,pivot,cpr,stockDirection,technicalDirection,momentumScore,previousClose});if(toNumber(mtf.mtfAlignment??mtf.alignedTimeframes)<=0)return{...analysis,qualified:false,rejectionReason:"MTF_NO_ALIGNMENT",pipeline:{...analysis.pipeline,preFilter:"MTF_NO_ALIGNMENT",mtfChecked:true}};if(!isValidTradePlan(trade,stockDirection,analysis.entry))return{...analysis,qualified:false,rejectionReason:trade.reason||"INVALID_MARKET_SETUP",pipeline:{...analysis.pipeline,preFilter:trade.reason||"INVALID_MARKET_SETUP",mtfChecked:true}};
 const hardPatternConflict=patternBlocksTrade(stockDirection,analysis.patternDirection,analysis.patternStatus,analysis.patternConfidence,analysis.patternScore);
 if(hardPatternConflict)return{...analysis,qualified:false,patternConflict:true,rejectionReason:"STRONG_PATTERN_CONFLICT",pipeline:{...analysis.pipeline,preFilter:"STRONG_PATTERN_CONFLICT",mtfChecked:true}};let ranking={};try{ranking=safeObject(calculateFinalRank(analysis));}catch(_){}const finalScore=clampSignedScore(ranking.finalScore??ranking.score??analysis.aiFinalScore??analysis.score),strength=scoreMagnitude(finalScore);Object.assign(analysis,{finalScore,rankingScore:finalScore,scoreStrength:strength,rating:ranking.rating||"QUALIFIED",ranking,chartPattern:String(ranking.chartPattern??analysis.chartPattern??"NONE"),patternStatus:String(ranking.patternStatus??analysis.patternStatus??"NONE"),patternDirection:String(ranking.patternDirection??analysis.patternDirection??"NEUTRAL"),patternTimeframe:String(analysis.patternTimeframe??"1D"),patternConfidence:toNumber(ranking.patternConfidence??analysis.patternConfidence),patternScore:toNumber(ranking.patternScore??analysis.patternScore),patternContribution:toNumber(ranking.patternContribution??analysis.patternContribution),patternBreakoutLevel:toNumber(analysis.patternBreakoutLevel),patternInvalidationLevel:toNumber(analysis.patternInvalidationLevel),patternTarget:toNumber(analysis.patternTarget),patternDescription:String(analysis.patternDescription??""),patternDetectedAt:String(analysis.patternDetectedAt??""),patternConflict:patternConflict(stockDirection,analysis.patternDirection),rsiState:rsiState(analysis.rsi,stockDirection),is85Plus:strength>=85,is90Plus:strength>=90,dashboardEligible:strength>=DASHBOARD_MIN_SCORE,qualified:true,rejectionReason:""});analysis.intraday15Direction=d15;analysis.intraday5Direction=d5;analysis.intradayTrigger=true;analysis.intradayVWAP=liveVWAP;analysis.intradayEMA20=liveEMA20;analysis.livePrice=price;analysis.pipeline.preFilter=lowVolumeConfirmation?"QUALIFIED_LOW_VOLUME":"QUALIFIED";analysis.pipeline.volumeConfirmation=analysis.volumeConfirmed5===true;analysis.pipeline.intradayTrigger=true;analysis.pipeline.mtfAlignment=toNumber(mtf.mtfAlignment??mtf.alignedTimeframes);return analysis;}catch(error){console.log(`❌ ${stockSymbol||stock}: ${error?.message||error}`);return{stock:stockSymbol||String(stock||""),symbol:stockSymbol||String(stock||""),qualified:false,rejectionReason:error?.message||String(error),pipeline:{preFilter:"ERROR",momentumScore:0,mtfChecked:false,optionsChecked:false}};}}
-async function scanStocks(stocks){if(!Array.isArray(stocks))return[];const results=[];for(const stock of stocks)results.push(await scanStock(stock));const qualified=results.filter(r=>r?.qualified===true).sort((a,b)=>(scoreMagnitude(b.finalScore??b.score)-scoreMagnitude(a.finalScore??a.score))||(Number(b.riskReward??0)-Number(a.riskReward??0))).slice(0,PIPELINE_CONFIG.MAX_QUALIFIED_STOCKS);Object.defineProperties(qualified,{allResults:{value:results,enumerable:false},rejected:{value:results.filter(r=>r?.qualified!==true),enumerable:false},qualifiedAll:{value:results.filter(r=>r?.qualified===true),enumerable:false}});return qualified;}
+async function scanStocks(stocks){
+  if(!Array.isArray(stocks))return[];
+  /*
+   * PERFORMANCE-ONLY CHANGE:
+   * Every stock scan is independent. Keep the exact same scanStock()
+   * calculation and final sorting, but run a small bounded number in
+   * parallel. Results remain in the original input order before ranking,
+   * so concurrency does not change scanner selection/score logic.
+   *
+   * Keep this conservative to avoid turning speed gains into Upstox 429s.
+   * Override with SCANNER_CONCURRENCY when needed.
+   */
+  const concurrency=Math.max(1,Math.min(8,Number(process.env.SCANNER_CONCURRENCY||4)));
+  const results=new Array(stocks.length);
+  for(let start=0;start<stocks.length;start+=concurrency){
+    const end=Math.min(start+concurrency,stocks.length);
+    const batch=stocks.slice(start,end);
+    const batchResults=await Promise.all(batch.map(async(stock)=>{
+      try{return await scanStock(stock);}
+      catch(error){
+        return{stock,symbol:stock,qualified:false,rejectionReason:`SCAN_ERROR:\${error?.message||error}`};
+      }
+    }));
+    for(let i=0;i<batchResults.length;i++)results[start+i]=batchResults[i];
+  }
+  const qualified=results.filter(r=>r?.qualified===true).sort((a,b)=>(scoreMagnitude(b.finalScore??b.score)-scoreMagnitude(a.finalScore??a.score))||(Number(b.riskReward??0)-Number(a.riskReward??0))).slice(0,PIPELINE_CONFIG.MAX_QUALIFIED_STOCKS);
+  Object.defineProperties(qualified,{allResults:{value:results,enumerable:false},rejected:{value:results.filter(r=>r?.qualified!==true),enumerable:false},qualifiedAll:{value:results.filter(r=>r?.qualified===true),enumerable:false}});
+  return qualified;
+}
 module.exports={scanStock,scanStocks,normalizeDirection,determineTechnicalDirection,determineStockDirection,DASHBOARD_MIN_SCORE,PIPELINE_CONFIG};
