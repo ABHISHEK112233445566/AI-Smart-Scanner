@@ -21,180 +21,22 @@ async function upstoxFullQuotes(instrumentKeys){
  return normalizeQuoteMap(response?.data?.data);
 }
 
-/*
- * PERFORMANCE FIX:
- * The complete Upstox instrument master is already loaded before this module
- * is used by app.js. The old implementation called broker.getInstrument()
- * once per NSE symbol (~9,700 calls). That was unnecessary because the master
- * already contains symbol -> instrument_key.
- *
- * Build the lookup map once per broker/master and reuse it for the scan.
- */
 let equityKeyCache=null;
 let equityKeyCacheSource=null;
 let equityKeyCachePromise=null;
-
-function isNseEquity(i){
- const segment=String(i?.segment||"").toUpperCase();
- const exchange=String(i?.exchange||"").toUpperCase();
- const type=String(i?.instrument_type||"").toUpperCase();
- return segment==="NSE_EQ"||(exchange==="NSE"&&type==="EQ");
-}
-
-function buildEquityKeyMap(instruments){
- const map=new Map();
- for(const i of Array.isArray(instruments)?instruments:[]){
-   if(!isNseEquity(i))continue;
-   const key=String(i?.instrument_key||i?.instrumentKey||"").trim();
-   const symbol=normalizeSymbol(i?.trading_symbol??i?.tradingSymbol??i?.symbol);
-   if(key&&symbol&&!map.has(symbol))map.set(symbol,key);
- }
- return map;
-}
-
-async function getEquityKeyMap(broker){
- if(!broker)throw new Error("Broker is required for live-volume ranking");
- if(equityKeyCache&&equityKeyCacheSource===broker)return equityKeyCache;
- if(equityKeyCachePromise&&equityKeyCacheSource===broker)return equityKeyCachePromise;
-
- equityKeyCacheSource=broker;
- equityKeyCachePromise=(async()=>{
-   let instruments=null;
-   if(typeof broker.loadInstruments==="function")instruments=await broker.loadInstruments();
-   if(Array.isArray(instruments)&&instruments.length){
-     const map=buildEquityKeyMap(instruments);
-     if(map.size){equityKeyCache=map;return map;}
-   }
-   return null;
- })();
-
- try{
-   const map=await equityKeyCachePromise;
-   if(map)return map;
- }finally{
-   equityKeyCachePromise=null;
- }
-
- // Compatibility fallback for brokers that do not expose a usable
- // instrument master. This path is intentionally not used by Upstox.
- return null;
-}
-
-async function resolveEquityKeys(symbols,broker){
- const source=[...new Set((symbols||[]).map(normalizeSymbol).filter(Boolean))];
- const map=await getEquityKeyMap(broker);
- if(map){
-   const rows=[];
-   for(const symbol of source){
-     const key=map.get(symbol);
-     if(key)rows.push({symbol,key});
-   }
-   return rows;
- }
-
- // Broker compatibility fallback. Kept for non-master brokers.
- const rows=[];
- for(const symbol of source){
-   try{
-     const instrument=await broker.getInstrument(symbol);
-     const key=instrument?.instrument_key||instrument?.instrumentKey||null;
-     if(key)rows.push({symbol,key});
-   }catch(_){}
- }
- return rows;
-}
-
-async function rankByLiveVolume(symbols,broker,limit){
- const started=Date.now();
- const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];
- const resolved=await resolveEquityKeys(source,broker);
- if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");
-
- let quotes=[];
- const chunkSize=450;
- for(let i=0;i<resolved.length;i+=chunkSize){
-   const chunk=resolved.slice(i,i+chunkSize);
-   const result=await upstoxFullQuotes(chunk.map(x=>x.key));
-   const byKey=new Map(result.map(q=>[q.instrumentKey,q]));
-   for(const item of chunk){
-     const q=byKey.get(item.key);
-     if(q)quotes.push({symbol:item.symbol,instrumentKey:item.key,...q});
-   }
- }
- const valid=quotes.filter(q=>q.price>0&&q.volume>=MIN_VOLUME);
- if(!valid.length)throw new Error("Live market volume unavailable for scanner universe");
- valid.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));
- const top=valid.slice(0,Math.min(limit,valid.length)).map((q,index)=>({...q,liveVolumeRank:index+1,volumeConfirmed:q.volume>=MIN_VOLUME,liveMarketConfirmed:true,liveQuoteTimestamp:q.timestamp||q.lastTradeTime||null}));
- console.log(`⚡ LIVE VOLUME RANKING: ${source.length} symbols → ${resolved.length} keys → ${valid.length} live quotes → Top ${top.length} in ${((Date.now()-started)/1000).toFixed(1)}s`);
- return{top,allQuotes:valid,universeSize:source.length};
-}
-
+function isNseEquity(i){const segment=String(i?.segment||"").toUpperCase();const exchange=String(i?.exchange||"").toUpperCase();const type=String(i?.instrument_type||"").toUpperCase();return segment==="NSE_EQ"||(exchange==="NSE"&&type==="EQ");}
+function buildEquityKeyMap(instruments){const map=new Map();for(const i of Array.isArray(instruments)?instruments:[]){if(!isNseEquity(i))continue;const key=String(i?.instrument_key||i?.instrumentKey||"").trim();const symbol=normalizeSymbol(i?.trading_symbol??i?.tradingSymbol??i?.symbol);if(key&&symbol&&!map.has(symbol))map.set(symbol,key);}return map;}
+async function getEquityKeyMap(broker){if(!broker)throw new Error("Broker is required for live-volume ranking");if(equityKeyCache&&equityKeyCacheSource===broker)return equityKeyCache;if(equityKeyCachePromise&&equityKeyCacheSource===broker)return equityKeyCachePromise;equityKeyCacheSource=broker;equityKeyCachePromise=(async()=>{let instruments=null;if(typeof broker.loadInstruments==="function")instruments=await broker.loadInstruments();if(Array.isArray(instruments)&&instruments.length){const map=buildEquityKeyMap(instruments);if(map.size){equityKeyCache=map;return map;}}return null;})();try{const map=await equityKeyCachePromise;if(map)return map;}finally{equityKeyCachePromise=null;}return null;}
+async function resolveEquityKeys(symbols,broker){const source=[...new Set((symbols||[]).map(normalizeSymbol).filter(Boolean))];const map=await getEquityKeyMap(broker);if(map){const rows=[];for(const symbol of source){const key=map.get(symbol);if(key)rows.push({symbol,key});}return rows;}const rows=[];for(const symbol of source){try{const instrument=await broker.getInstrument(symbol);const key=instrument?.instrument_key||instrument?.instrumentKey||null;if(key)rows.push({symbol,key});}catch(_){} }return rows;}
+async function rankByLiveVolume(symbols,broker,limit){const started=Date.now();const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];const resolved=await resolveEquityKeys(source,broker);if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");let quotes=[];const chunkSize=450;for(let i=0;i<resolved.length;i+=chunkSize){const chunk=resolved.slice(i,i+chunkSize);const result=await upstoxFullQuotes(chunk.map(x=>x.key));const byKey=new Map(result.map(q=>[q.instrumentKey,q]));for(const item of chunk){const q=byKey.get(item.key);if(q)quotes.push({symbol:item.symbol,instrumentKey:item.key,...q});}}const valid=quotes.filter(q=>q.price>0&&q.volume>=MIN_VOLUME);if(!valid.length)throw new Error("Live market volume unavailable for scanner universe");valid.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));const top=valid.slice(0,Math.min(limit,valid.length)).map((q,index)=>({...q,liveVolumeRank:index+1,volumeConfirmed:q.volume>=MIN_VOLUME,liveMarketConfirmed:true,liveQuoteTimestamp:q.timestamp||q.lastTradeTime||null}));console.log(`⚡ LIVE VOLUME RANKING: ${source.length} symbols → ${resolved.length} keys → ${valid.length} live quotes → Top ${top.length} in ${((Date.now()-started)/1000).toFixed(1)}s`);return{top,allQuotes:valid,universeSize:source.length};}
 async function getTop500ByLiveVolume(symbols,broker,limit=TOP_NSE_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(TOP_NSE_STOCKS,Math.max(1,limit)));}
 function getTopMovers(rows,limit=100){const valid=(Array.isArray(rows)?rows:[]).filter(r=>n(r?.price)>0&&n(r?.previousClose)>0&&n(r?.volume)>=MIN_VOLUME).map(r=>({...r,changePercent:((n(r.price)-n(r.previousClose))/n(r.previousClose))*100}));const gainers=[...valid].sort((a,b)=>(b.changePercent-a.changePercent)||(b.volume-a.volume)).slice(0,limit);const losers=[...valid].sort((a,b)=>(a.changePercent-b.changePercent)||(b.volume-a.volume)).slice(0,limit);const map=new Map();for(const r of [...gainers,...losers])map.set(normalizeSymbol(r.symbol),r);return[...map.values()];}
 function getTop100OptionStocks(top500Rows,optionEligibleSymbols,limit=TOP_OPTION_STOCKS){const rowsInput=Array.isArray(top500Rows)?top500Rows:[];const eligible=new Set((Array.isArray(optionEligibleSymbols)?optionEligibleSymbols:[]).map(normalizeSymbol).filter(Boolean));const rows=rowsInput.filter(r=>eligible.has(normalizeSymbol(r?.symbol??r?.tradingSymbol??r?.stock)));rows.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));return rows.slice(0,Math.min(TOP_OPTION_STOCKS,Math.max(1,limit))).map((r,index)=>({...r,optionUniverseRank:index+1,optionEligible:true}));}
 async function getTop20ByLiveVolume(symbols,broker,limit=MAX_TOP_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(MAX_TOP_STOCKS,Math.max(1,limit)));}
-
 function normalizeExpiry(v){const s=String(v??"").trim();if(!s)return null;if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;const d=new Date(s);return Number.isNaN(d.getTime())?null:d.toISOString().slice(0,10);}
 function optionType(c){const x=String(c?.instrument_type??c?.option_type??c?.optionType??"").toUpperCase();if(["CE","CALL","C"].includes(x))return"CE";if(["PE","PUT","P"].includes(x))return"PE";const s=String(c?.trading_symbol||c?.tradingsymbol||"").toUpperCase();return s.endsWith("CE")?"CE":s.endsWith("PE")?"PE":null;}
 function chooseContract(contracts,direction,spot){const side=direction==="BULLISH"?"CE":"PE",today=new Date();today.setHours(0,0,0,0);const usable=(Array.isArray(contracts)?contracts:[]).filter(c=>{const expiry=normalizeExpiry(c?.expiry??c?.expiry_date),d=expiry?new Date(`${expiry}T00:00:00`):null,days=d&&!Number.isNaN(d.getTime())?Math.ceil((d-today)/86400000):-1;return optionType(c)===side&&days>=0&&n(c?.strike_price??c?.strike)>0&&(c?.instrument_key||c?.instrumentKey);});if(!usable.length)return null;const expiry=[...new Set(usable.map(c=>normalizeExpiry(c?.expiry??c?.expiry_date)).filter(Boolean))].sort()[0],sameExpiry=usable.filter(c=>normalizeExpiry(c?.expiry??c?.expiry_date)===expiry);return sameExpiry.reduce((best,c)=>!best||Math.abs(n(c.strike_price??c.strike)-spot)<Math.abs(n(best.strike_price??best.strike)-spot)?c:best,null);}
-
-async function getOptionLiquidityConfirmation(row,broker){
- const symbol=row?.symbol||row?.stock,spot=n(row?.price);
- if(!symbol||spot<=0||!broker||typeof broker.getOptionContracts!=="function")return{confirmed:false,reason:"OPTION_DATA_API_UNAVAILABLE"};
- try{
-   const contracts=await broker.getOptionContracts(symbol),today=new Date();today.setHours(0,0,0,0);
-   const usable=(Array.isArray(contracts)?contracts:[]).filter(c=>{const expiry=normalizeExpiry(c?.expiry??c?.expiry_date),d=expiry?new Date(expiry+"T00:00:00"):null,days=d&&!Number.isNaN(d.getTime())?Math.ceil((d-today)/86400000):-1;return days>=7&&n(c?.strike_price??c?.strike)>0&&(c?.instrument_key||c?.instrumentKey);});
-   if(!usable.length)return{confirmed:false,reason:"NO_VALID_OPTION_CONTRACT"};
-   const expiry=[...new Set(usable.map(c=>normalizeExpiry(c?.expiry??c?.expiry_date)).filter(Boolean))].sort()[0],sameExpiry=usable.filter(c=>normalizeExpiry(c?.expiry??c?.expiry_date)===expiry),strikes=[...new Set(sameExpiry.map(c=>n(c?.strike_price??c?.strike)).filter(v=>v>0))].sort((a,b)=>a-b);
-   if(!strikes.length)return{confirmed:false,reason:"NO_VALID_OPTION_STRIKES"};
-   const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]),selectedContracts=[];
-   for(const side of ["CE","PE"]){const candidates=sameExpiry.filter(c=>optionType(c)===side).sort((a,b)=>Math.abs(n(a?.strike_price??a?.strike)-atm)-Math.abs(n(b?.strike_price??b?.strike)-atm));if(candidates[0])selectedContracts.push(candidates[0]);}
-   const keys=selectedContracts.map(c=>c.instrument_key||c.instrumentKey).filter(Boolean),quotes=await upstoxFullQuotes(keys),byKey=new Map(quotes.map(q=>[q.instrumentKey,q]));
-   const sides=selectedContracts.map(c=>{const key=c.instrument_key||c.instrumentKey,q=byKey.get(key),volume=n(q?.volume),oi=n(q?.oi);return{contract:c,side:optionType(c),optionSymbol:c.trading_symbol||c.tradingsymbol||"",optionInstrumentKey:key,optionStrike:n(c?.strike_price??c?.strike),optionExpiry:expiry,optionLTP:n(q?.price),optionVolume:volume,optionOI:oi,confirmed:volume>=MIN_OPTION_VOLUME&&oi>=MIN_OPTION_OI&&n(q?.price)>0&&n(c?.strike_price??c?.strike)>0&&Boolean(key)};});
-   // Preflight runs before scanner direction is known. Never silently choose CE
-   // as the default. A side selected here must match the eventual direction.
-   const direction=String(row?.direction||row?.stockDirection||"").toUpperCase();
-   const expectedSide=direction==="BEARISH"?"PE":direction==="BULLISH"?"CE":"";
-   const confirmedSide=expectedSide?sides.find(x=>x.side===expectedSide&&x.confirmed):null;
-   const anyConfirmed=sides.find(x=>x.confirmed)||null;
-   const selected=confirmedSide||null;
-   return{
-     confirmed:Boolean(confirmedSide),
-     reason:confirmedSide?"LIVE_OPTION_LIQUIDITY_AVAILABLE":anyConfirmed?"WRONG_OPTION_SIDE_LIQUIDITY":"INSUFFICIENT_LIVE_OPTION_LIQUIDITY",
-     selectedSide:selected?.side||"",
-     selectedContract:selected?.contract||null,
-     optionVolume:selected?.optionVolume||0,
-     optionOI:selected?.optionOI||0,
-     optionLTP:selected?.optionLTP||0,
-     optionSymbol:selected?.optionSymbol||"",
-     optionInstrumentKey:selected?.optionInstrumentKey||"",
-     optionStrike:selected?.optionStrike||0,
-     optionExpiry:selected?.optionExpiry||expiry,
-     availableOptionSides:sides.filter(x=>x.confirmed).map(x=>x.side),
-     sides
-   };
- }catch(error){return{confirmed:false,reason:"LIVE_OPTION_LIQUIDITY_ERROR:"+String(error?.message||error)};}
-}
-
-async function filterOptionEligibleStocks(topRows,broker,limit=TOP_OPTION_STOCKS){
- const input=(Array.isArray(topRows)?topRows:[]).filter(row=>n(row?.price)>0&&n(row?.volume)>=MIN_VOLUME),confirmed=[],target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit)),concurrency=8;
- for(let i=0;i<input.length;i+=concurrency){
-   const batch=input.slice(i,i+concurrency),checked=await Promise.all(batch.map(async row=>({row,liquidity:await getOptionLiquidityConfirmation(row,broker)})));
-   for(const x of checked){if(x.liquidity.confirmed)confirmed.push({...x.row,optionEligible:true,optionLiquidityConfirmed:true,optionLiquidityReason:x.liquidity.reason,optionLiquidityVolume:x.liquidity.optionVolume,optionLiquidityOI:x.liquidity.optionOI,optionLiquiditySide:x.liquidity.selectedSide,optionLiquidityLTP:x.liquidity.optionLTP,optionLiquidityContract:x.liquidity.optionInstrumentKey,optionLiquidityContractData:x.liquidity.selectedContract||null,optionLiquidityExpiry:x.liquidity.optionExpiry,optionLiquidityAvailableSides:x.liquidity.availableOptionSides||[]});if(confirmed.length>=target)break;}
-   if(confirmed.length>=target)break;
- }
- confirmed.sort((a,b)=>(b.volume-a.volume)||(b.optionLiquidityVolume-a.optionLiquidityVolume)||(b.optionLiquidityOI-a.optionLiquidityOI));
- return confirmed.slice(0,target).map((r,index)=>({...r,optionUniverseRank:index+1}));
-}
-
-async function getOptionConfirmation(row,direction,broker){
- const symbol=row?.symbol||row?.stock,spot=n(row?.price);if(!symbol||spot<=0||!broker||typeof broker.getOptionContracts!=="function")return{confirmed:false,reason:"OPTION_DATA_API_UNAVAILABLE"};
- try{
-   const contracts=await broker.getOptionContracts(symbol),contract=chooseContract(contracts,direction,spot);if(!contract)return{confirmed:false,reason:"NO_VALID_OPTION_CONTRACT"};
-   const key=contract.instrument_key||contract.instrumentKey,quote=(await upstoxFullQuotes([key])).find(q=>q.instrumentKey===key);if(!quote)return{confirmed:false,reason:"LIVE_OPTION_QUOTE_UNAVAILABLE",optionInstrumentKey:key};
-   const volume=n(quote.volume),oi=n(quote.oi),previousOI=n(quote.previousOI),oiChange=previousOI>0?oi-previousOI:0,oiChangePercent=previousOI>0?(oiChange/previousOI)*100:0,confirmed=volume>=MIN_VOLUME&&oi>=MIN_OI;
-   return{confirmed,reason:confirmed?"LIVE_VOLUME_OI_CONFIRMED":"INSUFFICIENT_LIVE_OPTION_VOLUME_OI",optionSymbol:contract.trading_symbol||contract.tradingsymbol||"",optionInstrumentKey:key,optionType:direction==="BULLISH"?"CE":"PE",optionStrike:n(contract.strike_price??contract.strike),optionExpiry:normalizeExpiry(contract.expiry??contract.expiry_date)||"",optionLTP:quote.price,optionVolume:volume,optionOI:oi,optionPreviousOI:previousOI,optionOIChange:oiChange,optionOIChangePercent:oiChangePercent,optionTimestamp:quote.timestamp||null,optionLastTradeTime:quote.lastTradeTime||null};
- }catch(error){return{confirmed:false,reason:`LIVE_OPTION_CONFIRMATION_ERROR:${error?.message||error}`};}
-}
-
+async function getOptionLiquidityConfirmation(row,broker){const symbol=row?.symbol||row?.stock,spot=n(row?.price);if(!symbol||spot<=0||!broker||typeof broker.getOptionContracts!=="function")return{confirmed:false,reason:"OPTION_DATA_API_UNAVAILABLE"};try{const contracts=await broker.getOptionContracts(symbol),today=new Date();today.setHours(0,0,0,0);const usable=(Array.isArray(contracts)?contracts:[]).filter(c=>{const expiry=normalizeExpiry(c?.expiry??c?.expiry_date),d=expiry?new Date(expiry+"T00:00:00"):null,days=d&&!Number.isNaN(d.getTime())?Math.ceil((d-today)/86400000):-1;return days>=7&&n(c?.strike_price??c?.strike)>0&&(c?.instrument_key||c?.instrumentKey);});if(!usable.length)return{confirmed:false,reason:"NO_VALID_OPTION_CONTRACT"};const expiry=[...new Set(usable.map(c=>normalizeExpiry(c?.expiry??c?.expiry_date)).filter(Boolean))].sort()[0],sameExpiry=usable.filter(c=>normalizeExpiry(c?.expiry??c?.expiry_date)===expiry),strikes=[...new Set(sameExpiry.map(c=>n(c?.strike_price??c?.strike)).filter(v=>v>0))].sort((a,b)=>a-b);if(!strikes.length)return{confirmed:false,reason:"NO_VALID_OPTION_STRIKES"};const atm=strikes.reduce((best,s)=>Math.abs(s-spot)<Math.abs(best-spot)?s:best,strikes[0]),selectedContracts=[];for(const side of ["CE","PE"]){const candidates=sameExpiry.filter(c=>optionType(c)===side).sort((a,b)=>Math.abs(n(a?.strike_price??a?.strike)-atm)-Math.abs(n(b?.strike_price??b?.strike)-atm));if(candidates[0])selectedContracts.push(candidates[0]);}const keys=selectedContracts.map(c=>c.instrument_key||c.instrumentKey).filter(Boolean),quotes=await upstoxFullQuotes(keys),byKey=new Map(quotes.map(q=>[q.instrumentKey,q]));const sides=selectedContracts.map(c=>{const key=c.instrument_key||c.instrumentKey,q=byKey.get(key),volume=n(q?.volume),oi=n(q?.oi);return{contract:c,side:optionType(c),optionSymbol:c.trading_symbol||c.tradingsymbol||"",optionInstrumentKey:key,optionStrike:n(c?.strike_price??c?.strike),optionExpiry:expiry,optionLTP:n(q?.price),optionVolume:volume,optionOI:oi,confirmed:volume>=MIN_OPTION_VOLUME&&oi>=MIN_OPTION_OI&&n(q?.price)>0&&n(c?.strike_price??c?.strike)>0&&Boolean(key)};});const direction=String(row?.direction||row?.stockDirection||"").toUpperCase();const expectedSide=direction==="BEARISH"?"PE":direction==="BULLISH"?"CE":"";const confirmedSide=expectedSide?sides.find(x=>x.side===expectedSide&&x.confirmed):null;const anyConfirmed=sides.find(x=>x.confirmed)||null;const selected=confirmedSide||anyConfirmed;const preflightConfirmed=Boolean(expectedSide?confirmedSide:anyConfirmed);return{confirmed:preflightConfirmed,reason:confirmedSide?"LIVE_OPTION_LIQUIDITY_AVAILABLE":(!expectedSide&&anyConfirmed)?"LIVE_OPTION_LIQUIDITY_AVAILABLE_ANY_SIDE":anyConfirmed?"WRONG_OPTION_SIDE_LIQUIDITY":"INSUFFICIENT_LIVE_OPTION_LIQUIDITY",selectedSide:selected?.side||"",selectedContract:selected?.contract||null,optionVolume:selected?.optionVolume||0,optionOI:selected?.optionOI||0,optionLTP:selected?.optionLTP||0,optionSymbol:selected?.optionSymbol||"",optionInstrumentKey:selected?.optionInstrumentKey||"",optionStrike:selected?.optionStrike||0,optionExpiry:selected?.optionExpiry||expiry,availableOptionSides:sides.filter(x=>x.confirmed).map(x=>x.side),sides};}catch(error){return{confirmed:false,reason:"LIVE_OPTION_LIQUIDITY_ERROR:"+String(error?.message||error)};}}
+async function filterOptionEligibleStocks(topRows,broker,limit=TOP_OPTION_STOCKS){const input=(Array.isArray(topRows)?topRows:[]).filter(row=>n(row?.price)>0&&n(row?.volume)>=MIN_VOLUME),confirmed=[],target=Math.min(TOP_OPTION_STOCKS,Math.max(1,limit)),concurrency=8;for(let i=0;i<input.length;i+=concurrency){const batch=input.slice(i,i+concurrency),checked=await Promise.all(batch.map(async row=>({row,liquidity:await getOptionLiquidityConfirmation(row,broker)})));for(const x of checked){if(x.liquidity.confirmed)confirmed.push({...x.row,optionEligible:true,optionLiquidityConfirmed:true,optionLiquidityReason:x.liquidity.reason,optionLiquidityVolume:x.liquidity.optionVolume,optionLiquidityOI:x.liquidity.optionOI,optionLiquiditySide:x.liquidity.selectedSide,optionLiquidityLTP:x.liquidity.optionLTP,optionLiquidityContract:x.liquidity.optionInstrumentKey,optionLiquidityContractData:x.liquidity.selectedContract||null,optionLiquidityExpiry:x.liquidity.optionExpiry,optionLiquidityAvailableSides:x.liquidity.availableOptionSides||[]});if(confirmed.length>=target)break;}if(confirmed.length>=target)break;}confirmed.sort((a,b)=>(b.volume-a.volume)||(b.optionLiquidityVolume-a.optionLiquidityVolume)||(b.optionLiquidityOI-a.optionLiquidityOI));return confirmed.slice(0,target).map((r,index)=>({...r,optionUniverseRank:index+1}));}
+async function getOptionConfirmation(row,direction,broker){const symbol=row?.symbol||row?.stock,spot=n(row?.price);if(!symbol||spot<=0||!broker||typeof broker.getOptionContracts!=="function")return{confirmed:false,reason:"OPTION_DATA_API_UNAVAILABLE"};try{const contracts=await broker.getOptionContracts(symbol),contract=chooseContract(contracts,direction,spot);if(!contract)return{confirmed:false,reason:"NO_VALID_OPTION_CONTRACT"};const key=contract.instrument_key||contract.instrumentKey,quote=(await upstoxFullQuotes([key])).find(q=>q.instrumentKey===key);if(!quote)return{confirmed:false,reason:"LIVE_OPTION_QUOTE_UNAVAILABLE",optionInstrumentKey:key};const volume=n(quote.volume),oi=n(quote.oi),previousOI=n(quote.previousOI),oiChange=previousOI>0?oi-previousOI:0,oiChangePercent=previousOI>0?(oiChange/previousOI)*100:0,confirmed=volume>=MIN_VOLUME&&oi>=MIN_OI;return{confirmed,reason:confirmed?"LIVE_VOLUME_OI_CONFIRMED":"INSUFFICIENT_LIVE_OPTION_VOLUME_OI",optionSymbol:contract.trading_symbol||contract.tradingsymbol||"",optionInstrumentKey:key,optionType:direction==="BULLISH"?"CE":"PE",optionStrike:n(contract.strike_price??contract.strike),optionExpiry:normalizeExpiry(contract.expiry??contract.expiry_date)||"",optionLTP:quote.price,optionVolume:volume,optionOI:oi,optionPreviousOI:previousOI,optionOIChange:oiChange,optionOIChangePercent:oiChangePercent,optionTimestamp:quote.timestamp||null,optionLastTradeTime:quote.lastTradeTime||null};}catch(error){return{confirmed:false,reason:`LIVE_OPTION_CONFIRMATION_ERROR:${error?.message||error}`};}}
 module.exports={getTop20ByLiveVolume,getTop500ByLiveVolume,getTop100OptionStocks,getTopMovers,filterOptionEligibleStocks,getOptionLiquidityConfirmation,getOptionConfirmation,upstoxFullQuotes,MAX_TOP_STOCKS,TOP_NSE_STOCKS,TOP_OPTION_STOCKS,MIN_OPTION_VOLUME,MIN_OPTION_OI};
