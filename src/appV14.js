@@ -6,7 +6,6 @@ const {calculateOptionsDecisions}=require("./optionsDecisionEngine");
 const {updateGoogleSheet,buildScannerStatus}=require("./googleSheet");
 const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
-const {evaluateLiveAccuracy}=require("./liveAccuracyEvaluator");
 const {getFastTradingUniverse}=require("./marketUniverse");
 const {getTop500ByLiveVolume,filterOptionEligibleStocks,getTopMovers}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
@@ -198,7 +197,7 @@ async function main(){
 
   let core=false,strategy=false;
   try{
-    await updateGoogleSheet({scannerData:decisionRows,dashboardData:dashboardRows,accuracyData:[]});
+    await updateGoogleSheet({scannerData:decisionRows,dashboardData:dashboardRows});
     core=true;
   }catch(e){console.error(`Sheet update failed: ${e?.message||e}`)}
 
