@@ -134,7 +134,8 @@ async function collectOptionEligible(liveRows,broker){
 
 async function main(){
   const started=new Date();
-  console.log("\n=== AI SMART SCANNER V14 | SEPARATE FAST EQUITY + OPTIONS PIPELINES ===");
+  console.log("
+=== AI SMART SCANNER V14 | SEPARATE FAST EQUITY + OPTIONS PIPELINES ===");
   const brokerName=String(process.env.BROKER||"UPSTOX").trim().toUpperCase();
   setBroker(brokerName);
   const broker=getActiveBroker();
@@ -142,8 +143,10 @@ async function main(){
   try{await loadInstruments()}catch(e){console.log(`Instrument load warning: ${e?.message||e}`)}
   try{await loadSymbolMaster()}catch(e){console.log(`Symbol master warning: ${e?.message||e}`)}
 
-  const fnoUniverse=await getFastTradingUniverse(broker);\n  const equityUniverse=await getNifty500Universe();
-  console.log(`FAST F&O UNIVERSE: ${fnoUniverse.symbols.length}`);\n  console.log(`NIFTY 500 EQUITY UNIVERSE: ${equityUniverse.symbols.length}`);
+  const fnoUniverse=await getFastTradingUniverse(broker);
+  const equityUniverse=await getNifty500Universe();
+  console.log(`FAST F&O UNIVERSE: ${fnoUniverse.symbols.length}`);
+  console.log(`NIFTY 500 EQUITY UNIVERSE: ${equityUniverse.symbols.length}`);
 
   // OPTION UNIVERSE: use the Dhan Options Stocks List as the membership
   // universe, then intersect it with Upstox instruments/live F&O quotes.
@@ -153,7 +156,7 @@ async function main(){
     .split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
   const optionUniverseSymbols=DHAN_OPTION_SYMBOLS.length
     ? fnoUniverse.symbols.filter(s=>DHAN_OPTION_SYMBOLS.includes(String(s).toUpperCase()))
-    : universe.symbols;
+    : fnoUniverse.symbols;
   console.log(`DHAN OPTION UNIVERSE: configured=${DHAN_OPTION_SYMBOLS.length} matchedUpstox=${optionUniverseSymbols.length}`);
 
   // The current fast universe is the complete available F&O stock universe.
@@ -224,10 +227,6 @@ async function main(){
   }catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}
 
   try{await buildDashboard(dashboardRows,decisions,equityUniverse.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}
-  try{
-    const liveAccuracy=await evaluateLiveAccuracy(broker);
-    console.log(`LIVE ACCURACY: found=${liveAccuracy.found} evaluated=${liveAccuracy.evaluated} updated=${liveAccuracy.updated} skipped=${liveAccuracy.skipped}`);
-  }catch(e){console.error(`Live Accuracy refresh failed: ${e?.message||e}`)}
 
   const elapsed=((Date.now()-started.getTime())/1000).toFixed(1);
   const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};
