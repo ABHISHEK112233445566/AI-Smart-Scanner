@@ -3,6 +3,8 @@
 // ============================================================
 // Dashboard is an OPTION dashboard. Equity candidates belong to
 // the EQUITY sheet and must never be converted into CE/PE rows.
+// A stock may be a strong scanner candidate even when the option
+// engine returns WATCH; only REJECT rows are excluded here.
 // ============================================================
 
 const DASHBOARD_MIN_SCORE = 5;
@@ -10,37 +12,13 @@ const DASHBOARD_STRONG_SCORE = 80;
 const DASHBOARD_MIN_CONFIDENCE = 0;
 const DASHBOARD_MAX_ROWS = 5;
 
-function safeNumber(value, fallback = 0) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
-}
-function getNestedValue(object, paths = []) {
-    if (!object || typeof object !== "object") return undefined;
-    for (const path of paths) {
-        let current = object, valid = true;
-        for (const part of String(path).split(".")) {
-            if (current === null || current === undefined || typeof current !== "object" || !(part in current)) { valid = false; break; }
-            current = current[part];
-        }
-        if (valid) return current;
-    }
-    return undefined;
-}
-function getISTDateParts(date = new Date()) {
-    return Object.fromEntries(new Intl.DateTimeFormat("en-GB", {timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
-}
+function safeNumber(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+function getNestedValue(object, paths = []) { if (!object || typeof object !== "object") return undefined; for (const path of paths) { let current = object, valid = true; for (const part of String(path).split(".")) { if (current === null || current === undefined || typeof current !== "object" || !(part in current)) { valid = false; break; } current = current[part]; } if (valid) return current; } return undefined; }
+function getISTDateParts(date = new Date()) { return Object.fromEntries(new Intl.DateTimeFormat("en-GB", {timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date).filter(p=>p.type!=="literal").map(p=>[p.type,p.value])); }
 function getISTTimestamp(date = new Date()) { const p=getISTDateParts(date); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}+05:30`; }
 function getISTMinutes(date = new Date()) { const p=getISTDateParts(date); return Number(p.hour)*60+Number(p.minute); }
 function getISTWeekday(date = new Date()) { const p=getISTDateParts(date); return new Date(Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day))).getUTCDay(); }
-function getOptionType(option) {
-    const direct=String(option?.optionType??option?.option_type??option?.finalDirection??option?.direction??option?.stockDirection??"").trim().toUpperCase();
-    if(["CALL","CE","BULLISH","LONG","BUY"].includes(direct))return"CALL";
-    if(["PUT","PE","BEARISH","SHORT","SELL"].includes(direct))return"PUT";
-    const symbol=String(option?.optionSymbol??option?.option_symbol??option?.tradingSymbol??option?.trading_symbol??"").trim().toUpperCase();
-    if(symbol.endsWith("CE"))return"CALL";
-    if(symbol.endsWith("PE"))return"PUT";
-    return"";
-}
+function getOptionType(option) { const direct=String(option?.optionType??option?.option_type??option?.finalDirection??option?.direction??option?.stockDirection??"").trim().toUpperCase(); if(["CALL","CE","BULLISH","LONG","BUY"].includes(direct))return"CALL"; if(["PUT","PE","BEARISH","SHORT","SELL"].includes(direct))return"PUT"; const symbol=String(option?.optionSymbol??option?.option_symbol??option?.tradingSymbol??option?.trading_symbol??"").trim().toUpperCase(); if(symbol.endsWith("CE"))return"CALL"; if(symbol.endsWith("PE"))return"PUT"; return""; }
 function getDecision(option) { return String(option?.optionsDecision??option?.optionDecision??option?.decision??"").trim().toUpperCase(); }
 function getConfidence(option) { return safeNumber(getNestedValue(option,["optionsConfidence","optionConfidence","confidence","score.confidence","decision.confidence"])); }
 function getScore(option) { return safeNumber(getNestedValue(option,["scannerScore","score"])); }
@@ -54,25 +32,11 @@ function getADX(option) { const value=getNestedValue(option,["adx","ADX","indica
 function getMood(option) { return String(getNestedValue(option,["oiMood","OIMood","oi_mood","mood","optionMood"])??"").trim().toUpperCase(); }
 function getStockName(option) { return String(option?.stock??option?.symbol??option?.name??"").trim(); }
 function getDashboardUniverse(results) { return Array.isArray(results?.allResults)?results.allResults:Array.isArray(results)?results:[]; }
-function hasRealOptionContract(option) {
-    const key=String(option?.optionInstrumentKey??option?.option_instrument_key??"").trim();
-    const ltp=safeNumber(option?.optionPremiumEntry??option?.optionLTP??option?.optionEntry);
-    const decision=getDecision(option);
-    const available=option?.contractAvailable===true||option?.optionContractChecked===true||option?.pipeline?.optionContractChecked===true;
-    return Boolean(key)&&ltp>0&&(available||option?.optionLiveDataAvailable===true)&&["TRADE","WATCH"].includes(decision);
-}
-function isDirectional(option) {
-    const values=[option?.direction,option?.stockDirection,option?.technicalDirection,option?.finalDirection,option?.optionType,option?.cePe,option?.side].map(v=>String(v??"").trim().toUpperCase());
-    return values.some(v=>["BULLISH","BEARISH","LONG","SHORT","BUY","SELL","CALL","PUT","CE","PE"].includes(v));
-}
+function hasRealOptionContract(option) { const key=String(option?.optionInstrumentKey??option?.option_instrument_key??"").trim(); const ltp=safeNumber(option?.optionPremiumEntry??option?.optionLTP??option?.optionEntry); return Boolean(key)&&ltp>0; }
+function isDirectional(option) { const values=[option?.direction,option?.stockDirection,option?.technicalDirection,option?.finalDirection,option?.optionType,option?.cePe,option?.side].map(v=>String(v??"").trim().toUpperCase()); return values.some(v=>["BULLISH","BEARISH","LONG","SHORT","BUY","SELL","CALL","PUT","CE","PE"].includes(v)); }
 function isAvoid(option) { const rating=String(option?.rating??option?.aiRating??"").trim().toUpperCase(),signal=String(option?.signal??"").trim().toUpperCase(),decision=getDecision(option); return rating.includes("AVOID")||signal==="AVOID"||decision==="REJECT"; }
 function isScoreQualified(option) { return isDashboardCandidate(option)&&scoreStrength(option)>=DASHBOARD_STRONG_SCORE; }
-function isDashboardCandidate(option) {
-    if(!option||typeof option!=="object")return false;
-    if(!isDirectional(option)||isAvoid(option))return false;
-    const name=getStockName(option),score=getScore(option);
-    return Boolean(name)&&Number.isFinite(score)&&score!==0&&scoreStrength(option)>=DASHBOARD_MIN_SCORE&&hasRealOptionContract(option);
-}
+function isDashboardCandidate(option) { if(!option||typeof option!=="object")return false; if(!isDirectional(option)||isAvoid(option))return false; const name=getStockName(option),score=getScore(option); return Boolean(name)&&Number.isFinite(score)&&score!==0&&scoreStrength(option)>=DASHBOARD_MIN_SCORE&&hasRealOptionContract(option); }
 function buildDashboard(results=[],optionDecisions=[],totalStocks=0) {
     const scanResults=getDashboardUniverse(results),decisions=Array.isArray(optionDecisions)?optionDecisions.filter(Boolean):[],total=safeNumber(totalStocks)>0?safeNumber(totalStocks):scanResults.length;
     const successfulScans=scanResults.filter(row=>row&&typeof row==="object"&&String(row.rejectionReason||"").toUpperCase()!=="ERROR").length;
