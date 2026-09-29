@@ -6,7 +6,7 @@ const {calculateOptionsDecisions}=require("./optionsDecisionEngine");
 const {updateGoogleSheet,buildScannerStatus}=require("./googleSheet");
 const {updateStrategySheets}=require("./strategySheets");
 const {buildDashboard}=require("./dashboard");
-const {getFastTradingUniverse}=require("./marketUniverse");
+const {getFastTradingUniverse,getNifty500Universe}=require("./marketUniverse");
 const {getTop500ByLiveVolume,filterOptionEligibleStocks,getTopMovers}=require("./liveMarket");
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
@@ -152,13 +152,13 @@ async function main(){
   const DHAN_OPTION_SYMBOLS=String(process.env.DHAN_OPTION_SYMBOLS||"")
     .split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
   const optionUniverseSymbols=DHAN_OPTION_SYMBOLS.length
-    ? universe.symbols.filter(s=>DHAN_OPTION_SYMBOLS.includes(String(s).toUpperCase()))
+    ? fnoUniverse.symbols.filter(s=>DHAN_OPTION_SYMBOLS.includes(String(s).toUpperCase()))
     : universe.symbols;
   console.log(`DHAN OPTION UNIVERSE: configured=${DHAN_OPTION_SYMBOLS.length} matchedUpstox=${optionUniverseSymbols.length}`);
 
   // The current fast universe is the complete available F&O stock universe.
   // Do not call it Top-500 when fewer than 500 F&O stocks are actually listed.
-  const topRanking=await getTop500ByLiveVolume(universe.symbols,broker,universe.symbols.length);
+  const topRanking=await getTop500ByLiveVolume(equityUniverse.symbols,broker,equityUniverse.symbols.length);
   const liveFnoRows=Array.isArray(topRanking?.top)?topRanking.top:[];
   if(!liveFnoRows.length)throw new Error("Live F&O ranking returned no stocks");
   console.log(`LIVE F&O COVERAGE: ${liveFnoRows.length}/${universe.symbols.length} underlyings have live quotes`);
@@ -223,7 +223,7 @@ async function main(){
     strategy=true;
   }catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}
 
-  try{await buildDashboard(dashboardRows,decisions,universe.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}
+  try{await buildDashboard(dashboardRows,decisions,equityUniverse.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}
   try{
     const liveAccuracy=await evaluateLiveAccuracy(broker);
     console.log(`LIVE ACCURACY: found=${liveAccuracy.found} evaluated=${liveAccuracy.evaluated} updated=${liveAccuracy.updated} skipped=${liveAccuracy.skipped}`);
@@ -231,11 +231,11 @@ async function main(){
 
   const elapsed=((Date.now()-started.getTime())/1000).toFixed(1);
   const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};
-  const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:universe.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
+  const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:equityUniverse.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});
   try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}
 
   console.log(`✅ V14 COMPLETE in ${elapsed}s | FNO=${universe.symbols.length} | LiveFNO=${liveFnoRows.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);
-  return{universe,liveFnoRows,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
+  return{universe:equityUniverse,fnoUniverse,liveFnoRows,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};
 }
 
 if(require.main===module)main().catch(e=>{console.error(`FATAL: ${e?.stack||e}`);process.exitCode=1});
