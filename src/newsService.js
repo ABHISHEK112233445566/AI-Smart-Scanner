@@ -14,7 +14,6 @@ const cache=new Map();
 function cleanSymbol(value){return String(value??"").trim().toUpperCase().replace(/[^A-Z0-9&.-]/g,"");}
 function decodeXml(value){return String(value??"").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();}
 function stripHtml(value){return decodeXml(value).replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();}
-function escapeRegExp(value){return String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}
 function tag(item,name){const re=new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`,"i");const m=String(item).match(re);return m?decodeXml(m[1]):"";}
 function parseItems(xml){
   const blocks=String(xml||"").match(/<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi)||[];
