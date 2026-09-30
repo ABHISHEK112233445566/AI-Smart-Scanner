@@ -53,7 +53,10 @@ async function fetchNewsForSymbol(symbol){
     const cutoff=Date.now()-NEWS_MAX_AGE_HOURS*3600000;
     const items=parseItems(xml).filter(item=>{const t=new Date(item.published).getTime();return Number.isFinite(t)&&t>=cutoff;});
     const item=items[0];
-    const status=item?classify(item.title):'NO_MAJOR_NEWS';const value=item?{newsStatus:status,newsDirection:newsDirection(status),newsScope:newsScope(item.title,s),newsHeadline:item.title.slice(0,240),newsSource:item.source||"News",newsAge:formatAge(hoursOld(item.published)),newsUrl:item.link||""}:{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:"No major news in last 24h",newsSource:"",newsAge:"",newsUrl:""}:{newsStatus:"NO_MAJOR_NEWS",newsHeadline:"No major news in last 24h",newsSource:"",newsAge:"",newsUrl:""};
+    const status=item?classify(item.title):'NO_MAJOR_NEWS';
+    const value=item
+      ?{newsStatus:status,newsDirection:newsDirection(status),newsScope:newsScope(item.title,s),newsHeadline:item.title.slice(0,240),newsSource:item.source||"News",newsAge:formatAge(hoursOld(item.published)),newsUrl:item.link||""}
+      :{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:"No major news in last 24h",newsSource:"",newsAge:"",newsUrl:""};
     cache.set(s,{cachedAt:Date.now(),value});
     return value;
   }catch(error){
