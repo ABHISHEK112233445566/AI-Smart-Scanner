@@ -16,7 +16,7 @@ function decodeXml(value){return String(value??"").replace(/<!\[CDATA\[([\s\S]*?
 function stripHtml(value){return decodeXml(value).replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();}
 function tag(item,name){const re=new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${name}>`,"i");const m=String(item).match(re);return m?decodeXml(m[1]):"";}
 function parseItems(xml){
-  const blocks=String(xml||"").match(/<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi)||[];
+  const blocks=String(xml||"").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)||[];
   return blocks.map(item=>({title:stripHtml(tag(item,"title")),link:tag(item,"link"),published:tag(item,"pubDate"),source:stripHtml(tag(item,"source"))})).filter(x=>x.title);
 }
 function hoursOld(date){const t=new Date(date).getTime();if(!Number.isFinite(t))return Infinity;return Math.max(0,(Date.now()-t)/3600000);}
