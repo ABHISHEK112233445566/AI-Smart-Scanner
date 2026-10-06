@@ -32,14 +32,59 @@ function classify(title){
   if(positive&&!negative)return "POSITIVE";
   return "NEUTRAL";
 }
-async function fetchText(url){
+async function fetchResponse(url){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),NEWS_TIMEOUT_MS);
   try{
-    const response=await fetch(url,{signal:controller.signal,headers:{"User-Agent":"AI-Smart-Scanner/1.0"}});
+    const response=await fetch(url,{
+      signal:controller.signal,
+      headers:{
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36 AI-Smart-Scanner/1.0",
+        "Accept":"application/rss+xml, application/xml, text/xml, application/json, text/plain, */*",
+        "Accept-Language":"en-IN,en;q=0.9"
+      }
+    });
     if(!response.ok)throw new Error(`HTTP ${response.status}`);
-    return await response.text();
+    return response;
   }finally{clearTimeout(timer);}
+}
+async function fetchText(url){
+  const response=await fetchResponse(url);
+  return response.text();
+}
+async function fetchJson(url){
+  const response=await fetchResponse(url);
+  return response.json();
+}
+function emptyNews(message="No major news in last 24h"){
+  return{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:message,newsSource:"",newsAge:"",newsUrl:""};
+}
+function normalizeNewsItem(item,symbol){
+  const title=stripHtml(item?.title||"");
+  const link=String(item?.link||"").trim();
+  const source=stripHtml(item?.source||item?.publisher||"");
+  const timestamp=Number(item?.providerPublishTime);
+  const published=Number.isFinite(timestamp)?new Date(timestamp*1000):new Date(item?.published||"");
+  if(!title||!Number.isFinite(published.getTime()))return null;
+  const symbolClean=cleanSymbol(symbol).replace(/[^A-Z0-9]/g,"");
+  const titleClean=title.toUpperCase().replace(/[^A-Z0-9]/g,"");
+  const related=(Array.isArray(item?.relatedTickers)?item.relatedTickers:[]).map(x=>cleanSymbol(x)).map(x=>x.replace(/[^A-Z0-9]/g,""));
+  const relevant=titleClean.includes(symbolClean)||related.includes(symbolClean);
+  return{title,link,source,published,relevant};
+}
+function chooseFreshNews(items,symbol){
+  const cutoff=Date.now()-NEWS_MAX_AGE_HOURS*3600000;
+  return items
+    .map(item=>normalizeNewsItem(item,symbol))
+    .filter(Boolean)
+    .filter(item=>item.published.getTime()>=cutoff)
+    .sort((a,b)=>(Number(b.relevant)-Number(a.relevant))||(b.published-a.published))[0]||null;
+}
+async function fetchYahooNews(symbol){
+  const s=cleanSymbol(symbol);
+  const query=encodeURIComponent(`${s} NSE India stock`);
+  const data=await fetchJson(`https://query1.finance.yahoo.com/v1/finance/search?q=${query}&newsCount=10&quotesCount=0`);
+  return chooseFreshNews(Array.isArray(data?.news)?data.news:[],s);
 }
 async function fetchNewsForSymbol(symbol){
   const s=cleanSymbol(symbol);
@@ -47,21 +92,35 @@ async function fetchNewsForSymbol(symbol){
   const cached=cache.get(s);
   if(cached&&Date.now()-cached.cachedAt<CACHE_TTL_MS)return cached.value;
   const query=encodeURIComponent(`"${s}" stock OR shares OR company when:${Math.max(1,Math.ceil(NEWS_MAX_AGE_HOURS/24))}d`);
-  const url=`https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+  const googleUrl=`https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
   try{
-    const xml=await fetchText(url);
-    const cutoff=Date.now()-NEWS_MAX_AGE_HOURS*3600000;
-    const items=parseItems(xml).filter(item=>{const t=new Date(item.published).getTime();return Number.isFinite(t)&&t>=cutoff;});
-    const item=items[0];
-    const status=item?classify(item.title):'NO_MAJOR_NEWS';
-    const value=item
-      ?{newsStatus:status,newsDirection:newsDirection(status),newsScope:newsScope(item.title,s),newsHeadline:item.title.slice(0,240),newsSource:item.source||"News",newsAge:formatAge(hoursOld(item.published)),newsUrl:item.link||""}
-      :{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:"No major news in last 24h",newsSource:"",newsAge:"",newsUrl:""};
+    let item=null;
+    try{
+      const xml=await fetchText(googleUrl);
+      const cutoff=Date.now()-NEWS_MAX_AGE_HOURS*3600000;
+      const googleItems=parseItems(xml).filter(x=>{const t=new Date(x.published).getTime();return Number.isFinite(t)&&t>=cutoff;});
+      item=chooseFreshNews(googleItems.map(x=>({title:x.title,link:x.link,source:x.source,published:x.published})),s);
+    }catch(error){
+      console.warn(`NEWS GOOGLE ${s}: ${error?.message||error}`);
+    }
+    if(!item){
+      try{
+        item=await fetchYahooNews(s);
+      }catch(error){
+        console.warn(`NEWS YAHOO ${s}: ${error?.message||error}`);
+      }
+    }
+    if(item){
+      const status=classify(item.title);
+      const value={newsStatus:status,newsDirection:newsDirection(status),newsScope:newsScope(item.title,s),newsHeadline:item.title.slice(0,240),newsSource:item.source||"News",newsAge:formatAge(hoursOld(item.published)),newsUrl:item.link||""};
+      cache.set(s,{cachedAt:Date.now(),value});
+      return value;
+    }
+    const value=emptyNews();
     cache.set(s,{cachedAt:Date.now(),value});
     return value;
   }catch(error){
     const value={newsStatus:"NEWS_UNAVAILABLE",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:"News feed unavailable",newsSource:"",newsAge:"",newsUrl:""};
-    cache.set(s,{cachedAt:Date.now(),value});
     console.warn(`NEWS ${s}: ${error?.message||error}`);
     return value;
   }
