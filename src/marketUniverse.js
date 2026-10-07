@@ -3,6 +3,7 @@ const NSE_FO_SEGMENT="NSE_FO";
 const NSE_OPTION_TYPES=new Set(["CE","PE"]);
 const axios=require("axios");
 const NIFTY500_URL="https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv";
+const NIFTY500_FALLBACK_URL="https://raw.githubusercontent.com/BKKB20/nse-index-history/main/current_members/NIFTY_500.csv";
 
 function normalizeSymbol(v){return String(v||'').trim().toUpperCase().replace(/\s+/g,'').replace(/^NSE[_:]?EQ[|:]/,'').replace(/^NSE[|:]/,'').replace(/\.NS$/i,'').replace(/-EQ$/i,'');}
 function isNseEquity(i){const segment=String(i?.segment||'').toUpperCase(),exchange=String(i?.exchange||'').toUpperCase(),type=String(i?.instrument_type||'').toUpperCase();return segment===NSE_EQUITY_SEGMENT||(exchange==='NSE'&&type==='EQ');}
@@ -55,19 +56,39 @@ function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(val
 
 async function getNifty500Universe(){
   if(!axios||typeof axios.get!=="function")throw new Error("axios is unavailable for Nifty 500 universe");
-  const response=await axios.get(NIFTY500_URL,{timeout:30000,responseType:"text",headers:{"User-Agent":"Mozilla/5.0"}});
-  const raw=String(response.data||"").replace(/^\uFEFF/,"");
-  const lines=raw.split(/\r?\n/).filter(Boolean);
-  if(lines.length<450)throw new Error(`Nifty 500 constituent CSV returned too little data: ${lines.length} rows`);
-  const symbols=[];
-  for(const line of lines.slice(1)){
-    const cols=line.split(",").map(v=>String(v||"").trim().replace(/^"|"$/g,""));
-    const symbol=normalizeSymbol(cols[2]||cols[1]);
-    if(symbol&&symbol!=="SYMBOL")symbols.push(symbol);
+  const urls=[NIFTY500_URL,NIFTY500_FALLBACK_URL];
+  const errors=[];
+  for(const url of urls){
+    try{
+      const response=await axios.get(url,{
+        timeout:20000,
+        responseType:"text",
+        validateStatus:status=>status>=200&&status<300,
+        headers:{
+          "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+          "Accept":"text/csv,text/plain,*/*",
+          "Referer":"https://www.niftyindices.com/"
+        }
+      });
+      const raw=String(response.data||"").replace(/^\uFEFF/,"");
+      const lines=raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      if(lines.length<450)throw new Error("too little data: "+lines.length+" rows");
+      const symbols=[];
+      for(const line of lines.slice(1)){
+        const cols=line.split(",").map(v=>String(v||"").trim().replace(/^"|"$/g,""));
+        const symbol=normalizeSymbol(cols.length>=3?cols[2]:cols[0]);
+        if(symbol&&symbol!=="SYMBOL")symbols.push(symbol);
+      }
+      const unique=[...new Set(symbols)];
+      if(unique.length<450)throw new Error("invalid constituent list: "+unique.length+" symbols");
+      console.log("NIFTY 500 SOURCE: "+(url===NIFTY500_URL?"official NSE Indices":"fallback mirror")+" | symbols="+unique.length);
+      return{name:"NIFTY_500",symbols:unique,universeSize:unique.length,source:url};
+    }catch(e){
+      errors.push(url+": "+(e?.message||e));
+      console.warn("Nifty 500 source failed: "+url+" | "+(e?.message||e));
+    }
   }
-  const unique=[...new Set(symbols)];
-  if(unique.length<450)throw new Error(`Nifty 500 constituent list invalid: ${unique.length} symbols`);
-  return{name:"NIFTY_500",symbols:unique,universeSize:unique.length,source:NIFTY500_URL};
+  throw new Error("Nifty 500 constituent fetch failed from all sources: "+errors.join(" || "));
 }
 
 async function getWholeNseUniverse(broker){
