@@ -51,6 +51,7 @@ function isCommodityOption(i) {
   return isMcx(i) && ["CE", "PE"].includes(typeOf(i)) && Boolean(keyOf(i)) && num(first(i, ["strike_price", "strike", "strikePrice"])) > 0 && Boolean(expiryOf(i));
 }
 function getQuoteObject(response, instrumentKey) {
+  if (response && typeof response === "object" && num(first(response, ["last_price", "lastPrice", "ltp", "last_traded_price"])) > 0) return response;
   const data = response?.data?.data || response?.data || {};
   if (data[instrumentKey]) return data[instrumentKey];
   const decoded = instrumentKey.replace(/%7C/gi, "|");
