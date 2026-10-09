@@ -14,10 +14,12 @@ function symbolOf(i) { return upper(first(i, ["underlying_symbol", "underlyingSy
 function segmentOf(i) { return upper(first(i, ["segment", "exchange_segment"])); }
 function exchangeOf(i) { return upper(first(i, ["exchange", "exchange_name"])); }
 function typeOf(i) {
-  const t = upper(first(i, ["instrument_type", "option_type", "optionType"]));
-  if (["CE", "CALL"].includes(t)) return "CE";
-  if (["PE", "PUT"].includes(t)) return "PE";
-  return t;
+  for (const value of [i?.option_type, i?.optionType, i?.instrument_type, i?.instrumentType]) {
+    const t = upper(value);
+    if (["CE", "CALL"].includes(t)) return "CE";
+    if (["PE", "PUT"].includes(t)) return "PE";
+  }
+  return upper(first(i, ["instrument_type", "instrumentType", "option_type", "optionType"]));
 }
 function expiryOf(i) {
   const raw = first(i, ["expiry", "expiry_date", "expiryDate"]);
