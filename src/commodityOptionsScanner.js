@@ -10,7 +10,17 @@ function upper(v) { return text(v).toUpperCase(); }
 function num(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function first(obj, keys) { for (const key of keys) if (obj?.[key] != null && text(obj[key]) !== "") return obj[key]; return ""; }
 function keyOf(i) { return text(first(i, ["instrument_key", "instrumentKey", "key"])); }
-function symbolOf(i) { return upper(first(i, ["underlying_symbol", "underlyingSymbol", "underlying", "name"])); }
+function symbolOf(i) {
+  const explicit = upper(first(i, ["underlying_symbol", "underlyingSymbol", "underlying", "underlying_name", "underlyingName"]));
+  if (explicit) return explicit.replace(/\\s+/g, "");
+  const raw = upper(first(i, ["trading_symbol", "tradingsymbol", "tradingSymbol", "name", "short_name"])).replace(/\\s+/g, "");
+  return raw
+    .replace(/\\d{1,2}[A-Z]{3}\\d{2}FUT.*$/, "")
+    .replace(/\\d{1,2}[A-Z]{3}FUT.*$/, "")
+    .replace(/\\d{1,2}[A-Z]{3}\\d{2}.*$/, "")
+    .replace(/\\d{1,2}[A-Z]{3}.*$/, "")
+    .replace(/\\d{4,}.*$/, "");
+}
 function segmentOf(i) { return upper(first(i, ["segment", "exchange_segment"])); }
 function exchangeOf(i) { return upper(first(i, ["exchange", "exchange_name"])); }
 function typeOf(i) {
