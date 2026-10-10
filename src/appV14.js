@@ -135,8 +135,31 @@ try{
 }catch(e){console.error("NIFTY stock-style scan failed without stopping existing stock scanner: "+(e?.message||e))}
 let dashboardRows=rankDashboard(decisionRows);
 const niftyDashboardRow=decisionRows.find(r=>key(r)==="NIFTY"||key(r)==="NIFTY 50");
-if(niftyDashboardRow&&validOptionRow(niftyDashboardRow)){
-  dashboardRows=[...dashboardRows.filter(r=>key(r)!=="NIFTY"&&key(r)!=="NIFTY 50").slice(0,TOP_5-1),sanitizeOptionRow(niftyDashboardRow)];
+if(niftyDashboardRow&&num(niftyDashboardRow.price)>0&&Math.abs(score(niftyDashboardRow))>=5){
+  // NIFTY is a required index row on the compact dashboard, even when its
+  // option gate rejects the contract. Keep rejected/unclear setups visible as
+  // WATCH with the rejection reason; never promote them to an executable trade.
+  const niftyReady=validOptionRow(niftyDashboardRow);
+  const niftyForDashboard=niftyReady
+    ? sanitizeOptionRow(niftyDashboardRow)
+    : {
+        ...niftyDashboardRow,
+        optionsDecision:"WATCH",
+        decision:"WATCH",
+        optionEligible:false,
+        optionDataValid:false,
+        optionEngineQualified:false,
+        optionRejectionReason:niftyDashboardRow.rejectionReason||"NIFTY_OPTION_GATE_NOT_PASSED",
+        optionPremiumEntry:0,
+        optionLTP:0,
+        optionEntry:0,
+        entryPrice:0
+      };
+  dashboardRows=[
+    ...dashboardRows.filter(r=>key(r)!=="NIFTY"&&key(r)!=="NIFTY 50").slice(0,TOP_5-1),
+    niftyForDashboard
+  ];
+  console.log("NIFTY DASHBOARD: included index row; optionGate="+(niftyReady?"PASSED":"NOT PASSED — WATCH ONLY"));
 }
 const finalTrade=dashboardRows.filter(r=>decision(r)==="TRADE").slice(0,ONE_TRADE_LIMIT);console.log(`SCANNER: option Top-20=${decisionRows.length}`);console.log(`DASHBOARD: option Top-5=${dashboardRows.length}`);console.log(`FINAL TRADE: ${finalTrade.length}`);let commodityOptions=[];try{const {scanCommodityOptions}=require("./commodityOptionsScanner");commodityOptions=await scanCommodityOptions(broker);console.log(`MCX OPTIONS: independent scan returned ${commodityOptions.length} candidates`);}catch(e){console.error(`MCX options scan failed without stopping stock scanner: ${e?.message||e}`)}let core=false,strategy=false;try{await updateGoogleSheet({scannerData:decisionRows,dashboardData:dashboardRows});core=true;}catch(e){console.error(`Sheet update failed: ${e?.message||e}`)}try{await updateStrategySheets(equityTop20,decisions,equityTop20,DIVIDEND_LONG_TERM_SYMBOLS.map(s=>dividendRows.find(r=>key(r)===String(s).toUpperCase())||{stock:s,symbol:s,rejectionReason:"NOT_SCANNED"}),commodityOptions);strategy=true;}catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}try{await buildDashboard(dashboardRows,decisions,equityUniverse.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}
 if(niftyDashboard?.index)console.log(`NIFTY stock-style row routed through SCANNER Top-20 and compact Dashboard Top-5 | ${niftyDashboard.index.trend} | LTP=${niftyDashboard.index.price}`);const elapsed=((Date.now()-started.getTime())/1000).toFixed(1);const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:equityUniverse.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}console.log(`✅ V14 COMPLETE in ${elapsed}s | FNO=${fnoUniverse.symbols.length} | LiveFNO=${liveFnoRows.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);return{universe:equityUniverse,fnoUniverse,liveFnoRows,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};}
