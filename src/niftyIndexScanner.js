@@ -1,5 +1,12 @@
 // Independent NIFTY 50 index/options scanner. It never feeds or changes stock rankings.
 const { calculateIndicators } = require("./indicators");
+const { calculateScore } = require("./aiEngine");
+const { calculateSupportResistance } = require("./supportResistance");
+const { calculateBreakout } = require("./breakout");
+const { calculatePivotPoints } = require("./pivotPoints");
+const { calculateCPR } = require("./cpr");
+const { getMultiTimeframeAnalysis } = require("./mtfScanner");
+const { fetchNewsForIndex } = require("./newsService");
 const IST = "Asia/Kolkata";
 const INDEX_NAME = "NIFTY 50";
 const INDEX_KEY_HINTS = ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty50"];
@@ -79,10 +86,25 @@ async function scanNiftyIndex(broker) {
   if (!(price > 0)) throw new Error("NIFTY 50 historical/intraday price unavailable: " + (dailyResult.status === "rejected" ? dailyResult.reason?.message : "no valid candles"));
   const intradayDay = latestIntraday?.time ? dayKey(latestIntraday.time) : ""; const dailyDay = latestDaily?.time ? dayKey(latestDaily.time) : ""; const previousClose = intradayDay && dailyDay && intradayDay === dailyDay ? (n(previousDaily?.close) || n(latestDaily?.open) || price) : (n(latestDaily?.close) || n(previousDaily?.close) || price);
   const change = price - previousClose, changePct = previousClose > 0 ? change / previousClose * 100 : 0;
-  const ind = calculateIndicators(dailyValid);
+  const completedDaily = dailyValid.filter(c => {
+    const time = c?.time ?? c?.timestamp ?? c?.datetime ?? c?.date;
+    return !time || dayKey(time) !== dayKey(new Date());
+  });
+  const analysisDaily = completedDaily.length >= 50 ? completedDaily : dailyValid.slice(0, -1);
+  const analysisCandles = analysisDaily.length >= 2 ? analysisDaily : dailyValid;
+  const ind = calculateIndicators(analysisCandles);
+  ind.price = price;
   const ema20 = n(ind.ema20), ema50 = n(ind.ema50), ema200 = n(ind.ema200);
-  const dma20 = sma(dailyValid, 20), dma50 = sma(dailyValid, 50), dma200 = sma(dailyValid, 200);
+  const dma20 = sma(analysisCandles, 20), dma50 = sma(analysisCandles, 50), dma200 = sma(analysisCandles, 200);
   const trend = trendFor(price, ind);
+  let ai = {}, support = {}, breakout = {}, pivots = {}, cpr = null, mtf = {}, news = {};
+  try { ai = calculateScore({ ...ind, price, currentPrice: price, stock: INDEX_NAME, symbol: INDEX_NAME }) || {}; } catch (e) { console.warn("NIFTY AI scoring unavailable: " + (e?.message || e)); }
+  try { support = calculateSupportResistance(analysisCandles) || {}; } catch (e) { console.warn("NIFTY support/resistance unavailable: " + (e?.message || e)); }
+  try { breakout = calculateBreakout(analysisCandles, ind, support) || {}; } catch (e) { console.warn("NIFTY breakout/pattern unavailable: " + (e?.message || e)); }
+  try { pivots = calculatePivotPoints(analysisCandles) || {}; } catch (e) { console.warn("NIFTY pivots unavailable: " + (e?.message || e)); }
+  try { cpr = calculateCPR(analysisCandles); } catch (e) { console.warn("NIFTY CPR unavailable: " + (e?.message || e)); }
+  try { mtf = await getMultiTimeframeAnalysis(indexKey); } catch (e) { console.warn("NIFTY MTF unavailable: " + (e?.message || e)); }
+  try { news = await fetchNewsForIndex(); } catch (e) { news = { newsStatus: "NEWS_UNAVAILABLE", newsHeadline: "Nifty/market news unavailable", newsSource: "", newsAge: "", newsUrl: "" }; }
   let expiry = "", atm = "", ce = null, pe = null, ceQuote = null, peQuote = null, mood = { pcr: null, mood: "OPTION CHAIN UNAVAILABLE", ceOi: 0, peOi: 0, ceDelta: null, peDelta: null };
   const contracts = contractsResult.status === "fulfilled" && Array.isArray(contractsResult.value) ? contractsResult.value : [];
   if (contracts.length) {
@@ -109,23 +131,34 @@ async function scanNiftyIndex(broker) {
   const optionLtp = n(selected?.ltp);
   const signal = aligned && optionLtp > 0 ? "WATCH " + aligned : "NO CLEAR BIAS";
   
-  const headers = ["Metric","NIFTY 50 Index Scan","CE (ATM)","PE (ATM)"];
+  const headers = ["Metric","NIFTY 50 Index Scan","CE (ATM)","PE (ATM)","News"];
   const rows = [
-    ["Index LTP", round(price), "", ""],
-    ["Previous Close", round(previousClose), "", ""],
-    ["Change / Change %", round(change) + " / " + round(changePct) + "%", "", ""],
-    ["DMA 20 / 50 / 200", [dma20,dma50,dma200].map(v=>round(v)).join(" / "), "", ""],
-    ["EMA 20 / 50 / 200", [ema20,ema50,ema200].map(v=>round(v)).join(" / "), "", ""],
-    ["RSI (14) / MACD", (n(ind.rsi)==null?"":round(ind.rsi)) + " / " + (ind.macd?.MACD==null?"":round(ind.macd.MACD)), "", ""],
-    ["Trend / Option Mood", trend + " / " + mood.mood, "", ""],
-    ["Expiry / ATM Strike", (expiry || "Unavailable") + " / " + (atm || "Unavailable"), "", ""],
-    ["Option LTP", "", round(ceQuote?.ltp), round(peQuote?.ltp)],
-    ["Option OI / Previous OI", "", [ceQuote?.oi,ceQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), [peQuote?.oi,peQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / ")],
-    ["Near-ATM PCR (PE OI / CE OI)", mood.pcr == null ? "" : round(mood.pcr), "", ""],
-    ["Signal (confirmation only)", signal, "", ""],
-    ["Option Decision", "PRELIMINARY BIAS ONLY — existing stock option gates not applied", "", ""],
-    ["Updated (IST)", stampIST(), "", ""]
+    ["Index LTP", round(price), "", "", ""],
+    ["Previous Close / Change", round(previousClose) + " / " + round(change) + " (" + round(changePct) + "%)", "", "", ""],
+    ["DMA 20 / 50 / 200", [dma20,dma50,dma200].map(v=>round(v)).join(" / "), "", "", ""],
+    ["EMA 20 / 50 / 100 / 200", [ind.ema20,ind.ema50,ind.ema100,ind.ema200].map(v=>round(n(v))).join(" / "), "", "", ""],
+    ["RSI / MACD / ADX", [n(ind.rsi),n(ind.macd?.MACD),n(ind.adx?.adx)].map(v=>round(v)).join(" / "), "", "", ""],
+    ["ATR / Bollinger / Supertrend", [n(ind.atr),n(ind.bollinger?.upper),n(ind.bollinger?.lower),n(ind.supertrend?.supertrend ?? ind.supertrend?.value)].map(v=>round(v)).join(" / "), "", "", ""],
+    ["AI Score / Direction / Rating", [n(ai.scannerScore ?? ai.score), ai.direction || trend, ai.rating || ""].join(" / "), "", "", ""],
+    ["Volume / Avg Volume 5 / RVOL", [n(ind.volume),n(ind.avgVolume5),n(ind.rvol)].map(v=>round(v,0)).join(" / "), "", "", ""],
+    ["Support / Resistance", [n(support.support),n(support.resistance),n(support.support1),n(support.resistance1)].map(v=>round(v)).join(" / "), "", "", ""],
+    ["Breakout / Chart Pattern", [breakout.breakout ? "BREAKOUT" : breakout.breakdown ? "BREAKDOWN" : "NO CONFIRMATION", breakout.patternName || breakout.pattern || "NONE", breakout.patternStatus || ""].join(" / "), "", "", ""],
+    ["Pivot / S1 / R1", [n(pivots.pivot),n(pivots.s1),n(pivots.r1)].map(v=>round(v)).join(" / "), "", "", ""],
+    ["CPR Type / Top / Bottom", cpr ? [cpr.type,round(cpr.top),round(cpr.bottom)].join(" / ") : "Unavailable", "", "", ""],
+    ["MTF Daily / 4H / 1H / 15m", [mtf.dailyTrend,mtf.fourHourTrend,mtf.oneHourTrend,mtf.fifteenMinTrend].join(" / "), "", "", ""],
+    ["MTF Overall / Alignment", [mtf.overallTrend,mtf.alignment].filter(Boolean).join(" / "), "", "", ""],
+    ["Trend / Option Mood", trend + " / " + mood.mood, "", "", ""],
+    ["Expiry / ATM Strike", (expiry || "Unavailable") + " / " + (atm || "Unavailable"), "", "", ""],
+    ["Option LTP", "", round(ceQuote?.ltp), round(peQuote?.ltp), ""],
+    ["Option OI / Previous OI", "", [ceQuote?.oi,ceQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), [peQuote?.oi,peQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), ""],
+    ["Near-ATM PCR (PE OI / CE OI)", mood.pcr == null ? "" : round(mood.pcr), "", "", ""],
+    ["Option Signal (confirmation only)", signal, "", "", ""],
+    ["News Status / Direction", [news.newsStatus,news.newsDirection].filter(Boolean).join(" / "), "", "", ""],
+    ["News Headline / Source / Age", [news.newsHeadline,news.newsSource,news.newsAge].filter(Boolean).join(" / "), "", "", ""],
+    ["News URL", news.newsUrl || "", "", "", ""],
+    ["Option Decision", "PRELIMINARY BIAS ONLY — full index-specific option gates still require validation", "", "", ""],
+    ["Updated (IST)", stampIST(), "", "", ""]
   ];
-  return { headers, rows, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
+  return { headers, rows, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, aiScore: n(ai.scannerScore ?? ai.score), mtf, support, breakout, pivots, cpr, news, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
 }
 module.exports = { scanNiftyIndex };
