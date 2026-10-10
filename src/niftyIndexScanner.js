@@ -164,6 +164,13 @@ async function scanNiftyIndex(broker) {
   const pickedQuote = pickedType === "PE" ? peQuote : ceQuote;
   const pickedContract = pickedQuote?.contract || null;
   const premium = n(pickedQuote?.ltp) || 0;
+  // Index-price risk levels and option-premium levels must never be mixed.
+  const underlyingAtr = n(ind.atr) > 0 ? n(ind.atr) : Math.max(price * 0.005, 1);
+  const bearishSide = pickedType === "PE";
+  const underlyingStop = round(bearishSide ? price + underlyingAtr : price - underlyingAtr);
+  const underlyingRisk = Math.abs(underlyingStop - price);
+  const underlyingTarget1 = round(bearishSide ? price - underlyingRisk * 1.5 : price + underlyingRisk * 1.5);
+  const underlyingTarget2 = round(bearishSide ? price - underlyingRisk * 2 : price + underlyingRisk * 2);
   const premiumStop = premium > 0 ? round(premium * 0.70) : 0;
   const premiumTarget = premium > 0 ? round(premium * 1.45) : 0;
   const premiumTarget2 = premium > 0 ? round(premium * 1.75) : 0;
@@ -186,18 +193,28 @@ async function scanNiftyIndex(broker) {
     recommendedStrike: n(pickedQuote?.strike ?? pickedContract?.strike_price ?? pickedContract?.strike) || 0,
     bestStrike: n(pickedQuote?.strike ?? pickedContract?.strike_price ?? pickedContract?.strike) || 0,
     optionLTP: premium, optionLtp: premium, optionEntry: premium, optionPremiumEntry: premium,
-    stockEntry: premium, underlyingEntry: price, marketEntry: premium,
-    stockStopLoss: premiumStop, stopLoss: premiumStop, stockTarget1: premiumTarget, stockTarget2: premiumTarget2,
-    target: premiumTarget, target1: premiumTarget, target2: premiumTarget2,
+    // Generic stock-style fields contain the NIFTY underlying index price.
+    stockEntry: price, underlyingEntry: price, marketEntry: price, entry: price,
+    stockStopLoss: underlyingStop, stopLoss: underlyingStop,
+    stockTarget1: underlyingTarget1, stockTarget2: underlyingTarget2,
+    target: underlyingTarget1, target1: underlyingTarget1, target2: underlyingTarget2,
+    optionPremiumStopLoss: premiumStop, optionPremiumTarget1: premiumTarget,
+    optionPremiumTarget2: premiumTarget2,
+    optionPremiumRisk: premium > 0 ? round(premium - premiumStop) : 0,
+    optionPremiumReward: premium > 0 ? round(premiumTarget - premium) : 0,
+    optionPremiumRiskReward: premium > 0 ? 1.5 : 0,
     confidence: n(ai.confidence) ?? 70, optionsConfidence: n(ai.confidence) ?? 70,
     riskReward: 1.5, optionsDecision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
     decision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
     rejectionReason: aligned ? (premium > 0 ? "" : "NIFTY_OPTION_QUOTE_UNAVAILABLE") : "NIFTY_NO_CONFIRMED_DIRECTION",
     gates: { basePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
     pipeline: { optionsTradeGatePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
-    volume: n(ind.volume) ?? 0, avgVolume5: n(ind.avgVolume5) ?? 0,
-    volumeRatio5: n(ind.rvol) ?? 0, volumePaceRatio5: n(ind.volumePaceRatio5) ?? 0,
-    rvol: n(ind.rvol) ?? 0, volumeConfirmed5: Boolean(n(ind.rvol) >= 1),
+    // Spot-index volume is not comparable to stock share volume; do not mark
+    // a missing index-volume field as failed stock-volume confirmation.
+    volume: null, avgVolume5: null, volumeRatio5: null,
+    volumePaceRatio5: null, volumeExpectedByNow5: null,
+    rvol: null, volumeConfirmed5: null, volumeConfirmed: null,
+    volumeQuality: "NOT_APPLICABLE_INDEX",
     ema20: n(ind.ema20), ema50: n(ind.ema50), ema100: n(ind.ema100), ema200: n(ind.ema200),
     dma20, dma50, dma200, rsi: n(ind.rsi), macdValue: n(ind.macd?.MACD), macdSignal: n(ind.macd?.signal),
     adx: n(ind.adx?.adx ?? ind.adx), atr: n(ind.atr), vwap: n(ind.vwap),
