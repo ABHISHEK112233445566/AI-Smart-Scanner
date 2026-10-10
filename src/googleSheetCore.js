@@ -43,6 +43,7 @@ async function postToGoogleSheet(payload){
         throw e;
     }
 }
+async function updateNiftyDashboard(niftyDashboard={}){const r=await postToGoogleSheet({action:'nifty_dashboard',title:'NIFTY 50 INDEX SCAN',headers:Array.isArray(niftyDashboard.headers)?niftyDashboard.headers:[],rows:Array.isArray(niftyDashboard.rows)?niftyDashboard.rows:[],index:niftyDashboard.index||{}});return r?.data||{};}
 async function postReplaceSheet(sheet,objects){const r=await postToGoogleSheet(buildSheetPayload(sheet,objects));return r?.data||{};}
 async function postDashboard(rows){const r=await postToGoogleSheet(buildDashboardPayload(rows));return r?.data||{};}
 async function updateGoogleSheet(payload={}){
@@ -54,4 +55,4 @@ async function updateGoogleSheet(payload={}){
     return{success:true,scanner,dashboard,scannerRows:scannerData.length,dashboardRows:selectDashboardRows(dashboardData).length};
 }
 function buildScannerStatus(x={}){const now=new Date();return{status:String(x.status||'SUCCESS').toUpperCase(),lastScanTime:now.toISOString(),lastScanTimeIST:toIST(now),lastScanSource:process.env.GITHUB_ACTIONS?'GitHub Actions':'Local',broker:String(x.broker||process.env.BROKER||'UPSTOX').toUpperCase(),universe:String(x.universe||'ALL').toUpperCase(),stocksScanned:Number(x.scanned)||0,successfulScans:Number(x.successfulScans)||0,failedScans:Number(x.failedScans)||0,callCandidates:Number(x.callCandidates)||0,putCandidates:Number(x.putCandidates)||0,tradeCount:Number(x.tradeCount)||0,watchCount:Number(x.watchCount)||0,rejectCount:Number(x.rejectCount)||0,elapsedSeconds:Number(x.elapsedSeconds)||0,durationMs:Number(x.durationMs)||0};}
-module.exports={updateGoogleSheet,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,score,magnitude,direction,buildScannerStatus,DASHBOARD_MAX_ROWS:DASHBOARD_MIN_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard};
+module.exports={updateGoogleSheet,updateNiftyDashboard,postToGoogleSheet,getGoogleSheetUrl,selectDashboardRows,score,magnitude,direction,buildScannerStatus,DASHBOARD_MAX_ROWS:DASHBOARD_MIN_ROWS,MIN_CONFIDENCE,MIN_RR,addOIMood,buildDashboardPayload,postDashboard};
