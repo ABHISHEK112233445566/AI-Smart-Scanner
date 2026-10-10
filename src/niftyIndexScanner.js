@@ -77,7 +77,7 @@ async function scanNiftyIndex(broker) {
   const latestDaily = dailyValid.at(-1), previousDaily = dailyValid.at(-2), latestIntraday = intradayValid.at(-1);
   const price = n(latestIntraday?.close) || n(latestDaily?.close);
   if (!(price > 0)) throw new Error("NIFTY 50 historical/intraday price unavailable: " + (dailyResult.status === "rejected" ? dailyResult.reason?.message : "no valid candles"));
-  const previousClose = n(previousDaily?.close) || n(latestDaily?.open) || price;
+  const intradayDay = latestIntraday?.time ? dayKey(latestIntraday.time) : ""; const dailyDay = latestDaily?.time ? dayKey(latestDaily.time) : ""; const previousClose = intradayDay && dailyDay && intradayDay === dailyDay ? (n(previousDaily?.close) || n(latestDaily?.open) || price) : (n(latestDaily?.close) || n(previousDaily?.close) || price);
   const change = price - previousClose, changePct = previousClose > 0 ? change / previousClose * 100 : 0;
   const ind = calculateIndicators(dailyValid);
   const ema20 = n(ind.ema20), ema50 = n(ind.ema50), ema200 = n(ind.ema200);
