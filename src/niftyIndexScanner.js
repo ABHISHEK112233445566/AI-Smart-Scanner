@@ -160,6 +160,57 @@ async function scanNiftyIndex(broker) {
     ["Option Decision", "PRELIMINARY BIAS ONLY — full index-specific option gates still require validation", "", "", ""],
     ["Updated (IST)", stampIST(), "", "", ""]
   ];
-  return { headers, rows, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, aiScore: n(ai.scannerScore ?? ai.score), mtf, support, breakout, pivots, cpr, news, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
+  const pickedType = aligned || (trend === "BEARISH" ? "PE" : "CE");
+  const pickedQuote = pickedType === "PE" ? peQuote : ceQuote;
+  const pickedContract = pickedQuote?.contract || null;
+  const premium = n(pickedQuote?.ltp) || 0;
+  const premiumStop = premium > 0 ? round(premium * 0.70) : 0;
+  const premiumTarget = premium > 0 ? round(premium * 1.45) : 0;
+  const premiumTarget2 = premium > 0 ? round(premium * 1.75) : 0;
+  const scannerScore = n(ai.scannerScore ?? ai.score) ?? (trend === "BULLISH" ? 60 : trend === "BEARISH" ? -60 : 0);
+  const scannerRow = {
+    stock: "NIFTY", symbol: "NIFTY", name: "NIFTY 50", instrumentKey: indexKey,
+    price, currentPrice: price, stockPrice: price, previousClose, change, changePct,
+    direction: trend, stockDirection: trend, technicalDirection: trend, trend,
+    scannerScore, score: scannerScore, aiScore: scannerScore, aiRating: ai.rating || "",
+    qualified: Boolean(premium > 0 && pickedContract?.instrument_key),
+    scannerQualified: Boolean(premium > 0 && pickedContract?.instrument_key),
+    optionEngineQualified: Boolean(premium > 0 && pickedContract?.instrument_key),
+    optionEligible: Boolean(premium > 0 && pickedContract?.instrument_key),
+    optionDataValid: Boolean(premium > 0 && pickedContract?.instrument_key),
+    optionType: pickedType === "PE" ? "PUT" : "CALL", cePe: pickedType,
+    optionSymbol: pickedQuote?.symbol || pickedContract?.trading_symbol || "",
+    tradingSymbol: pickedQuote?.symbol || pickedContract?.trading_symbol || "",
+    optionInstrumentKey: pickedContract?.instrument_key || pickedContract?.instrumentKey || "",
+    optionStrike: n(pickedQuote?.strike ?? pickedContract?.strike_price ?? pickedContract?.strike) || 0,
+    recommendedStrike: n(pickedQuote?.strike ?? pickedContract?.strike_price ?? pickedContract?.strike) || 0,
+    bestStrike: n(pickedQuote?.strike ?? pickedContract?.strike_price ?? pickedContract?.strike) || 0,
+    optionLTP: premium, optionLtp: premium, optionEntry: premium, optionPremiumEntry: premium, entryPrice: premium,
+    optionPremiumStopLoss: premiumStop, optionPremiumTarget1: premiumTarget, optionPremiumTarget2: premiumTarget2,
+    stockEntry: premium, underlyingEntry: price, marketEntry: premium,
+    stockStopLoss: premiumStop, stopLoss: premiumStop, stockTarget1: premiumTarget, stockTarget2: premiumTarget2,
+    target: premiumTarget, target1: premiumTarget, target2: premiumTarget2,
+    confidence: n(ai.confidence) ?? 70, optionsConfidence: n(ai.confidence) ?? 70,
+    riskReward: 1.5, optionsDecision: premium > 0 ? "WATCH" : "REJECT", decision: premium > 0 ? "WATCH" : "REJECT",
+    gates: { basePassed: Boolean(premium > 0 && pickedContract?.instrument_key) },
+    pipeline: { optionsTradeGatePassed: Boolean(premium > 0 && pickedContract?.instrument_key) },
+    volume: n(ind.volume) ?? 0, avgVolume5: n(ind.avgVolume5) ?? 0,
+    volumeRatio5: n(ind.rvol) ?? 0, volumePaceRatio5: n(ind.volumePaceRatio5) ?? 0,
+    rvol: n(ind.rvol) ?? 0, volumeConfirmed5: Boolean(n(ind.rvol) >= 1),
+    ema20: n(ind.ema20), ema50: n(ind.ema50), ema100: n(ind.ema100), ema200: n(ind.ema200),
+    dma20, dma50, dma200, rsi: n(ind.rsi), macdValue: n(ind.macd?.MACD), macdSignal: n(ind.macd?.signal),
+    adx: n(ind.adx?.adx ?? ind.adx), atr: n(ind.atr), vwap: n(ind.vwap),
+    support: n(support.support), resistance: n(support.resistance),
+    support1: n(support.support1), resistance1: n(support.resistance1),
+    chartPattern: breakout.patternName || breakout.pattern || "NONE",
+    patternStatus: breakout.patternStatus || "NONE", breakout: breakout.breakout === true,
+    dailyTrend: mtf.dailyTrend || trend, fourHourTrend: mtf.fourHourTrend || "",
+    oneHourTrend: mtf.oneHourTrend || "", fifteenMinTrend: mtf.fifteenMinTrend || "",
+    mtfAlignment: mtf.alignment || "", oiMood: mood.mood, pcr: mood.pcr,
+    newsStatus: news.newsStatus || "NEWS_UNAVAILABLE", newsHeadline: news.newsHeadline || "",
+    newsSource: news.newsSource || "", newsAge: news.newsAge || "", newsUrl: news.newsUrl || "",
+    scanSource: "NIFTY_INDEX_STOCK_STYLE_PIPELINE", updatedAt: stampIST()
+  };
+  return { headers, rows, scannerRow, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, aiScore: n(ai.scannerScore ?? ai.score), mtf, support, breakout, pivots, cpr, news, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
 }
 module.exports = { scanNiftyIndex };
