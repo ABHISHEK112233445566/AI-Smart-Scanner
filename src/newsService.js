@@ -125,6 +125,26 @@ async function fetchNewsForSymbol(symbol){
     return value;
   }
 }
+async function fetchNewsForIndex(){
+  const cacheKey="NIFTY50_INDEX_NEWS";
+  const cached=cache.get(cacheKey);
+  if(cached&&Date.now()-cached.cachedAt<CACHE_TTL_MS)return cached.value;
+  const query=encodeURIComponent(`("Nifty 50" OR "Nifty index" OR NSE market OR Indian stock market) when:${Math.max(1,Math.ceil(NEWS_MAX_AGE_HOURS/24))}d`);
+  try{
+    const xml=await fetchText(`https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`);
+    const cutoff=Date.now()-NEWS_MAX_AGE_HOURS*3600000;
+    const items=parseItems(xml).filter(x=>{const t=new Date(x.published).getTime();return Number.isFinite(t)&&t>=cutoff;}).sort((a,b)=>new Date(b.published)-new Date(a.published));
+    const item=items[0]||null;
+    const status=item?classify(item.title):"NO_MAJOR_NEWS";
+    const value=item?{newsStatus:status,newsDirection:newsDirection(status),newsScope:"MARKET",newsHeadline:item.title.slice(0,240),newsSource:item.source||"Google News",newsAge:formatAge(hoursOld(item.published)),newsUrl:item.link||""}:{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"MARKET",newsHeadline:"No major Nifty/market headline found in the configured news window",newsSource:"Google News",newsAge:"",newsUrl:""};
+    cache.set(cacheKey,{cachedAt:Date.now(),value});
+    return value;
+  }catch(error){
+    const value={newsStatus:"NEWS_UNAVAILABLE",newsDirection:"NEUTRAL",newsScope:"MARKET",newsHeadline:"Nifty/market news feed unavailable",newsSource:"",newsAge:"",newsUrl:""};
+    console.warn(`NIFTY INDEX NEWS: ${error?.message||error}`);
+    return value;
+  }
+}
 async function enrichDashboardNews(rows=[]){
   const source=Array.isArray(rows)?rows:[];
   const out=[];
@@ -144,4 +164,4 @@ function formatDashboardNews(row={}){
   const source=row.newsSource?` • ${row.newsSource}`:"";
   return `${icon} ${row.newsHeadline||"News available"}${source}${age}`.slice(0,500);
 }
-module.exports={fetchNewsForSymbol,enrichDashboardNews,formatDashboardNews,newsDirection,newsConfirmation,newsScope};
+module.exports={fetchNewsForSymbol,fetchNewsForIndex,enrichDashboardNews,formatDashboardNews,newsDirection,newsConfirmation,newsScope};
