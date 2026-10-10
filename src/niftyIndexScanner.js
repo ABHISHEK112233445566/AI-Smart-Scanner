@@ -107,8 +107,8 @@ async function scanNiftyIndex(broker) {
   const aligned = trend === "BULLISH" && changePct > 0 ? "CE" : trend === "BEARISH" && changePct < 0 ? "PE" : "";
   const selected = aligned === "CE" ? ceQuote : aligned === "PE" ? peQuote : null;
   const optionLtp = n(selected?.ltp);
-  const signal = aligned && optionLtp > 0 && mood.mood !== "PARTIAL OI DATA" ? "WATCH " + aligned : aligned && optionLtp > 0 ? "WATCH " + aligned : "NO TRADE";
-  const target = optionLtp > 0 ? optionLtp * 1.15 : null, stop = optionLtp > 0 ? optionLtp * 0.90 : null;
+  const signal = aligned && optionLtp > 0 ? "WATCH " + aligned : "NO CLEAR BIAS";
+  
   const headers = ["Metric","NIFTY 50 Index Scan","CE (ATM)","PE (ATM)"];
   const rows = [
     ["Index LTP", round(price), "", ""],
@@ -123,7 +123,7 @@ async function scanNiftyIndex(broker) {
     ["Option OI / Previous OI", "", [ceQuote?.oi,ceQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), [peQuote?.oi,peQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / ")],
     ["Near-ATM PCR (PE OI / CE OI)", mood.pcr == null ? "" : round(mood.pcr), "", ""],
     ["Signal (confirmation only)", signal, "", ""],
-    ["Option Entry / Target / SL", "", aligned==="CE" ? [round(optionLtp),round(target),round(stop)].join(" / ") : "", aligned==="PE" ? [round(optionLtp),round(target),round(stop)].join(" / ") : ""],
+    ["Option Decision", "PRELIMINARY BIAS ONLY — existing stock option gates not applied", "", ""],
     ["Updated (IST)", stampIST(), "", ""]
   ];
   return { headers, rows, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
