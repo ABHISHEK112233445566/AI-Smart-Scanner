@@ -1,5 +1,5 @@
 // ============================================================
-// AI SMART SCANNER — GOOGLE APPS SCRIPT API V13
+// AI SMART SCANNER — GOOGLE APPS SCRIPT API V14
 // Accuracy fixes:
 // 1. Keep historical rows so weekly/monthly accuracy remains valid.
 // 2. getAccuracyRows returns the newest rows, not the oldest rows.
@@ -42,4 +42,4 @@ function normalizeRow(row,columnCount){if(!Array.isArray(row))row=[];var output=
 function normalizeCell(value){if(value===null||value===undefined)return"";if(Object.prototype.toString.call(value)==="[object Date]")return isNaN(value.getTime())?"":value;if(typeof value==="number")return isFinite(value)?value:"";if(typeof value==="boolean")return value;if(typeof value==="object")try{return JSON.stringify(value);}catch(_){return String(value);}return String(value);}
 function normalizeNumber(value){var number=Number(value);return isFinite(number)?number:0;}
 function jsonResponse(object){return ContentService.createTextOutput(JSON.stringify(object)).setMimeType(ContentService.MimeType.JSON);}
-function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",version:"V13",status:"RUNNING",lockWaitMs:LOCK_WAIT_MS,accuracyHeaderCompatible:true,liveAccuracyReadUpdate:true,performanceMode:true,accuracyColumns:ACCURACY_HEADERS.length,accuracyColumnsList:ACCURACY_HEADERS,accuracyDataStartRow:ACCURACY_DATA_START_ROW,supportedActions:["replaceSheet","appendRows","getAccuracyRows","normalizeAccuracyTimes","updateAccuracy","scanner_status"],supportedSheets:Object.keys(ALLOWED_SHEETS),accuracyHistoryPolicy:"persistent_history_deduplicated_newest_first",timestamp:new Date().toISOString()});}
+function doGet(){return jsonResponse({success:true,service:"AI Smart Scanner Google Sheet API",version:"V14",status:"RUNNING",lockWaitMs:LOCK_WAIT_MS,accuracyHeaderCompatible:true,liveAccuracyReadUpdate:true,performanceMode:true,accuracyColumns:ACCURACY_HEADERS.length,accuracyColumnsList:ACCURACY_HEADERS,accuracyDataStartRow:ACCURACY_DATA_START_ROW,supportedActions:["replaceSheet","appendRows","getAccuracyRows","normalizeAccuracyTimes","updateAccuracy","scanner_status","nifty_dashboard"],niftyDashboard:true,supportedSheets:Object.keys(ALLOWED_SHEETS),accuracyHistoryPolicy:"persistent_history_deduplicated_newest_first",timestamp:new Date().toISOString()});}
