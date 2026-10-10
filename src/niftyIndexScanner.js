@@ -140,7 +140,8 @@ async function scanNiftyIndex(broker) {
     ["RSI / MACD / ADX", [n(ind.rsi),n(ind.macd?.MACD),n(ind.adx?.adx)].map(v=>round(v)).join(" / "), "", "", ""],
     ["ATR / Bollinger / Supertrend", [n(ind.atr),n(ind.bollinger?.upper),n(ind.bollinger?.lower),n(ind.supertrend?.supertrend ?? ind.supertrend?.value)].map(v=>round(v)).join(" / "), "", "", ""],
     ["AI Score / Direction / Rating", [n(ai.scannerScore ?? ai.score), ai.direction || trend, ai.rating || ""].join(" / "), "", "", ""],
-    ["Volume / Avg Volume 5 / RVOL", [n(ind.volume),n(ind.avgVolume5),n(ind.rvol)].map(v=>round(v,0)).join(" / "), "", "", ""],
+    ["Volume / Avg 5 / RVOL / Pace", [n(ind.volume),n(ind.avgVolume5),n(ind.rvol),n(ind.volumePaceRatio5)].map(v=>round(v,0)).join(" / "), "", "", ""],
+    ["VWAP / OBV / MFI / Supertrend", [n(ind.vwap),n(ind.obv),n(ind.mfi),n(ind.supertrend?.value ?? ind.supertrend?.supertrend)].map(v=>round(v)).join(" / "), "", "", ""],
     ["Support / Resistance", [n(support.support),n(support.resistance),n(support.support1),n(support.resistance1)].map(v=>round(v)).join(" / "), "", "", ""],
     ["Breakout / Chart Pattern", [breakout.breakout ? "BREAKOUT" : breakout.breakdown ? "BREAKDOWN" : "NO CONFIRMATION", breakout.patternName || breakout.pattern || "NONE", breakout.patternStatus || ""].join(" / "), "", "", ""],
     ["Pivot / S1 / R1", [n(pivots.pivot),n(pivots.s1),n(pivots.r1)].map(v=>round(v)).join(" / "), "", "", ""],
@@ -153,9 +154,9 @@ async function scanNiftyIndex(broker) {
     ["Option OI / Previous OI", "", [ceQuote?.oi,ceQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), [peQuote?.oi,peQuote?.previousOI].map(v=>v==null?"":round(v,0)).join(" / "), ""],
     ["Near-ATM PCR (PE OI / CE OI)", mood.pcr == null ? "" : round(mood.pcr), "", "", ""],
     ["Option Signal (confirmation only)", signal, "", "", ""],
-    ["News Status / Direction", [news.newsStatus,news.newsDirection].filter(Boolean).join(" / "), "", "", ""],
-    ["News Headline / Source / Age", [news.newsHeadline,news.newsSource,news.newsAge].filter(Boolean).join(" / "), "", "", ""],
-    ["News URL", news.newsUrl || "", "", "", ""],
+    ["News Status / Direction", "", "", "", [news.newsStatus,news.newsDirection].filter(Boolean).join(" / ")],
+    ["News Headline / Source / Age", "", "", "", [news.newsHeadline,news.newsSource,news.newsAge].filter(Boolean).join(" / ")],
+    ["News URL", "", "", "", news.newsUrl || ""],
     ["Option Decision", "PRELIMINARY BIAS ONLY — full index-specific option gates still require validation", "", "", ""],
     ["Updated (IST)", stampIST(), "", "", ""]
   ];
