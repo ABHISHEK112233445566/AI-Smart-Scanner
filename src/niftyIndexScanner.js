@@ -51,6 +51,51 @@ function trendFor(price, i) {
   if (rsi != null) { if (rsi >= 55) score++; else if (rsi <= 45) score--; }
   return score >= 2 ? "BULLISH" : score <= -2 ? "BEARISH" : "SIDEWAYS";
 }
+function classifyStrikePosition(type, quote) {
+  const ltp = n(quote?.ltp), previousPremium = n(quote?.close);
+  const oi = n(quote?.oi), previousOI = n(quote?.previousOI);
+  if (!(ltp > 0 && previousPremium > 0 && oi > 0 && previousOI > 0)) {
+    return { type, classification: "UNAVAILABLE", bias: "NEUTRAL", premiumChangePct: null, oiChangePct: null, dataAvailable: false };
+  }
+  const premiumChangePct = (ltp - previousPremium) / previousPremium * 100;
+  const oiChangePct = (oi - previousOI) / previousOI * 100;
+  const premiumUp = premiumChangePct >= 0.15, premiumDown = premiumChangePct <= -0.15;
+  const oiUp = oiChangePct >= 1, oiDown = oiChangePct <= -1;
+  let classification = "NEUTRAL", bias = "NEUTRAL";
+  if (type === "CE") {
+    if (premiumUp && oiUp) { classification = "LONG_BUILDUP"; bias = "BULLISH"; }
+    else if (premiumDown && oiUp) { classification = "SHORT_BUILDUP"; bias = "BEARISH"; }
+    else if (premiumUp && oiDown) { classification = "SHORT_COVERING"; bias = "BULLISH"; }
+    else if (premiumDown && oiDown) { classification = "LONG_UNWINDING"; bias = "BEARISH"; }
+  } else if (type === "PE") {
+    if (premiumUp && oiUp) { classification = "LONG_BUILDUP"; bias = "BEARISH"; }
+    else if (premiumDown && oiUp) { classification = "PUT_WRITING"; bias = "BULLISH"; }
+    else if (premiumUp && oiDown) { classification = "SHORT_COVERING"; bias = "BEARISH"; }
+    else if (premiumDown && oiDown) { classification = "LONG_UNWINDING"; bias = "BULLISH"; }
+  }
+  return { type, classification, bias, premiumChangePct: round(premiumChangePct, 2), oiChangePct: round(oiChangePct, 2), dataAvailable: true };
+}
+function summarizeOptionChain(items, expiry, atm) {
+  const valid = (Array.isArray(items) ? items : []).filter(x => x?.dataAvailable);
+  const bullish = valid.filter(x => x.bias === "BULLISH").length;
+  const bearish = valid.filter(x => x.bias === "BEARISH").length;
+  const neutral = valid.length - bullish - bearish;
+  const bias = valid.length < 6 ? "UNKNOWN" : bullish >= bearish + 3 ? "BULLISH" : bearish >= bullish + 3 ? "BEARISH" : "MIXED";
+  const confidence = valid.length ? Math.round(Math.max(bullish, bearish) / valid.length * 100) : 0;
+  const status = valid.length >= 16 ? "GOOD" : valid.length >= 8 ? "PARTIAL" : "INSUFFICIENT";
+  const counts = {};
+  for (const item of valid) counts[item.classification] = (counts[item.classification] || 0) + 1;
+  return {
+    bias, confidence, status, expiry, atm, strikesScanned: new Set((items || []).map(x => x.strike)).size,
+    contractsScanned: (items || []).length, validContracts: valid.length, bullishEvidence: bullish,
+    bearishEvidence: bearish, neutralEvidence: neutral, classificationCounts: counts,
+    reason: status === "INSUFFICIENT" ? "Insufficient fresh CE/PE premium and OI history" :
+      bias === "BULLISH" ? "Multi-strike option-chain evidence leans bullish" :
+      bias === "BEARISH" ? "Multi-strike option-chain evidence leans bearish" :
+      "Multi-strike option-chain evidence is mixed; do not force a direction",
+    details: (items || []).map(x => ({ strike: x.strike, type: x.type, classification: x.classification, bias: x.bias, premiumChangePct: x.premiumChangePct, oiChangePct: x.oiChangePct, dataAvailable: x.dataAvailable }))
+  };
+}
 function optionMood(ce, pe) {
   const ceOi = n(ce?.oi) || 0, peOi = n(pe?.oi) || 0;
   const cePrev = n(ce?.previousOI), pePrev = n(pe?.previousOI);
@@ -106,6 +151,7 @@ async function scanNiftyIndex(broker) {
   try { mtf = await getMultiTimeframeAnalysis(indexKey); } catch (e) { console.warn("NIFTY MTF unavailable: " + (e?.message || e)); }
   try { news = await fetchNewsForIndex(); } catch (e) { news = { newsStatus: "NEWS_UNAVAILABLE", newsHeadline: "Nifty/market news unavailable", newsSource: "", newsAge: "", newsUrl: "" }; }
   let expiry = "", atm = "", ce = null, pe = null, ceQuote = null, peQuote = null, mood = { pcr: null, mood: "OPTION CHAIN UNAVAILABLE", ceOi: 0, peOi: 0, ceDelta: null, peDelta: null };
+  let niftyChainAnalysis = { bias: "UNKNOWN", confidence: 0, status: "UNAVAILABLE", strikesScanned: 0, contractsScanned: 0, validContracts: 0, bullishEvidence: 0, bearishEvidence: 0, neutralEvidence: 0, reason: "Option contracts unavailable", details: [] };
   const contracts = contractsResult.status === "fulfilled" && Array.isArray(contractsResult.value) ? contractsResult.value : [];
   if (contracts.length) {
     expiry = chooseExpiry(contracts);
@@ -124,6 +170,32 @@ async function scanNiftyIndex(broker) {
       };
       [ceQuote, peQuote] = await Promise.all([quoteOne(ce), quoteOne(pe)]);
       mood = optionMood(ceQuote, peQuote);
+      // Separate index-only scan: ATM and up to five strikes on each side.
+      // Its output is context only and never bypasses the existing trade gates.
+      const atmIndex = strikes.indexOf(atm);
+      const chainStrikes = strikes.slice(Math.max(0, atmIndex - 5), Math.min(strikes.length, atmIndex + 6));
+      const chainContracts = [];
+      for (const strike of chainStrikes) {
+        for (const type of ["CE", "PE"]) {
+          const contract = active.find(x => n(x?.strike_price ?? x?.strike) === strike && optionType(x) === type);
+          if (!contract) {
+            chainContracts.push({ strike, type, classification: "UNAVAILABLE", bias: "NEUTRAL", dataAvailable: false });
+            continue;
+          }
+          let quote = null;
+          if (n(strike) === n(atm) && type === "CE") quote = ceQuote;
+          else if (n(strike) === n(atm) && type === "PE") quote = peQuote;
+          else if (typeof broker.getOptionQuote === "function") {
+            try {
+              const q = await broker.getOptionQuote(String(contract.instrument_key || contract.instrumentKey || ""));
+              quote = { ...q, ltp: n(q?.ltp), close: n(q?.close), oi: n(q?.oi), previousOI: n(q?.previousOI) };
+            } catch (_) { quote = null; }
+          }
+          const classified = classifyStrikePosition(type, quote);
+          chainContracts.push({ strike, ...classified });
+        }
+      }
+      niftyChainAnalysis = summarizeOptionChain(chainContracts, expiry, atm);
     }
   }
   const aligned = trend === "BULLISH" && changePct > 0 ? "CE" : trend === "BEARISH" && changePct < 0 ? "PE" : "";
@@ -227,8 +299,22 @@ async function scanNiftyIndex(broker) {
     mtfAlignment: mtf.alignment || "", oiMood: mood.mood, pcr: mood.pcr,
     newsStatus: news.newsStatus || "NEWS_UNAVAILABLE", newsHeadline: news.newsHeadline || "",
     newsSource: news.newsSource || "", newsAge: news.newsAge || "", newsUrl: news.newsUrl || "",
+    niftyAnalysisBias: niftyChainAnalysis.bias,
+    niftyAnalysisConfidence: niftyChainAnalysis.confidence,
+    niftyAnalysisStatus: niftyChainAnalysis.status,
+    niftyChainDataQuality: niftyChainAnalysis.status,
+    niftyChainStrikesScanned: niftyChainAnalysis.strikesScanned,
+    niftyChainContractsScanned: niftyChainAnalysis.contractsScanned,
+    niftyChainValidContracts: niftyChainAnalysis.validContracts,
+    niftyBullishEvidence: niftyChainAnalysis.bullishEvidence,
+    niftyBearishEvidence: niftyChainAnalysis.bearishEvidence,
+    niftyNeutralEvidence: niftyChainAnalysis.neutralEvidence,
+    niftyOptionChainSummary: JSON.stringify(niftyChainAnalysis.classificationCounts || {}),
+    niftyAnalysisReason: niftyChainAnalysis.reason,
+    niftyAnalysisDetails: JSON.stringify(niftyChainAnalysis.details || []),
+    niftyAnalysisUpdatedAt: stampIST(),
     scanSource: "NIFTY_INDEX_STOCK_STYLE_PIPELINE", updatedAt: stampIST()
   };
-  return { headers, rows, scannerRow, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, aiScore: n(ai.scannerScore ?? ai.score), mtf, support, breakout, pivots, cpr, news, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, signal, updatedAt: stampIST() } };
+  return { headers, rows, scannerRow, index: { name: INDEX_NAME, indexKey, price, previousClose, change, changePct, dma20, dma50, dma200, ema20, ema50, ema200, rsi: n(ind.rsi), trend, aiScore: n(ai.scannerScore ?? ai.score), mtf, support, breakout, pivots, cpr, news, expiry, atm, optionMood: mood.mood, pcr: mood.pcr, niftyChainAnalysis, signal, updatedAt: stampIST() } };
 }
 module.exports = { scanNiftyIndex };
