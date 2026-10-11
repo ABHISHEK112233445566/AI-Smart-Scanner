@@ -175,7 +175,28 @@ async function scanNiftyIndex(broker) {
       const atmIndex = strikes.indexOf(atm);
       const chainStrikes = strikes.slice(Math.max(0, atmIndex - 5), Math.min(strikes.length, atmIndex + 6));
       const chainContracts = [];
+      let optionChainByStrike = new Map();
+      // Prefer Upstox's single option-chain request: it supplies LTP, close_price,
+      // OI and prev_oi together and avoids 22 separate quote calls/rate limits.
+      if (typeof broker.upstoxApiGet === "function" && process.env.UPSTOX_ACCESS_TOKEN) {
+        try {
+          const response = await broker.upstoxApiGet(
+            "https://api.upstox.com/v2/option/chain",
+            {
+              params: { instrument_key: indexKey, expiry_date: expiry },
+              headers: { Accept: "application/json", Authorization: `Bearer ${process.env.UPSTOX_ACCESS_TOKEN}` },
+              timeout: 15000
+            },
+            "NIFTY separate multi-strike analysis"
+          );
+          const chainRows = Array.isArray(response?.data?.data) ? response.data.data : [];
+          optionChainByStrike = new Map(chainRows.map(row => [n(row?.strike_price), row]).filter(([strike]) => strike > 0));
+        } catch (error) {
+          console.warn("NIFTY option-chain analysis API unavailable; falling back to contract quotes: " + (error?.message || error));
+        }
+      }
       for (const strike of chainStrikes) {
+        const chainRow = optionChainByStrike.get(n(strike));
         for (const type of ["CE", "PE"]) {
           const contract = active.find(x => n(x?.strike_price ?? x?.strike) === strike && optionType(x) === type);
           if (!contract) {
@@ -183,12 +204,27 @@ async function scanNiftyIndex(broker) {
             continue;
           }
           let quote = null;
-          if (n(strike) === n(atm) && type === "CE") quote = ceQuote;
+          const side = type === "CE" ? chainRow?.call_options : chainRow?.put_options;
+          const market = side?.market_data;
+          if (market && n(market.ltp) > 0) {
+            quote = {
+              ltp: n(market.ltp),
+              close: n(market.close_price),
+              oi: n(market.oi),
+              previousOI: n(market.prev_oi ?? market.previous_oi)
+            };
+          } else if (n(strike) === n(atm) && type === "CE") quote = ceQuote;
           else if (n(strike) === n(atm) && type === "PE") quote = peQuote;
           else if (typeof broker.getOptionQuote === "function") {
             try {
               const q = await broker.getOptionQuote(String(contract.instrument_key || contract.instrumentKey || ""));
-              quote = { ...q, ltp: n(q?.ltp), close: n(q?.close), oi: n(q?.oi), previousOI: n(q?.previousOI) };
+              quote = {
+                ...q,
+                ltp: n(q?.ltp ?? q?.last_price),
+                close: n(q?.close ?? q?.close_price),
+                oi: n(q?.oi ?? q?.open_interest),
+                previousOI: n(q?.previousOI ?? q?.prev_oi ?? q?.previous_oi)
+              };
             } catch (_) { quote = null; }
           }
           const classified = classifyStrikePosition(type, quote);
