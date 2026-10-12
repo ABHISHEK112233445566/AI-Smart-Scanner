@@ -10,16 +10,22 @@ function upper(v) { return text(v).toUpperCase(); }
 function num(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function first(obj, keys) { for (const key of keys) if (obj?.[key] != null && text(obj[key]) !== "") return obj[key]; return ""; }
 function keyOf(i) { return text(first(i, ["instrument_key", "instrumentKey", "key"])); }
+function normalizeCommoditySymbol(value) {
+  return upper(value)
+    .replace(/\s+/g, "")
+    .replace(/\d{4}-\d{2}-\d{2}.*$/, "")
+    // Upstox MCX symbols can encode expiry with or without a year, e.g.
+    // CRUDEOIL19OCTFUT, CRUDEOIL19OCT26FUT, or CRUDEOIL19OCT2026...
+    .replace(/\d{1,2}[A-Z]{3}(?:\d{2,4})?.*$/, "")
+    .replace(/(?:FUTCOM|FUTURES|FUT|OPTFUT|OPT).*$/, "")
+    .replace(/\d{4,}.*$/, "")
+    .replace(/(?:CE|PE|CALL|PUT)$/, "");
+}
 function symbolOf(i) {
-  const explicit = upper(first(i, ["underlying_symbol", "underlyingSymbol", "underlying", "underlying_name", "underlyingName"]));
-  if (explicit) return explicit.replace(/\s+/g, "");
-  const raw = upper(first(i, ["trading_symbol", "tradingsymbol", "tradingSymbol", "name", "short_name"])).replace(/\s+/g, "");
-  return raw
-    .replace(/\d{1,2}[A-Z]{3}\d{2}FUT.*$/, "")
-    .replace(/\d{1,2}[A-Z]{3}FUT.*$/, "")
-    .replace(/\d{1,2}[A-Z]{3}\d{2}.*$/, "")
-    .replace(/\d{1,2}[A-Z]{3}.*$/, "")
-    .replace(/\d{4,}.*$/, "");
+  const explicit = first(i, ["underlying_symbol", "underlyingSymbol", "underlying", "underlying_name", "underlyingName"]);
+  if (explicit) return normalizeCommoditySymbol(explicit);
+  const raw = first(i, ["trading_symbol", "tradingsymbol", "tradingSymbol", "name", "short_name"]);
+  return normalizeCommoditySymbol(raw);
 }
 function segmentOf(i) { return upper(first(i, ["segment", "exchange_segment"])); }
 function exchangeOf(i) { return upper(first(i, ["exchange", "exchange_name"])); }
