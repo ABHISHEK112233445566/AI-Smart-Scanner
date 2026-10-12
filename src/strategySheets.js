@@ -33,7 +33,7 @@ function buildDividendEquity(rows){
    let candidate;
    if(m.p>0){
      candidate=equityIdea(r,m);
-     const buyZoneBounds=String(candidate.buyZone||"").split("-").map(v=>Number(String(v).trim())).filter(v=>Number.isFinite(v)&&v>0);const buyZoneUpper=buyZoneBounds.length>=2?Math.max(...buyZoneBounds):0;const priceInsideBuyZone=buyZoneUpper>0&&m.p<=buyZoneUpper;const bullishPlanValid=(!(Number(candidate.stopLoss)>0)||Number(candidate.stopLoss)<m.p)&&(!(Number(candidate.target1)>0)||Number(candidate.target1)>m.p)&&(!(Number(candidate.patternTarget)>0)||Number(candidate.patternTarget)>=m.p);const buy= m.d==="BULLISH" && m.dataQuality==="GOOD" && !m.hpc && m.longTermScore>=45 && priceInsideBuyZone && bullishPlanValid;
+     const buyZoneBounds=String(candidate.buyZone||"").split("-").map(v=>Number(String(v).trim())).filter(v=>Number.isFinite(v)&&v>0);const buyZoneUpper=buyZoneBounds.length>=2?Math.max(...buyZoneBounds):0;const priceInsideBuyZone=buyZoneUpper>0&&m.p<=buyZoneUpper;const bullishPlanValid=(!(Number(candidate.stopLoss)>0)||Number(candidate.stopLoss)<m.p)&&(!(Number(candidate.target1)>0)||Number(candidate.target1)>m.p)&&(!(Number(candidate.patternTarget)>0)||Number(candidate.patternTarget)>=m.p);const bullishLevelsValid=(!Number(candidate.stopLoss)||Number(candidate.stopLoss)<m.p)&&(!Number(candidate.target1)||Number(candidate.target1)>m.p),buy= m.d==="BULLISH" && m.dataQuality==="GOOD" && !m.hpc && m.longTermScore>=45 && priceInsideBuyZone && bullishLevelsValid && bullishPlanValid;
      candidate={
        ...candidate,
        rank:1000+index+1,
@@ -41,7 +41,7 @@ function buildDividendEquity(rows){
        dividendUniverse:true,
        dividendBuyOpportunity:buy?"BUY":"WATCH",
        recommendation:buy?"BUY":"WATCH",
-       reason:buy?"Dividend-universe stock has a bullish long-term setup and price is inside the actionable buy zone.":!priceInsideBuyZone&&buyZoneUpper>0?"Price is above the defined buy zone; wait for a pullback instead of chasing.":!bullishPlanValid?"Trade levels conflict with current price or the bullish pattern target; BUY blocked.":"Dividend-universe stock is mandatory in the long-term section; current technical confirmation is not sufficient for a BUY."
+       reason:buy?"Dividend-universe stock has a bullish long-term setup and price is inside the actionable buy zone.":m.d!=="BULLISH"?"No bullish underlying direction; dividend status alone is not a BUY signal.":!priceInsideBuyZone&&buyZoneUpper>0?"Price is above the defined buy zone; wait for a pullback instead of chasing.":!bullishLevelsValid?"Stop-loss or target levels are invalid for a bullish entry; BUY blocked.":!bullishPlanValid?"Pattern target conflicts with the current price; BUY blocked.":"Dividend-universe stock is mandatory in the long-term section; current technical confirmation is not sufficient for a BUY."
      };
    }else{
      candidate={
