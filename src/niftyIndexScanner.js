@@ -252,7 +252,13 @@ async function scanNiftyIndex(broker) {
   const chainConflict = chainReliable &&
     ((technicalSide === "CE" && niftyChainAnalysis.bias === "BEARISH") ||
      (technicalSide === "PE" && niftyChainAnalysis.bias === "BULLISH"));
-  const aligned = chainConflict ? "" : technicalSide;
+  const chainUnconfirmed = !chainReliable;
+  // Do not produce a NIFTY option candidate when the chain is stale, rejected
+  // as an outlier, insufficient, or not directionally decisive.
+  const aligned = chainReliable && !chainConflict &&
+    ((technicalSide === "CE" && niftyChainAnalysis.bias === "BULLISH") ||
+     (technicalSide === "PE" && niftyChainAnalysis.bias === "BEARISH"))
+      ? technicalSide : "";
   const selected = aligned === "CE" ? ceQuote : aligned === "PE" ? peQuote : null;
   const optionLtp = n(selected?.ltp);
   const signal = chainConflict ? "NO TRADE — CHAIN CONFLICT" :
@@ -333,7 +339,7 @@ async function scanNiftyIndex(broker) {
     confidence: n(ai.confidence) ?? 70, optionsConfidence: n(ai.confidence) ?? 70,
     riskReward: 1.5, optionsDecision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
     decision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
-    rejectionReason: chainConflict ? "NIFTY_CHAIN_DIRECTION_CONFLICT" : aligned ? (premium > 0 ? "" : "NIFTY_OPTION_QUOTE_UNAVAILABLE") : "NIFTY_NO_CONFIRMED_DIRECTION",
+    rejectionReason: chainConflict ? "NIFTY_CHAIN_DIRECTION_CONFLICT" : chainUnconfirmed ? "NIFTY_CHAIN_UNCONFIRMED_OR_INVALID" : aligned ? (premium > 0 ? "" : "NIFTY_OPTION_QUOTE_UNAVAILABLE") : "NIFTY_NO_CONFIRMED_DIRECTION",
     gates: { basePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
     pipeline: { optionsTradeGatePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
     // Spot-index volume is not comparable to stock share volume; do not mark
