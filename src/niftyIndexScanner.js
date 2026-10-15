@@ -59,6 +59,15 @@ function classifyStrikePosition(type, quote) {
   }
   const premiumChangePct = (ltp - previousPremium) / previousPremium * 100;
   const oiChangePct = (oi - previousOI) / previousOI * 100;
+  // Guard against mismatched/stale baselines that can make every strike appear
+  // to move in the same extreme direction. Such contracts must not vote on bias.
+  if (!Number.isFinite(premiumChangePct) || !Number.isFinite(oiChangePct) ||
+      Math.abs(premiumChangePct) > 50 || Math.abs(oiChangePct) > 500) {
+    return { type, classification: "OUTLIER_REJECTED", bias: "NEUTRAL",
+      premiumChangePct: Number.isFinite(premiumChangePct) ? round(premiumChangePct, 2) : null,
+      oiChangePct: Number.isFinite(oiChangePct) ? round(oiChangePct, 2) : null,
+      dataAvailable: false };
+  }
   const premiumUp = premiumChangePct >= 0.15, premiumDown = premiumChangePct <= -0.15;
   const oiUp = oiChangePct >= 1, oiDown = oiChangePct <= -1;
   let classification = "NEUTRAL", bias = "NEUTRAL";
@@ -234,10 +243,20 @@ async function scanNiftyIndex(broker) {
       niftyChainAnalysis = summarizeOptionChain(chainContracts, expiry, atm);
     }
   }
-  const aligned = trend === "BULLISH" && changePct > 0 ? "CE" : trend === "BEARISH" && changePct < 0 ? "PE" : "";
+  const technicalSide = trend === "BULLISH" && changePct > 0 ? "CE" : trend === "BEARISH" && changePct < 0 ? "PE" : "";
+  // Require independent index-chain evidence to agree before allowing even a
+  // WATCH candidate. A strong opposing chain is a conflict, not a trade signal.
+  const chainReliable = Number(niftyChainAnalysis.validContracts) >= 8 &&
+    Number(niftyChainAnalysis.confidence) >= 65 &&
+    ["BULLISH", "BEARISH"].includes(niftyChainAnalysis.bias);
+  const chainConflict = chainReliable &&
+    ((technicalSide === "CE" && niftyChainAnalysis.bias === "BEARISH") ||
+     (technicalSide === "PE" && niftyChainAnalysis.bias === "BULLISH"));
+  const aligned = chainConflict ? "" : technicalSide;
   const selected = aligned === "CE" ? ceQuote : aligned === "PE" ? peQuote : null;
   const optionLtp = n(selected?.ltp);
-  const signal = aligned && optionLtp > 0 ? "WATCH " + aligned : "NO CLEAR BIAS";
+  const signal = chainConflict ? "NO TRADE — CHAIN CONFLICT" :
+    aligned && optionLtp > 0 ? "WATCH " + aligned : "NO CLEAR BIAS";
   
   const headers = ["Metric","NIFTY 50 Index Scan","CE (ATM)","PE (ATM)","News"];
   const rows = [
@@ -314,7 +333,7 @@ async function scanNiftyIndex(broker) {
     confidence: n(ai.confidence) ?? 70, optionsConfidence: n(ai.confidence) ?? 70,
     riskReward: 1.5, optionsDecision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
     decision: aligned && premium > 0 && pickedContract?.instrument_key ? "WATCH" : "REJECT",
-    rejectionReason: aligned ? (premium > 0 ? "" : "NIFTY_OPTION_QUOTE_UNAVAILABLE") : "NIFTY_NO_CONFIRMED_DIRECTION",
+    rejectionReason: chainConflict ? "NIFTY_CHAIN_DIRECTION_CONFLICT" : aligned ? (premium > 0 ? "" : "NIFTY_OPTION_QUOTE_UNAVAILABLE") : "NIFTY_NO_CONFIRMED_DIRECTION",
     gates: { basePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
     pipeline: { optionsTradeGatePassed: Boolean(aligned && premium > 0 && pickedContract?.instrument_key) },
     // Spot-index volume is not comparable to stock share volume; do not mark
@@ -346,7 +365,7 @@ async function scanNiftyIndex(broker) {
     niftyBearishEvidence: niftyChainAnalysis.bearishEvidence,
     niftyNeutralEvidence: niftyChainAnalysis.neutralEvidence,
     niftyOptionChainSummary: JSON.stringify(niftyChainAnalysis.classificationCounts || {}),
-    niftyAnalysisReason: niftyChainAnalysis.reason,
+    niftyAnalysisReason: chainConflict ? "Technical/daily direction conflicts with reliable option-chain bias; trade blocked. " + niftyChainAnalysis.reason : niftyChainAnalysis.reason,
     niftyAnalysisDetails: JSON.stringify(niftyChainAnalysis.details || []),
     niftyAnalysisUpdatedAt: stampIST(),
     scanSource: "NIFTY_INDEX_STOCK_STYLE_PIPELINE", updatedAt: stampIST()
