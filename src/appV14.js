@@ -14,6 +14,7 @@ const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 const {enrichDashboardNews}=require("./newsService");
 const config=require("./config");
+const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_MIN_SCORE ?? config.THRESHOLDS?.DASHBOARD_MIN_SCORE ?? 80);
 
 const STOCK_BATCH_SIZE=Math.max(10,Number(process.env.STOCK_BATCH_SIZE||25));
 const TOP_100=100;
