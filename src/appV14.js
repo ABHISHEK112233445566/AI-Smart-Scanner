@@ -83,7 +83,52 @@ function rankOptionCandidates(rows,limit){
 function optionContractSide(r){const c=r?.optionLiquidityContractData;const s=String(c?.instrument_type??c?.option_type??c?.optionType??"").trim().toUpperCase();if(["CE","CALL"].includes(s)||String(c?.trading_symbol??c?.tradingSymbol??"").toUpperCase().endsWith(" CE"))return"CE";if(["PE","PUT"].includes(s)||String(c?.trading_symbol??c?.tradingSymbol??"").toUpperCase().endsWith(" PE"))return"PE";return"";}
 function validOptionRow(r){const strike=num(r?.bestStrike??r?.optionStrike??r?.recommendedStrike);const ltp=num(r?.optionPremiumEntry??r?.optionLTP??r?.optionLtp);const instrument=String(r?.optionInstrumentKey??r?.optionInstrument??r?.optionKey??"").trim();const side=String(r?.optionType??"").trim().toUpperCase();const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";const contractSide=optionContractSide(r);const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();const gatePassed=r?.gates?.basePassed===true||r?.pipeline?.optionsTradeGatePassed===true;return strike>0&&ltp>0&&Boolean(instrument)&&Boolean(expected)&&(!contractSide||contractSide===expected)&&decision!=="REJECT"&&gatePassed;}
 function sanitizeOptionRow(r){if(validOptionRow(r)){const ltp=num(r?.optionPremiumEntry??r?.optionLTP??r?.optionLtp);return{...r,optionEligible:true,optionDataValid:true,optionEntry:ltp,optionPremiumEntry:ltp,entryPrice:ltp,stockEntry:num(r?.stockEntry??r?.underlyingEntry??r?.price)};}const side=String(r?.optionType??"").trim().toUpperCase();const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";return{...r,optionEligible:false,optionDataValid:false,optionRejectionReason:r?.reason||r?.decisionReason||"MISSING_LIVE_OPTION_CONTRACT_OR_LTP",optionSymbol:"",recommendedStrike:null,atmStrike:null,optionExpiry:null,optionInstrumentKey:"",optionLiquidityContractData:null,optionLiquiditySide:expected,optionPremiumEntry:0,optionPremiumStopLoss:0,optionPremiumTarget1:0,optionPremiumTarget2:0,optionPremiumRisk:0,optionPremiumReward:0,optionPremiumRiskReward:0,optionVolume:0,optionOI:0,optionPreviousOI:0,optionOIChange:0,optionOIChangePercent:0,optionLiveDataAvailable:false,optionLiquidityConfirmed:false,optionLiquidityVolume:0,optionLiquidityOI:0,optionContractIdentityValid:false,optionEntry:0,entryPrice:0};}
-function rankDashboard(rows){const list=(Array.isArray(rows)?rows:[]).filter(validOptionRow).map(sanitizeOptionRow);return list.sort((a,b)=>{const da=decision(a)==="TRADE"?2:1,db=decision(b)==="TRADE"?2:1;return(db-da)||(confidence(b)-confidence(a))||(score(b)-score(a))||(num(b.riskReward)-num(a.riskReward));}).slice(0,TOP_5);}
+function rankDashboard(rows){
+  // Dashboard is a stock-candidate view, not an execution-only options list.
+  // Keep qualified directional stocks visible as WATCH when the option gate,
+  // contract lookup, or live liquidity check fails. Never mark those as TRADE.
+  const source=Array.isArray(rows)?rows:[];
+  const candidates=source.filter(r=>{
+    if(!r||typeof r!=="object"||!key(r))return false;
+    const dir=optionDirection(r);
+    if(dir==="NEUTRAL")return false;
+    const rating=String(r.rating??r.aiRating??"").toUpperCase();
+    const signal=String(r.signal??"").toUpperCase();
+    if(r.qualified!==true&&r.scannerQualified!==true&&r.optionEngineQualified!==true)return false;
+    if(rating.includes("AVOID")||signal==="AVOID")return false;
+    const composite=num(r.finalScore??r.rankingScore??r.aiFinalScore??r.scannerScore??r.score);
+    return Math.abs(composite)>=DASHBOARD_MIN_SCORE;
+  });
+  const list=candidates.map(r=>{
+    if(validOptionRow(r))return sanitizeOptionRow(r);
+    const why=String(r.optionRejectionReason||r.reason||r.decisionReason||r.rejectionReason||"OPTION_GATE_NOT_PASSED");
+    return {
+      ...r,
+      optionsDecision:"WATCH",
+      decision:"WATCH",
+      optionEligible:false,
+      optionDataValid:false,
+      optionEngineQualified:false,
+      optionRejectionReason:why,
+      optionPremiumEntry:0,
+      optionPremiumStopLoss:0,
+      optionPremiumTarget1:0,
+      optionPremiumTarget2:0,
+      optionEntry:0,
+      entryPrice:0,
+      optionContractIdentityValid:false,
+      optionLiveDataAvailable:false,
+      optionLiquidityConfirmed:false
+    };
+  });
+  return list.sort((a,b)=>{
+    const da=validOptionRow(a)&&decision(a)==="TRADE"?3:validOptionRow(a)?2:1;
+    const db=validOptionRow(b)&&decision(b)==="TRADE"?3:validOptionRow(b)?2:1;
+    const compositeA=Math.abs(num(a.finalScore??a.rankingScore??a.aiFinalScore??a.scannerScore??a.score));
+    const compositeB=Math.abs(num(b.finalScore??b.rankingScore??b.aiFinalScore??b.scannerScore??b.score));
+    return (db-da)||(compositeB-compositeA)||(confidence(b)-confidence(a))||(num(b.riskReward)-num(a.riskReward));
+  }).slice(0,TOP_5);
+}
 function buildEquityCandidates(liveRows){const rows=Array.isArray(liveRows)?liveRows:[];const bySymbol=new Map(rows.map(r=>[key(r),r]));const selected=[];const add=row=>{const k=key(row);if(!k||selected.some(x=>key(x)===k))return;selected.push(row);};for(const row of rows.slice(0,TOP_EQUITY))add(row);const movers=getTopMovers(rows,Math.max(20,Number(process.env.EQUITY_MOVER_POOL||30)));for(const mover of movers){if(selected.length<TOP_EQUITY){add(bySymbol.get(key(mover))||mover);continue;}if(selected.some(x=>key(x)===key(mover)))continue;const weakestIndex=selected.reduce((wi,row,i)=>num(row.volume)<num(selected[wi].volume)?i:wi,0);if(num(mover.volume)>num(selected[weakestIndex].volume))selected[weakestIndex]=bySymbol.get(key(mover))||mover;}return selected.slice(0,TOP_EQUITY);}
 async function collectOptionEligible(liveRows,broker,priorityRows=[]){
   const rows=Array.isArray(liveRows)?liveRows:[];
