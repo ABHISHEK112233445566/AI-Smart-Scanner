@@ -53,6 +53,16 @@ assert.strictEqual(informational.optionPremiumEntry,15.2);
 assert.strictEqual(informational.entryPrice,15.2);
 assert.strictEqual(informational.optionRejectionReason,"WAIT_FOR_STOCK_TRIGGER");
 
+const reasonPriority=sanitizeOptionRow({
+  ...trade,
+  optionsDecision:"REJECT",
+  decision:"REJECT",
+  reason:"OK",
+  decisionReason:"WAIT_FOR_STOCK_TRIGGER",
+  pipeline:{optionsTradeGatePassed:false}
+});
+assert.strictEqual(reasonPriority.optionRejectionReason,"WAIT_FOR_STOCK_TRIGGER","specific gate reason must not be hidden by generic reason");
+
 const good=sanitizeOptionRow(trade);
 assert.strictEqual(good.optionEntry,15.2);
 assert.strictEqual(good.entryPrice,15.2);
