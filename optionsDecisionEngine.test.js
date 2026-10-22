@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { calculateOptionsDecision } = require("./optionsDecisionEngine");
+const { calculateOptionsDecision } = require("./src/optionsDecisionEngine");
 
 async function run() {
   const conflict = await calculateOptionsDecision({
