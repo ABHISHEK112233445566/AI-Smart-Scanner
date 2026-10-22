@@ -117,7 +117,7 @@ function rankDashboard(rows){
       optionPremiumTarget2:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true?num(r.optionPremiumTarget2):0,
       optionEntry:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0?num(r.optionLTP):0,
       entryPrice:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0?num(r.optionLTP):0,
-      optionContractIdentityValid:false,
+      optionContractIdentityValid:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0,
       optionLiveDataAvailable:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0,
       optionLiquidityConfirmed:r.optionLiquidityConfirmed===true
     };
