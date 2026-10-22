@@ -1,6 +1,7 @@
 const assert=require("assert");
 const {validOptionRow,sanitizeOptionRow,rankDashboard}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
+const {buildDashboard}=require("./dashboard");
 
 const trade={
   stockPrice:330.95,
@@ -138,5 +139,13 @@ const emptyDashboardPayload=buildDashboardPayload([]);
 assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
 assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("symbol")],"NO CURRENT DIRECTIONAL CANDIDATE");
 assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("optionsDecision")],"WATCH");
+
+const internalDashboard=buildDashboard([{
+  stock:"WATCH_FALLBACK",symbol:"WATCH_FALLBACK",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,
+  optionsDecision:"REJECT",decision:"REJECT",optionContractIdentityValid:false,optionLiveDataAvailable:false,
+  optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
+}],[],1);
+assert.strictEqual(internalDashboard.top10.length,1,"internal dashboard should retain directional WATCH candidates");
+assert.strictEqual(internalDashboard.top10[0].decision,"WATCH");
 
 console.log("V14 pipeline tests passed");
