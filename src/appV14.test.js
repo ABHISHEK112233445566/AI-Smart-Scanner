@@ -67,7 +67,6 @@ assert.strictEqual(watchRows[0].decision,"WATCH");
 assert.strictEqual(watchRows[0].optionPremiumEntry,15.2);
 assert.strictEqual(watchRows[0].optionLiveDataAvailable,true);
 
-const dashboardEligibleOnly=rankDashboard({});
 const dashboardEligibleRows=rankDashboard([{
   ...trade,
   qualified:false,
