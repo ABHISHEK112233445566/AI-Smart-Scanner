@@ -96,7 +96,7 @@ function rankDashboard(rows){
     const rating=String(r.rating??r.aiRating??"").toUpperCase();
     const signal=String(r.signal??"").toUpperCase();
     if(rating.includes("AVOID")||signal==="AVOID")return false;
-    const composite=num(r.finalScore??r.rankingScore??r.aiFinalScore??r.scannerScore??r.score);
+    const composite=[r.finalScore,r.rankingScore,r.aiFinalScore,r.scannerScore,r.score].map(num).find(v=>v!==0)??0;
     return Math.abs(composite)>=DASHBOARD_MIN_SCORE;
   });
   const list=candidates.map(r=>{
