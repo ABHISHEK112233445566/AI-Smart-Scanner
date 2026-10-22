@@ -134,4 +134,9 @@ const fallbackPayload=buildDashboardPayload(fallbackRows);
 assert.ok(fallbackPayload.rows.length>0,"dashboard payload should not be blank when directional candidates exist");
 assert.ok(fallbackPayload.rows.every(r=>r[fallbackPayload.headers.indexOf("optionsDecision")]==="WATCH"),"rejected options should display as WATCH, not TRADE");
 
+const emptyDashboardPayload=buildDashboardPayload([]);
+assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
+assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("symbol")],"NO CURRENT DIRECTIONAL CANDIDATE");
+assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("optionsDecision")],"WATCH");
+
 console.log("V14 pipeline tests passed");
