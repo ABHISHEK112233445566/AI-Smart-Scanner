@@ -111,15 +111,15 @@ function rankDashboard(rows){
       optionDataValid:false,
       optionEngineQualified:false,
       optionRejectionReason:why,
-      optionPremiumEntry:0,
-      optionPremiumStopLoss:0,
-      optionPremiumTarget1:0,
-      optionPremiumTarget2:0,
-      optionEntry:0,
-      entryPrice:0,
+      optionPremiumEntry:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0?num(r.optionLTP):0,
+      optionPremiumStopLoss:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true?num(r.optionPremiumStopLoss):0,
+      optionPremiumTarget1:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true?num(r.optionPremiumTarget1):0,
+      optionPremiumTarget2:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true?num(r.optionPremiumTarget2):0,
+      optionEntry:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0?num(r.optionLTP):0,
+      entryPrice:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0?num(r.optionLTP):0,
       optionContractIdentityValid:false,
-      optionLiveDataAvailable:false,
-      optionLiquidityConfirmed:false
+      optionLiveDataAvailable:r.optionContractIdentityValid===true&&r.optionLiveDataAvailable===true&&num(r.optionLTP)>0,
+      optionLiquidityConfirmed:r.optionLiquidityConfirmed===true
     };
   });
   return list.sort((a,b)=>{
