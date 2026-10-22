@@ -67,4 +67,18 @@ assert.strictEqual(watchRows[0].decision,"WATCH");
 assert.strictEqual(watchRows[0].optionPremiumEntry,15.2);
 assert.strictEqual(watchRows[0].optionLiveDataAvailable,true);
 
+const dashboardEligibleOnly=rankDashboard({});
+const dashboardEligibleRows=rankDashboard([{
+  ...trade,
+  qualified:false,
+  dashboardEligible:true,
+  optionsDecision:"REJECT",
+  decision:"REJECT",
+  optionContractIdentityValid:false,
+  optionLiveDataAvailable:false,
+  pipeline:{optionsTradeGatePassed:false}
+}]);
+assert.strictEqual(dashboardEligibleRows.length,1);
+assert.strictEqual(dashboardEligibleRows[0].decision,"WATCH");
+
 console.log("V14 pipeline tests passed");
