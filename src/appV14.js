@@ -14,7 +14,7 @@ const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 const {enrichDashboardNews}=require("./newsService");
 const config=require("./config");
-const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_MIN_SCORE ?? config.THRESHOLDS?.DASHBOARD_MIN_SCORE ?? 80);
+const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_CANDIDATE_MIN_SCORE ?? 5);
 
 const STOCK_BATCH_SIZE=Math.max(10,Number(process.env.STOCK_BATCH_SIZE||25));
 const TOP_100=100;
@@ -95,14 +95,13 @@ function rankDashboard(rows){
     if(dir==="NEUTRAL")return false;
     const rating=String(r.rating??r.aiRating??"").toUpperCase();
     const signal=String(r.signal??"").toUpperCase();
-    if(r.qualified!==true&&r.dashboardEligible!==true&&r.scannerQualified!==true&&r.optionEngineQualified!==true)return false;
     if(rating.includes("AVOID")||signal==="AVOID")return false;
     const composite=num(r.finalScore??r.rankingScore??r.aiFinalScore??r.scannerScore??r.score);
     return Math.abs(composite)>=DASHBOARD_MIN_SCORE;
   });
   const list=candidates.map(r=>{
-    if(validOptionRow(r))return sanitizeOptionRow(r);
-    const why=String(r.optionRejectionReason||r.reason||r.decisionReason||r.rejectionReason||"OPTION_GATE_NOT_PASSED");
+    if((r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true)&&validOptionRow(r))return sanitizeOptionRow(r);
+    const why=String(r.optionRejectionReason||r.decisionReason||r.contractLookupReason||r.rejectionReason||r.reason||"SCANNER_CANDIDATE_NOT_TRADE_QUALIFIED");
     return {
       ...r,
       optionsDecision:"WATCH",
