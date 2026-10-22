@@ -179,7 +179,7 @@ try{
     console.log("NIFTY STOCK-STYLE SCAN: appended as final SCANNER row with "+(nr.optionType||"NO SIDE")+" premium="+num(nr.optionPremiumEntry));
   }
 }catch(e){console.error("NIFTY stock-style scan failed without stopping existing stock scanner: "+(e?.message||e))}
-let dashboardRows=rankDashboard(decisionRows);
+const dashboardCandidateMap=new Map(combinedFullScanRows.map(r=>[key(r),r]).filter(([k])=>k));for(const r of decisionRows){const k=key(r);if(k)dashboardCandidateMap.set(k,{...(dashboardCandidateMap.get(k)||{}),...r});}const dashboardCandidateRows=[...dashboardCandidateMap.values()];let dashboardRows=rankDashboard(dashboardCandidateRows);
 const niftyDashboardRow=decisionRows.find(r=>key(r)==="NIFTY"||key(r)==="NIFTY 50");
 if(niftyDashboardRow&&num(niftyDashboardRow.price)>0&&Math.abs(score(niftyDashboardRow))>=5){
   // NIFTY is a required index row on the compact dashboard, even when its
