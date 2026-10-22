@@ -112,4 +112,16 @@ assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionRejectionReason")
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionContractIdentityValid")],false);
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLiveDataAvailable")],false);
 
+
+const fallbackRows=rankDashboard([
+  {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
+  {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",finalScore:88,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
+]);
+assert.strictEqual(fallbackRows.length,2,"directional scanner candidates should not disappear just because they are WATCH");
+assert.ok(fallbackRows.every(r=>r.decision==="WATCH"),"fallback candidates must remain WATCH, never TRADE");
+assert.ok(fallbackRows.some(r=>r.stock==="LOWER_SCORE"),"lower-score directional candidate should be available to fill dashboard slots");
+const fallbackPayload=buildDashboardPayload(fallbackRows);
+assert.ok(fallbackPayload.rows.length>0,"dashboard payload should not be blank when directional candidates exist");
+assert.ok(fallbackPayload.rows.every(r=>r[fallbackPayload.headers.indexOf("optionsDecision")]==="WATCH"),"rejected options should display as WATCH, not TRADE");
+
 console.log("V14 pipeline tests passed");
