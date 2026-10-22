@@ -95,7 +95,7 @@ function rankDashboard(rows){
     if(dir==="NEUTRAL")return false;
     const rating=String(r.rating??r.aiRating??"").toUpperCase();
     const signal=String(r.signal??"").toUpperCase();
-    if(r.qualified!==true&&r.scannerQualified!==true&&r.optionEngineQualified!==true)return false;
+    if(r.qualified!==true&&r.dashboardEligible!==true&&r.scannerQualified!==true&&r.optionEngineQualified!==true)return false;
     if(rating.includes("AVOID")||signal==="AVOID")return false;
     const composite=num(r.finalScore??r.rankingScore??r.aiFinalScore??r.scannerScore??r.score);
     return Math.abs(composite)>=DASHBOARD_MIN_SCORE;
