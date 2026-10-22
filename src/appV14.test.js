@@ -1,5 +1,6 @@
 const assert=require("assert");
 const {validOptionRow,sanitizeOptionRow,rankDashboard}=require("./appV14");
+const {buildDashboardPayload}=require("./googleSheetCore");
 
 const trade={
   stockPrice:330.95,
@@ -79,5 +80,36 @@ const dashboardEligibleRows=rankDashboard([{
 }]);
 assert.strictEqual(dashboardEligibleRows.length,1);
 assert.strictEqual(dashboardEligibleRows[0].decision,"WATCH");
+
+
+const invalidOptionDashboard=buildDashboardPayload([{
+  stock:"VMM",
+  symbol:"VMM",
+  direction:"BEARISH",
+  stockDirection:"BEARISH",
+  optionType:"PE",
+  qualified:true,
+  finalScore:88,
+  optionContractIdentityValid:false,
+  optionLiveDataAvailable:false,
+  optionLiquidityConfirmed:false,
+  optionEligible:false,
+  optionDataValid:false,
+  optionRejectionReason:"NO_VALID_OPTION_CONTRACTS",
+  optionPremiumEntry:0,
+  optionPremiumTarget1:0,
+  optionPremiumStopLoss:0
+}]);
+const invalidHeaders=invalidOptionDashboard.headers;
+const invalidValues=invalidOptionDashboard.rows[0];
+assert.ok(invalidValues, "directional scanner candidate should remain visible as WATCH");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("entryPrice")],0);
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("bestStrike")],0);
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLTP")],0);
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionsDecision")],"WATCH");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionEligible")],false);
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionRejectionReason")],"NO_VALID_OPTION_CONTRACTS");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionContractIdentityValid")],false);
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLiveDataAvailable")],false);
 
 console.log("V14 pipeline tests passed");
