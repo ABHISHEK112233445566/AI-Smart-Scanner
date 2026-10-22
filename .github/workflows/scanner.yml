@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run syntax and regression tests
+        run: npm test
+
       - name: Verify required secrets
         shell: bash
         run: |
