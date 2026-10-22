@@ -21,7 +21,7 @@ function getISTWeekday(date = new Date()) { const p=getISTDateParts(date); retur
 function getOptionType(option) { const direct=String(option?.optionType??option?.option_type??option?.finalDirection??option?.direction??option?.stockDirection??"").trim().toUpperCase(); if(["CALL","CE","BULLISH","LONG","BUY"].includes(direct))return"CALL"; if(["PUT","PE","BEARISH","SHORT","SELL"].includes(direct))return"PUT"; const symbol=String(option?.optionSymbol??option?.option_symbol??option?.tradingSymbol??option?.trading_symbol??"").trim().toUpperCase(); if(symbol.endsWith("CE"))return"CALL"; if(symbol.endsWith("PE"))return"PUT"; return""; }
 function getDecision(option) { return String(option?.optionsDecision??option?.optionDecision??option?.decision??"").trim().toUpperCase(); }
 function getConfidence(option) { return safeNumber(getNestedValue(option,["optionsConfidence","optionConfidence","confidence","score.confidence","decision.confidence"])); }
-function getScore(option) { return safeNumber(getNestedValue(option,["scannerScore","score"])); }
+function getScore(option) { return safeNumber(getNestedValue(option,["finalScore","rankingScore","aiFinalScore","scannerScore","score","aiScore"])); }
 function scoreStrength(option) { return Math.abs(getScore(option)); }
 function getStockEntry(option) { return safeNumber(getNestedValue(option,["stockEntry","stock_entry","entry","entryPrice","tradeSetup.stockEntry","tradeSetup.entry"])); }
 function getStockStopLoss(option) { return safeNumber(getNestedValue(option,["stockStopLoss","stock_stop_loss","stopLoss","tradeSetup.stockStopLoss","tradeSetup.stopLoss"])); }
