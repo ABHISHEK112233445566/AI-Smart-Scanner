@@ -35,6 +35,46 @@ async function run() {
   assert.strictEqual(conflict.optionType, null);
   assert.strictEqual(conflict.explicitDirectionConflict, true);
   assert.strictEqual(conflict.decisionReason, "EXPLICIT_DIRECTION_CONFLICTS_WITH_TECHNICAL_EVIDENCE");
+
+  const waiting = await calculateOptionsDecision({
+    stock: "WAIT_TRIGGER_TEST",
+    symbol: "WAIT_TRIGGER_TEST",
+    price: 100,
+    currentPrice: 100,
+    qualified: true,
+    direction: "BULLISH",
+    stockDirection: "BULLISH",
+    pipeline: { mtfChecked: true },
+    triggerPrice: 105,
+    dailyTrend: "BULLISH",
+    oneHourTrend: "BULLISH",
+    thirtyMinTrend: "BULLISH",
+    fifteenMinTrend: "BULLISH",
+    ema5: 105,
+    ema9: 104,
+    ema20: 103,
+    ema50: 102,
+    rsi: 60,
+    macdValue: 2,
+    macdSignal: 1,
+    histogram: 1,
+    adxValue: 28,
+    pdi: 30,
+    mdi: 12,
+    vwap: 95,
+    supertrend: "BULLISH",
+    signal: "BULLISH",
+    trend: "BULLISH",
+    support: 95,
+    resistance: 110,
+    volumeConfirmed5: true
+  });
+  assert.strictEqual(waiting.optionsDecision, "WATCH", "an untriggered setup should be watch-only, not rejected");
+  assert.strictEqual(waiting.decision, "WATCH");
+  assert.strictEqual(waiting.reason, "WAIT_FOR_STOCK_TRIGGER");
+  assert.strictEqual(waiting.pipeline.waitingForStockTrigger, true);
+  assert.strictEqual(waiting.pipeline.optionsTradeGatePassed, false, "waiting setups must never pass the trade gate");
+
   console.log("Options decision engine regression tests passed");
 }
 
