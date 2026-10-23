@@ -102,13 +102,14 @@ function rankDashboard(rows){
     if(Math.abs(composite)<DASHBOARD_MIN_SCORE)return false;
 
     // Validate underlying-stock risk levels independently from option premium levels.
-    const entry=num(r.stockEntry??r.underlyingEntry??r.marketEntry??r.price??r.currentPrice);
+    const entry=num(r.stockEntry??r.underlyingEntry??r.marketEntry??r.triggerPrice??r.price??r.currentPrice);
+    const livePrice=num(r.currentPrice??r.price??r.stockPrice??r.ltp);
     const sl=num(r.stockStopLoss??r.stopLoss);
     const t1=num(r.stockTarget1??r.target1);
     const t2=num(r.stockTarget2??r.target2);
-    if(!(entry>0&&sl>0&&t1>0&&t2>0))return false;
-    if(dir==="BULLISH"&&!(sl<entry&&t1>entry&&t2>t1))return false;
-    if(dir==="BEARISH"&&!(sl>entry&&t1<entry&&t2<t1))return false;
+    if(!(entry>0&&livePrice>0&&sl>0&&t1>0&&t2>0))return false;
+    if(dir==="BULLISH"&&!(sl<entry&&t1>entry&&t2>t1&&livePrice>=entry))return false;
+    if(dir==="BEARISH"&&!(sl>entry&&t1<entry&&t2<t1&&livePrice<=entry))return false;
     return true;
   });
   return candidates.map(sanitizeOptionRow).sort((a,b)=>{
