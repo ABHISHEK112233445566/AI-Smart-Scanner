@@ -126,6 +126,30 @@ assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionRejectionReason")
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionContractIdentityValid")],false);
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLiveDataAvailable")],false);
 
+const stockLevelDashboard=buildDashboardPayload([{
+  stock:"LEVEL_TEST",
+  symbol:"LEVEL_TEST",
+  stockPrice:330.95,
+  direction:"BULLISH",
+  finalScore:90,
+  optionsDecision:"WATCH",
+  optionEligible:false,
+  optionDataValid:false,
+  optionPremiumEntry:15.2,
+  optionPremiumStopLoss:10.64,
+  optionPremiumTarget1:22.04,
+  stockEntry:331,
+  stockStopLoss:320,
+  stockTarget1:355,
+  stockTarget2:370
+}]);
+const stockLevelHeaders=stockLevelDashboard.headers;
+const stockLevelValues=stockLevelDashboard.rows[0];
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("target")],355,
+  "Dashboard target must be the underlying stock target, not option premium target");
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stopLoss")],320,
+  "Dashboard stop loss must be the underlying stock stop, not option premium stop");
+
 
 const fallbackRows=rankDashboard([
   {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
