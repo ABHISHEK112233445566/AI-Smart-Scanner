@@ -72,6 +72,8 @@ async function run() {
   assert.strictEqual(waiting.optionsDecision, "WATCH", "an untriggered setup should be watch-only, not rejected");
   assert.strictEqual(waiting.decision, "WATCH");
   assert.strictEqual(waiting.reason, "WAIT_FOR_STOCK_TRIGGER");
+  assert.ok(waiting.confidence > 0, "watch-only rows should retain calculated setup confidence");
+  assert.strictEqual(waiting.optionsConfidence, waiting.confidence, "confidence columns should agree");
   assert.strictEqual(waiting.pipeline.waitingForStockTrigger, true);
   assert.strictEqual(waiting.pipeline.optionsTradeGatePassed, false, "waiting setups must never pass the trade gate");
 
