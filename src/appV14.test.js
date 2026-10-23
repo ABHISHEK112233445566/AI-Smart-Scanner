@@ -5,6 +5,12 @@ const {buildDashboard}=require("./dashboard");
 
 const trade={
   stockPrice:330.95,
+  stockEntry:330.95,
+  stockStopLoss:320,
+  stockTarget1:350,
+  stockTarget2:360,
+  stockDirection:"BULLISH",
+  direction:"BULLISH",
   symbol:"TEST",
   optionType:"CE",
   bestStrike:325,
@@ -70,17 +76,14 @@ assert.strictEqual(reasonPriority.optionRejectionReason,"WAIT_FOR_STOCK_TRIGGER"
 const good=sanitizeOptionRow(trade);
 assert.strictEqual(good.optionEntry,15.2);
 assert.strictEqual(good.entryPrice,15.2);
-assert.strictEqual(rankDashboard([good]).length,1);
+assert.strictEqual(rankDashboard([good]).length,1,"only fully validated trade candidates should enter Top-5");
 const watchRows=rankDashboard([{
   ...informational,
   qualified:true,
   finalScore:88,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }]);
-assert.strictEqual(watchRows.length,1);
-assert.strictEqual(watchRows[0].decision,"WATCH");
-assert.strictEqual(watchRows[0].optionPremiumEntry,15.2);
-assert.strictEqual(watchRows[0].optionLiveDataAvailable,true);
+assert.strictEqual(watchRows.length,0,"WATCH rows must not be presented as Top-5 trades");
 
 const dashboardEligibleRows=rankDashboard([{
   ...trade,
@@ -92,8 +95,7 @@ const dashboardEligibleRows=rankDashboard([{
   optionLiveDataAvailable:false,
   pipeline:{optionsTradeGatePassed:false}
 }]);
-assert.strictEqual(dashboardEligibleRows.length,1);
-assert.strictEqual(dashboardEligibleRows[0].decision,"WATCH");
+assert.strictEqual(dashboardEligibleRows.length,0,"invalid option contracts must not be ranked as Top-5 trades");
 
 
 const invalidOptionDashboard=buildDashboardPayload([{
@@ -155,12 +157,10 @@ const fallbackRows=rankDashboard([
   {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
   {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",finalScore:88,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
 ]);
-assert.strictEqual(fallbackRows.length,2,"directional scanner candidates should not disappear just because they are WATCH");
-assert.ok(fallbackRows.every(r=>r.decision==="WATCH"),"fallback candidates must remain WATCH, never TRADE");
-assert.ok(fallbackRows.some(r=>r.stock==="LOWER_SCORE"),"lower-score directional candidate should be available to fill dashboard slots");
+assert.strictEqual(fallbackRows.length,0,"WATCH/REJECT candidates must not be presented as Top-5 trades");
 const fallbackPayload=buildDashboardPayload(fallbackRows);
-assert.ok(fallbackPayload.rows.length>0,"dashboard payload should not be blank when directional candidates exist");
-assert.ok(fallbackPayload.rows.every(r=>r[fallbackPayload.headers.indexOf("optionsDecision")]==="WATCH"),"rejected options should display as WATCH, not TRADE");
+assert.strictEqual(fallbackPayload.rows.length,1,"an empty Top-5 should show the explicit no-candidate status row");
+assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("optionsDecision")],"WATCH");
 
 const emptyDashboardPayload=buildDashboardPayload([]);
 assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
@@ -172,7 +172,6 @@ const internalDashboard=buildDashboard([{
   optionsDecision:"REJECT",decision:"REJECT",optionContractIdentityValid:false,optionLiveDataAvailable:false,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }],[],1);
-assert.strictEqual(internalDashboard.top10.length,1,"internal dashboard should retain directional WATCH candidates");
-assert.strictEqual(internalDashboard.top10[0].decision,"WATCH");
+assert.strictEqual(internalDashboard.top10.length,0,"internal Top-5 trade list must exclude WATCH candidates");
 
 console.log("V14 pipeline tests passed");
