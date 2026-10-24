@@ -19,7 +19,7 @@ function getGoogleSheetUrl(){
     return String(raw).trim().replace(/\/$/,'');
 }
 function n(v){const x=Number(v);return Number.isFinite(x)?x:null;}
-function score(r={}){for(const value of [r.finalScore,r.rankingScore,r.aiFinalScore,r.scannerScore,r.score]){const x=n(value);if(x!==null&&x!==0)return x;}return 0;}
+function score(r={}){const values=[r.finalScore,r.rankingScore,r.aiFinalScore,r.aiScore,r.scannerScore,r.score].map(n).filter(x=>x!==null&&x!==0);return values.sort((a,b)=>Math.abs(b)-Math.abs(a))[0]||0;}
 function magnitude(r={}){return Math.min(100,Math.abs(score(r)));}
 function direction(r={}){
   // Prefer a usable directional value over a generic SIDEWAYS/NEUTRAL field.
