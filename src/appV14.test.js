@@ -132,6 +132,22 @@ assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionRejectionReason")
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionContractIdentityValid")],false);
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLiveDataAvailable")],false);
 
+const conflictingDirectionDashboard=buildDashboardPayload([{
+  stock:"DIRECTION_CONFLICT",
+  symbol:"DIRECTION_CONFLICT",
+  price:145,
+  currentPrice:145,
+  direction:"NEUTRAL",
+  stockDirection:"BULLISH",
+  technicalDirection:"BULLISH",
+  scannerScore:86,
+  optionsDecision:"WATCH",
+  optionEligible:false,
+  optionDataValid:false
+}]);
+assert.strictEqual(conflictingDirectionDashboard.rows[0][conflictingDirectionDashboard.headers.indexOf("symbol")],"DIRECTION_CONFLICT",
+  "a stale NEUTRAL direction must not hide a valid bullish stock direction");
+
 const stockLevelDashboard=buildDashboardPayload([{
   stock:"LEVEL_TEST",
   symbol:"LEVEL_TEST",
