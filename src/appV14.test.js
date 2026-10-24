@@ -83,7 +83,9 @@ const watchRows=rankDashboard([{
   finalScore:88,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }]);
-assert.strictEqual(watchRows.length,0,"WATCH rows must not be presented as Top-5 trades");
+assert.strictEqual(watchRows.length,1,"directional WATCH candidates should remain visible when no validated trade exists");
+assert.strictEqual(watchRows[0].optionsDecision,"WATCH");
+assert.strictEqual(watchRows[0].optionEligible,false);
 
 const dashboardEligibleRows=rankDashboard([{
   ...trade,
@@ -95,7 +97,9 @@ const dashboardEligibleRows=rankDashboard([{
   optionLiveDataAvailable:false,
   pipeline:{optionsTradeGatePassed:false}
 }]);
-assert.strictEqual(dashboardEligibleRows.length,0,"invalid option contracts must not be ranked as Top-5 trades");
+assert.strictEqual(dashboardEligibleRows.length,1,"invalid option contracts may appear as WATCH, never as TRADE");
+assert.strictEqual(dashboardEligibleRows[0].optionsDecision,"WATCH");
+assert.strictEqual(dashboardEligibleRows[0].optionEligible,false);
 
 
 const invalidOptionDashboard=buildDashboardPayload([{
