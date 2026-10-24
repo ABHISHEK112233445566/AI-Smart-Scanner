@@ -1,7 +1,15 @@
 const assert = require("assert");
-const { calculateOptionsDecision } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen } = require("./src/optionsDecisionEngine");
 
 async function run() {
+  assert.strictEqual(isMarketSessionOpen(new Date("2026-10-24T10:00:00+05:30")), false,
+    "weekend scans must never be marked executable");
+  assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T10:00:00+05:30")), true,
+    "regular weekday market hours should be recognized");
+  assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T09:14:00+05:30")), false,
+    "the market gate must remain closed before 09:15 IST");
+  assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T15:30:00+05:30")), false,
+    "the market gate must close at 15:30 IST");
   const conflict = await calculateOptionsDecision({
     stock: "CONFLICT_TEST",
     symbol: "CONFLICT_TEST",
