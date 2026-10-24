@@ -1,5 +1,5 @@
 const assert=require("assert");
-const {validOptionRow,sanitizeOptionRow,rankDashboard}=require("./appV14");
+const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 
@@ -205,5 +205,40 @@ const internalDashboard=buildDashboard([{
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }],[],1);
 assert.strictEqual(internalDashboard.top10.length,0,"internal Top-5 trade list must exclude WATCH candidates");
+
+
+assert.strictEqual(validOptionRow({
+  ...trade,
+  gates:{basePassed:true},
+  pipeline:{optionsTradeGatePassed:false}
+}),false,"base gates alone must never promote a WATCH candidate to a trade");
+
+const normalizedReject=sanitizeOptionRow({
+  ...trade,
+  optionsDecision:"REJECT",
+  decision:"REJECT",
+  decisionReason:"WAIT_FOR_STOCK_TRIGGER",
+  pipeline:{optionsTradeGatePassed:false}
+});
+assert.strictEqual(normalizedReject.optionsDecision,"WATCH","scanner output should only expose TRADE or WATCH candidates");
+assert.strictEqual(normalizedReject.decision,"WATCH");
+assert.strictEqual(normalizedReject.optionRejectionReason,"WAIT_FOR_STOCK_TRIGGER");
+
+const premiumFallback=sanitizeOptionRow({
+  ...trade,
+  optionsDecision:"WATCH",
+  decision:"WATCH",
+  optionLTP:0,
+  optionPremiumEntry:15.2,
+  pipeline:{optionsTradeGatePassed:false}
+});
+assert.strictEqual(premiumFallback.optionPremiumEntry,15.2,"a zero alias must not erase the valid option premium");
+assert.strictEqual(premiumFallback.entryPrice,15.2);
+
+const strongestScore=rankOptionCandidates([
+  {stock:"LOWER_AI",symbol:"LOWER_AI",scannerScore:80,aiScore:70},
+  {stock:"HIGHER_AI",symbol:"HIGHER_AI",scannerScore:55,aiScore:90}
+],1);
+assert.strictEqual(strongestScore[0].symbol,"HIGHER_AI","option ranking must use the strongest available AI/scanner score");
 
 console.log("V14 pipeline tests passed");
