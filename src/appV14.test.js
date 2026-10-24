@@ -175,7 +175,7 @@ assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stopLoss")],320,
 
 const fallbackRows=rankDashboard([
   {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",price:100,finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
-  {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",price:200,finalScore:88,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
+  {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",price:200,finalScore:69,aiScore:92,scannerScore:65,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
 ]);
 assert.strictEqual(fallbackRows.length,2,"directional candidates with valid prices should remain visible as WATCH rows");
 assert.ok(fallbackRows.every(r=>r.optionsDecision==="WATCH"&&r.optionEligible===false),"fallback rows must never become executable trades");
