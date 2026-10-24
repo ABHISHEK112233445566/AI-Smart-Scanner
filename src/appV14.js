@@ -17,7 +17,7 @@ const config=require("./config");
 const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_CANDIDATE_MIN_SCORE ?? 5);
 
 const STOCK_BATCH_SIZE=Math.max(10,Number(process.env.STOCK_BATCH_SIZE||25));
-const TOP_100=220;
+const TOP_100=100;
 const TOP_20=20;
 const TOP_5=5;
 // Options pipeline only: keep both bullish/CE and bearish/PE candidates in
