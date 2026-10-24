@@ -37,12 +37,14 @@ function mergeBySymbol(base,extra){const map=new Map((Array.isArray(extra)?extra
 function rankTop(rows,limit){return[...(Array.isArray(rows)?rows:[])].sort((a,b)=>(score(b)-score(a))||(confidence(b)-confidence(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,limit);}
 
 function optionDirection(row){
-  const d=String(row?.stockDirection??row?.direction??row?.technicalDirection??"").trim().toUpperCase();
-  if(["BULLISH","BULL","CALL","CE","BUY","LONG","UP"].includes(d))return"BULLISH";
-  if(["BEARISH","BEAR","PUT","PE","SELL","SHORT","DOWN"].includes(d))return"BEARISH";
-  const t=String(row?.optionType??"").trim().toUpperCase();
-  if(["CALL","CE"].includes(t))return"BULLISH";
-  if(["PUT","PE"].includes(t))return"BEARISH";
+  // A neutral/stale generic direction must not hide a valid stock/technical
+  // direction that is present in another field.
+  const values=[row?.stockDirection,row?.technicalDirection,row?.direction,row?.finalDirection,row?.optionType,row?.cePe,row?.side]
+    .map(v=>String(v??"").trim().toUpperCase());
+  for(const d of values){
+    if(["BULLISH","BULL","CALL","CE","BUY","LONG","UP"].includes(d)||d.includes("BULLISH"))return"BULLISH";
+    if(["BEARISH","BEAR","PUT","PE","SELL","SHORT","DOWN"].includes(d)||d.includes("BEARISH"))return"BEARISH";
+  }
   return"NEUTRAL";
 }
 
@@ -97,7 +99,7 @@ function rankDashboard(rows){
     const signal=String(r.signal??"").toUpperCase();
     if(rating.includes("AVOID")||signal==="AVOID")return false;
     const composite=[r.finalScore,r.rankingScore,r.aiFinalScore,r.scannerScore,r.score].map(num).find(v=>v!==0)??0;
-    const livePrice=num(r.currentPrice??r.price??r.stockPrice??r.ltp);
+    const livePrice=[r.currentPrice,r.price,r.stockPrice,r.ltp].map(num).find(v=>v>0)||0;
     return Math.abs(composite)>=DASHBOARD_MIN_SCORE&&livePrice>0;
   };
   const validStockLevels=r=>{
