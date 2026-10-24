@@ -104,11 +104,14 @@ function rankDashboard(rows){
   };
   const validStockLevels=r=>{
     const dir=optionDirection(r);
-    const entry=num(r.stockEntry??r.underlyingEntry??r.marketEntry??r.triggerPrice??r.price??r.currentPrice);
-    const livePrice=num(r.currentPrice??r.price??r.stockPrice??r.ltp);
-    const sl=num(r.stockStopLoss??r.underlyingStopLoss);
-    const t1=num(r.stockTarget1??r.underlyingTarget1);
-    const t2=num(r.stockTarget2??r.underlyingTarget2);
+    // Resolve only explicitly stock/underlying price fields. Never borrow
+    // option-premium stop/target values for stock-price validation.
+    const positive=values=>values.map(num).find(v=>v>0)||0;
+    const entry=positive([r.stockEntry,r.underlyingEntry,r.marketEntry,r.triggerPrice,r.price,r.currentPrice]);
+    const livePrice=positive([r.currentPrice,r.price,r.stockPrice,r.ltp]);
+    const sl=positive([r.stockStopLoss,r.underlyingStopLoss]);
+    const t1=positive([r.stockTarget1,r.underlyingTarget1]);
+    const t2=positive([r.stockTarget2,r.underlyingTarget2]);
     if(!(entry>0&&livePrice>0&&sl>0&&t1>0&&t2>0))return false;
     if(dir==="BULLISH")return sl<entry&&t1>entry&&t2>t1&&livePrice>=entry;
     if(dir==="BEARISH")return sl>entry&&t1<entry&&t2<t1&&livePrice<=entry;
