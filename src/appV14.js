@@ -98,7 +98,7 @@ function rankDashboard(rows){
     const rating=String(r.rating??r.aiRating??"").toUpperCase();
     const signal=String(r.signal??"").toUpperCase();
     if(rating.includes("AVOID")||signal==="AVOID")return false;
-    const composite=[r.finalScore,r.rankingScore,r.aiFinalScore,r.scannerScore,r.score].map(num).find(v=>v!==0)??0;
+    const composite=[r.finalScore,r.rankingScore,r.aiFinalScore,r.aiScore,r.scannerScore,r.score].map(num).sort((a,b)=>Math.abs(b)-Math.abs(a))[0]??0;
     const livePrice=[r.currentPrice,r.price,r.stockPrice,r.ltp].map(num).find(v=>v>0)||0;
     return Math.abs(composite)>=DASHBOARD_MIN_SCORE&&livePrice>0;
   };
@@ -118,8 +118,8 @@ function rankDashboard(rows){
     return false;
   };
   const sortRows=(a,b)=>{
-    const compositeA=Math.abs([a.finalScore,a.rankingScore,a.aiFinalScore,a.scannerScore,a.score].map(num).find(v=>v!==0)??0);
-    const compositeB=Math.abs([b.finalScore,b.rankingScore,b.aiFinalScore,b.scannerScore,b.score].map(num).find(v=>v!==0)??0);
+    const compositeA=Math.max(0,...[a.finalScore,a.rankingScore,a.aiFinalScore,a.aiScore,a.scannerScore,a.score].map(v=>Math.abs(num(v))));
+    const compositeB=Math.max(0,...[b.finalScore,b.rankingScore,b.aiFinalScore,b.aiScore,b.scannerScore,b.score].map(v=>Math.abs(num(v))));
     return (compositeB-compositeA)||(confidence(b)-confidence(a))||(num(b.stockRiskReward??b.riskReward)-num(a.stockRiskReward??a.riskReward));
   };
   const trades=source.filter(r=>isDirectionalCandidate(r)&&decision(r)==="TRADE"&&validOptionRow(r)&&
