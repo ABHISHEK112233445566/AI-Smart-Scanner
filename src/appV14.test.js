@@ -39,6 +39,7 @@ assert.strictEqual(validOptionRow(trade),true);
 assert.strictEqual(validOptionRow({...trade,bestStrike:0}),false);
 assert.strictEqual(validOptionRow({...trade,optionContractIdentityValid:false}),false);
 assert.strictEqual(validOptionRow({...trade,optionLiquidityConfirmed:false}),false);
+assert.strictEqual(validOptionRow({...trade,marketSessionOpen:false}),false,"closed-market rows must never be executable trades");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContract:"KEY_B",optionLiquidityContractData:{instrument_key:"KEY_A",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"liquidity contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
