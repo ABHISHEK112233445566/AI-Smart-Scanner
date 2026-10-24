@@ -158,13 +158,15 @@ assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stopLoss")],320,
 
 
 const fallbackRows=rankDashboard([
-  {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
-  {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",finalScore:88,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
+  {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",price:100,finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
+  {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",price:200,finalScore:88,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
 ]);
-assert.strictEqual(fallbackRows.length,0,"WATCH/REJECT candidates must not be presented as Top-5 trades");
+assert.strictEqual(fallbackRows.length,2,"directional candidates with valid prices should remain visible as WATCH rows");
+assert.ok(fallbackRows.every(r=>r.optionsDecision==="WATCH"&&r.optionEligible===false),"fallback rows must never become executable trades");
 const fallbackPayload=buildDashboardPayload(fallbackRows);
-assert.strictEqual(fallbackPayload.rows.length,1,"an empty Top-5 should show the explicit no-candidate status row");
-assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("optionsDecision")],"WATCH");
+assert.strictEqual(fallbackPayload.rows.length,2,"Dashboard should show ranked directional WATCH candidates");
+assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("symbol")],"STRONG_SCORE","highest-score candidate should rank first");
+assert.ok(fallbackPayload.rows.every(row=>row[fallbackPayload.headers.indexOf("optionsDecision")]==="WATCH"));
 
 const emptyDashboardPayload=buildDashboardPayload([]);
 assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
