@@ -166,6 +166,16 @@ const emptyDashboardPayload=buildDashboardPayload([]);
 assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
 assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("symbol")],"NO CURRENT DIRECTIONAL CANDIDATE");
 assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("optionsDecision")],"WATCH");
+const niftyBelowScore=buildDashboardPayload([{
+  stock:"NIFTY",symbol:"NIFTY",price:22600,stockPrice:22600,
+  direction:"BEARISH",stockDirection:"BEARISH",score:0,scannerScore:0,
+  optionsDecision:"WATCH",optionEligible:false,optionDataValid:false,
+  optionRejectionReason:"NIFTY_OPTION_GATE_NOT_PASSED"
+}]);
+assert.strictEqual(niftyBelowScore.rows[0][niftyBelowScore.headers.indexOf("symbol")],"NIFTY",
+  "NIFTY must remain visible on Dashboard when its score is low or its option gate fails");
+assert.strictEqual(niftyBelowScore.rows[0][niftyBelowScore.headers.indexOf("stockPrice")],22600,
+  "NIFTY dashboard row must preserve underlying index price");
 
 const internalDashboard=buildDashboard([{
   stock:"WATCH_FALLBACK",symbol:"WATCH_FALLBACK",direction:"BULLISH",finalScore:69,scannerScore:80,qualified:false,
