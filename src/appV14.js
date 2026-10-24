@@ -29,8 +29,10 @@ const ONE_TRADE_LIMIT=1;
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
 const firstPositive=(...values)=>values.map(num).find(v=>v>0)||0;
 const key=r=>String(r?.stock??r?.symbol??r?.name??"").trim().toUpperCase();
-const score=r=>Math.max(0,...[r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.aiScore,r?.scannerScore,r?.score].map(v=>Math.abs(num(v))));
-const confidence=r=>Math.max(0,num(r?.optionsConfidence),num(r?.confidence));
+const score=r=>Math.abs(num(r?.scannerScore??r?.score));
+const confidence=r=>num(r?.optionsConfidence??r?.confidence);
+const optionScore=r=>Math.max(0,...[r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.aiScore,r?.scannerScore,r?.score].map(v=>Math.abs(num(v))));
+const optionConfidence=r=>Math.max(0,num(r?.optionsConfidence),num(r?.confidence));
 const decision=r=>String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
 async function scanInBatches(symbols){const all=[];const source=[...new Set((symbols||[]).map(s=>String(s||"").trim().toUpperCase()).filter(Boolean))];for(let i=0;i<source.length;i+=STOCK_BATCH_SIZE){const batch=source.slice(i,i+STOCK_BATCH_SIZE);console.log(`STOCK BATCH ${i+1}-${Math.min(i+STOCK_BATCH_SIZE,source.length)} / ${source.length}`);try{const result=await scanStocks(batch);const rows=Array.isArray(result?.allResults)?result.allResults:(Array.isArray(result)?result:[]);all.push(...rows);}catch(e){console.error(`Batch failed: ${e?.message||e}`);for(const s of batch)all.push({stock:s,symbol:s,qualified:false,rejectionReason:"BATCH_ERROR"});}}const map=new Map();for(const r of all)map.set(key(r),r);const unique=[...map.values()];return{allResults:unique,qualified:unique.filter(r=>r?.qualified===true),rejected:unique.filter(r=>r?.qualified===false)};}
 async function enrichUnderlyingOI(rows=[]){const source=Array.isArray(rows)?rows:[];const concurrency=Math.max(4,Number(process.env.OI_ENRICH_CONCURRENCY||8));const out=[];for(let i=0;i<source.length;i+=concurrency){const batch=source.slice(i,i+concurrency);const checked=await Promise.all(batch.map(async r=>{try{const oi=await getUnderlyingOIMood({instrumentKey:r.instrumentKey,currentPrice:num(r.currentPrice??r.price),previousPrice:num(r.previousPrice??r.prevPrice??r.previousClose)});return{...r,oiCheckAttempted:true,oiMood:oi.mood||"UNKNOWN",oiSentiment:oi.sentiment||"UNKNOWN",oiDataAvailable:oi.dataAvailable===true,oiPriceChangePercent:num(oi.priceChangePercent),oiChangePercent:num(oi.oiChangePercent),oi:num(oi.oi),previousOI:num(oi.previousOI),underlyingOISource:oi.source||"",underlyingOIReason:oi.reason||""};}catch(e){return{...r,oiCheckAttempted:true,oiMood:"UNKNOWN",oiSentiment:"UNKNOWN",oiDataAvailable:false,oiPriceChangePercent:0,oiChangePercent:0,underlyingOIReason:`ENRICHMENT_FAILED:${e?.message||e}`};}}));out.push(...checked);}return out;}
@@ -55,8 +57,8 @@ function optionDirection(row){
 // Equity ranking continues to use rankTop() unchanged.
 function rankOptionCandidates(rows,limit){
   const ranked=[...(Array.isArray(rows)?rows:[])].sort((a,b)=>
-    (score(b)-score(a))||
-    (confidence(b)-confidence(a))||
+    (optionScore(b)-optionScore(a))||
+    (optionConfidence(b)-optionConfidence(a))||
     (num(b.riskReward)-num(a.riskReward))
   );
   if(ranked.length<=limit)return ranked.slice(0,limit);
