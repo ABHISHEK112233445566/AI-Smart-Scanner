@@ -1,7 +1,7 @@
 const { getBroker } = require('./brokers');
 const { calculateIndicators } = require('./indicators');
 const TIMEFRAMES=Object.freeze([{key:'daily',interval:'ONE_DAY',weight:30,minCandles:50},{key:'fourHour',interval:'FOUR_HOUR',weight:25,minCandles:50},{key:'oneHour',interval:'ONE_HOUR',weight:25,minCandles:50},{key:'fifteenMin',interval:'FIFTEEN_MINUTE',weight:20,minCandles:50}]);
-const num=v=>Number.isFinite(Number(v))?Number(v):null;
+const num=v=>v===null||v===undefined||(typeof v==='string'&&v.trim()==='')?null:(Number.isFinite(Number(v))?Number(v):null);
 function emptyTrend(reason='NO_DATA',interval=''){return{trend:'UNKNOWN',direction:'UNKNOWN',bullish:false,bearish:false,score:0,bullishPoints:0,bearishPoints:0,valid:false,reason,interval,candles:0,indicatorQuality:{}};}
 function normalize(candles){if(!Array.isArray(candles))return[];return candles.map(c=>({time:c?.time??c?.timestamp??c?.datetime??c?.date??c?.[0],open:num(c?.open??c?.[1]),high:num(c?.high??c?.[2]),low:num(c?.low??c?.[3]),close:num(c?.close??c?.[4]),volume:Math.max(0,num(c?.volume??c?.[5])??0)})).filter(c=>[c.open,c.high,c.low,c.close].every(Number.isFinite)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.high>=c.open&&c.high>=c.close&&c.low<=c.open&&c.low<=c.close).sort((a,b)=>new Date(a.time)-new Date(b.time));}
 function direction(v){const s=String(v||'').toUpperCase();return s.includes('BULLISH')?'BULLISH':s.includes('BEARISH')?'BEARISH':'UNKNOWN';}
