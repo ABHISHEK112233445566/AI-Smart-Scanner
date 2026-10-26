@@ -54,7 +54,7 @@ sheet.getRange(dataStartRow,i+1,count,1).setNumberFormat(fmt);
 // This also repairs stale date formats on existing Sheets without converting numbers to text.
 for(var j=0;j<headers.length;j++){
 var key=String(headers[j]||"").trim().toLowerCase().replace(/[^a-z0-9]/g,"");
-if(/^(optionpremium(entry|stoploss|target1|target2|risk|reward|riskreward)|stock(entry|stoploss|target1|target2)|underlying(entry|stoploss|target1|target2)|marketentry|triggerprice)$/.test(key)){
+if(/^(optionpremium(entry|stoploss|target1|target2|risk|reward|riskreward)|optionliquidityltp|optionltp|optionpremium|stock(entry|stoploss|target1|target2)|underlying(entry|stoploss|target1|target2)|marketentry|triggerprice)$/.test(key)){
 sheet.getRange(dataStartRow,j+1,count,1).setNumberFormat("0.00");
 }
 }
