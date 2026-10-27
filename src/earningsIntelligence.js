@@ -7,7 +7,8 @@ const NSE_HOME = "https://www.nseindia.com";
 const NSE_BOARD_MEETINGS_API = `${NSE_HOME}/api/corporate-board-meetings`;
 const TIMEOUT_MS = Math.max(2000, Number(process.env.EARNINGS_TIMEOUT_MS || 7000));
 const CACHE_TTL_MS = Math.max(60000, Number(process.env.EARNINGS_CACHE_TTL_MS || 900000));
-let cached = { at: 0, events: [] };
+let cached = { at: 0, events: [], available: false, error: "" };
+let lastFetchAvailable = false;
 
 function cleanSymbol(value) {
   return String(value ?? "").trim().toUpperCase().replace(/[^A-Z0-9&.-]/g, "");
@@ -22,6 +23,9 @@ function asDate(value) {
   }
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function formatLocalDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 function dateParam(date) {
   return `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
@@ -47,7 +51,7 @@ function normalizeEvent(item) {
   if (!symbol || !date || !financialResultsMeeting(item)) return null;
   return {
     symbol,
-    earningsMeetingDate: date.toISOString().slice(0, 10),
+    earningsMeetingDate: formatLocalDate(date),
     earningsMeetingPurpose: String(item?.bm_purpose ?? item?.purpose ?? item?.bm_desc ?? item?.meetingPurpose ?? item?.meeting_purpose ?? item?.description ?? "Financial results").trim().slice(0, 240),
     earningsEventSource: "NSE_BOARD_MEETINGS",
     earningsEventUrl: String(item?.attchmntFile ?? item?.attachment ?? item?.url ?? "").trim(),
@@ -77,8 +81,8 @@ async function fetchNseJson(url, cookie) {
 }
 async function fetchBoardMeetings() {
   const now = new Date();
-  const from = new Date(now); from.setDate(from.getDate() - 3);
-  const to = new Date(now); to.setDate(to.getDate() + 7);
+  const from = new Date(now); from.setDate(from.getDate() - 7);
+  const to = new Date(now); to.setDate(to.getDate() + 30);
   const params = new URLSearchParams({
     index: "equities",
     from_date: dateParam(from),
@@ -105,27 +109,46 @@ async function fetchBoardMeetings() {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return list.map(normalizeEvent).filter(Boolean).filter(e => {
     const diff = dayDiff(e._meetingDate, today);
-    return diff >= -3 && diff <= 7;
+    return diff >= -7 && diff <= 30;
   }).sort((a, b) => a._meetingDate - b._meetingDate);
 }
 async function getEarningsEvents() {
-  if (cached.events.length && Date.now() - cached.at < CACHE_TTL_MS) return cached.events;
+  if (cached.at && Date.now() - cached.at < CACHE_TTL_MS) {
+    lastFetchAvailable = cached.available;
+    return cached.events;
+  }
   try {
     const events = await fetchBoardMeetings();
-    cached = { at: Date.now(), events };
+    cached = { at: Date.now(), events, available: true, error: "" };
+    lastFetchAvailable = true;
     console.log(`EARNINGS CALENDAR: NSE financial-results meetings=${events.length}`);
     return events;
   } catch (error) {
+    cached = { at: Date.now(), events: [], available: false, error: String(error?.message || error) };
+    lastFetchAvailable = false;
     console.warn(`EARNINGS CALENDAR unavailable; existing scoring preserved: ${error?.message || error}`);
     return [];
   }
 }
+function firstPositive(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || String(value).trim() === "") continue;
+    const n = Number(String(value).replace(/,/g, "").replace(/%$/, ""));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
 function movement(row) {
-  const current = firstNumber(row?.currentPrice, row?.livePrice, row?.price, row?.ltp);
-  const previous = firstNumber(row?.previousClose, row?.prevClose, row?.previousPrice, row?.prevPrice);
-  const explicit = firstNumber(row?.changePercent, row?.priceChangePercent, row?.dayChangePercent, row?.pChange, row?.percentChange);
-  const changePct = explicit || (current > 0 && previous > 0 ? (current - previous) / previous * 100 : 0);
-  const volumeRatio = firstNumber(row?.volumeRatio5, row?.volumePaceRatio5, row?.volumeRatio, row?.relativeVolume);
+  const current = firstPositive(row?.currentPrice, row?.livePrice, row?.price, row?.ltp);
+  const previous = firstPositive(row?.previousClose, row?.prevClose, row?.previousPrice, row?.prevPrice);
+  let explicit = null;
+  for (const value of [row?.changePct, row?.changePercent, row?.priceChangePercent, row?.dayChangePercent, row?.pChange, row?.percentChange]) {
+    if (value === null || value === undefined || String(value).trim() === "") continue;
+    const parsed = Number(String(value).replace(/,/g, "").replace(/%$/, ""));
+    if (Number.isFinite(parsed)) { explicit = parsed; break; }
+  }
+  const changePct = explicit !== null ? explicit : (current > 0 && previous > 0 ? (current - previous) / previous * 100 : 0);
+  const volumeRatio = firstPositive(row?.volumeRatio5, row?.volumePaceRatio5, row?.volumeRatio, row?.relativeVolume);
   return { changePct, volumeRatio };
 }
 function applyEvent(row, event, today) {
@@ -143,8 +166,15 @@ function applyEvent(row, event, today) {
     if (changePct >= 1) { direction = "BULLISH"; contribution = 5; }
     else if (changePct <= -1) { direction = "BEARISH"; contribution = -5; }
   }
-  const base = firstNumber(row?.earningsBaseScore, row?.finalScore, row?.rankingScore, row?.aiFinalScore, row?.aiScore, row?.scannerScore, row?.score);
-  const adjusted = base + contribution;
+  const savedBase = row?.earningsBaseScore;
+  const scoreValues = [row?.finalScore, row?.rankingScore, row?.aiFinalScore, row?.aiScore, row?.scannerScore, row?.score]
+    .map(v => v === null || v === undefined || String(v).trim() === "" ? null : Number(v))
+    .filter(v => Number.isFinite(v));
+  const base = savedBase !== null && savedBase !== undefined && String(savedBase).trim() !== ""
+    && Number.isFinite(Number(savedBase))
+    ? Number(savedBase)
+    : (scoreValues.sort((a, b) => Math.abs(b) - Math.abs(a))[0] ?? 0);
+  const adjusted = Math.max(-100, Math.min(100, base + contribution));
   return {
     ...row,
     earningsEventDetected: true,
@@ -156,7 +186,7 @@ function applyEvent(row, event, today) {
     earningsDaysFromMeeting: diff,
     earningsDirection: direction,
     earningsScoreContribution: contribution,
-    earningsCatalystScore: diff >= 0 ? 3 : 0,
+    earningsCatalystScore: contribution,
     earningsPriceChangePercent: Number(changePct.toFixed(2)),
     earningsVolumeRatio: Number(volumeRatio.toFixed(2)),
     earningsBaseScore: base,
@@ -164,11 +194,11 @@ function applyEvent(row, event, today) {
     finalScore: adjusted
   };
 }
-function applyNoEvent(row) {
+function applyNoEvent(row, dataAvailable = lastFetchAvailable) {
   return {
     ...row,
     earningsEventDetected: false,
-    earningsEventStatus: "NO_CONFIRMED_RESULTS_MEETING",
+    earningsEventStatus: dataAvailable ? "NO_CONFIRMED_RESULTS_MEETING" : "EARNINGS_DATA_UNAVAILABLE",
     earningsMeetingDate: "",
     earningsMeetingPurpose: "",
     earningsEventSource: "",
@@ -196,7 +226,7 @@ async function enrichEarningsRows(rows = [], universeSymbols = []) {
   const enriched = (Array.isArray(rows) ? rows : []).map(row => {
     const symbol = cleanSymbol(row?.stock ?? row?.symbol ?? row?.tradingSymbol);
     const event = eventBySymbol.get(symbol);
-    return event ? applyEvent(row, event, today) : applyNoEvent(row);
+    return event ? applyEvent(row, event, today) : applyNoEvent(row, lastFetchAvailable);
   });
   return {
     rows: enriched,
@@ -205,4 +235,4 @@ async function enrichEarningsRows(rows = [], universeSymbols = []) {
     events: rowsWithEvents.map(({ _meetingDate, ...event }) => event)
   };
 }
-module.exports = { enrichEarningsRows, getEarningsEvents, fetchBoardMeetings };
+module.exports = { enrichEarningsRows, getEarningsEvents, fetchBoardMeetings, normalizeEvent, applyEvent, applyNoEvent, movement };
