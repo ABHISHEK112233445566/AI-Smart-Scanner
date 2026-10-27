@@ -13,6 +13,7 @@ const {getTop500ByLiveVolume,filterOptionEligibleStocks,getTopMovers}=require(".
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 const {enrichDashboardNews}=require("./newsService");
+const {enrichEarningsRows}=require("./earningsIntelligence");
 const config=require("./config");
 const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_CANDIDATE_MIN_SCORE ?? 5);
 
@@ -182,7 +183,17 @@ console.log("TOP MOVER FULL SCAN: scanned="+topMoverScan.allResults.length+" | q
 const topMoverRows=topMoverUniverse;
 const optionUniverseWithMovers=[...new Map([...topMoverRows,...optionUniverseRows].map(r=>[key(r),r])).values()];
 console.log("OPTION TOP MOVERS: "+topMoverRows.length+" F&O movers promoted into option preflight");
-const optionEligible=await collectOptionEligible(optionUniverseWithMovers,broker,topMoverRows);if(!optionEligible.length)console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${fnoUniverse.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);const top100=optionEligible.slice(0,TOP_100);console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → top movers promoted="+topMoverRows.length+" → eligible options="+top100.length+" (target "+TOP_100+")");const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);const optionScan=await scanInBatches(optionSymbols);const optionScanned=mergeBySymbol(optionScan.allResults,top100);const moverOptionScanned=topMoverScan.allResults;const combinedOptionScanned=mergeBySymbol(optionScanned,moverOptionScanned);const combinedFullScanMap=new Map(optionScanned.map(r=>[key(r),r]).filter(([k])=>k));for(const r of topMoverScan.allResults){const k=key(r);if(k)combinedFullScanMap.set(k,{...(combinedFullScanMap.get(k)||{}),...r});}const combinedFullScanRows=[...combinedFullScanMap.values()];
+const optionEligible=await collectOptionEligible(optionUniverseWithMovers,broker,topMoverRows);if(!optionEligible.length)console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${fnoUniverse.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);const top100=optionEligible.slice(0,TOP_100);console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → top movers promoted="+topMoverRows.length+" → eligible options="+top100.length+" (target "+TOP_100+")");const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);const optionScan=await scanInBatches(optionSymbols);const optionScanned=mergeBySymbol(optionScan.allResults,top100);const moverOptionScanned=topMoverScan.allResults;const combinedOptionScanned=mergeBySymbol(optionScanned,moverOptionScanned);const combinedFullScanMap=new Map(optionScanned.map(r=>[key(r),r]).filter(([k])=>k));for(const r of topMoverScan.allResults){const k=key(r);if(k)combinedFullScanMap.set(k,{...(combinedFullScanMap.get(k)||{}),...r});}let combinedFullScanRows=[...combinedFullScanMap.values()];
+try {
+  // Check the existing full F&O universe for confirmed results meetings.
+  // This enrichment happens before Top-20 ranking; it never changes the
+  // existing universe, gates, or options-engine logic. NSE failure is fail-open.
+  const earnings = await enrichEarningsRows(combinedFullScanRows, optionUniverseSymbols);
+  combinedFullScanRows = earnings.rows;
+  console.log(`EARNINGS INTELLIGENCE: checked universe=${earnings.checkedSymbols} | confirmed event symbols=${earnings.eventSymbols} | enriched candidates=${combinedFullScanRows.filter(r=>r.earningsEventDetected).length}`);
+} catch(e) {
+  console.warn(`Earnings intelligence skipped; existing ranking and decisions preserved: ${e?.message||e}`);
+}
 const optionTop20=rankOptionCandidates(combinedFullScanRows,TOP_20);console.log(`COMBINED TOP-20: original full-scan rows=${optionScanned.length} + top-mover full-scan rows=${topMoverScan.allResults.length} → Top-20=${optionTop20.length}`);const oiRows=await enrichUnderlyingOI(optionTop20);let decisions=[];try{decisions=(await calculateOptionsDecisions(oiRows)).map(sanitizeOptionRow)}catch(e){console.error(`Options engine failed: ${e?.message||e}`)}let decisionRows=mergeBySymbol(oiRows,decisions).map(sanitizeOptionRow);try{decisionRows=await enrichDashboardNews(decisionRows);console.log(`SCANNER NEWS: enriched ${decisionRows.length} Top-20 scanner rows`);}catch(e){console.warn(`Scanner news enrichment failed: ${e?.message||e}`)}let niftyDashboard=null;
 try{
   niftyDashboard=await scanNiftyIndex(broker);
