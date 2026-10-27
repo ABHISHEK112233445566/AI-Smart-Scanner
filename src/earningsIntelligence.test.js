@@ -18,13 +18,16 @@ const recent = applyEvent({
   symbol: "TEST", finalScore: 80, scannerScore: 90, currentPrice: 106, previousClose: 100,
   changePct: 6, volumeRatio5: 1.5
 }, { ...event, _meetingDate: new Date(2026, 9, 26) }, new Date(2026, 9, 27));
-assert.strictEqual(recent.earningsDirection, "BULLISH");
-assert.strictEqual(recent.earningsScoreContribution, 5);
+assert.strictEqual(recent.earningsDirection, "NEUTRAL",
+  "a scheduled board meeting alone must not be treated as a confirmed earnings result");
+assert.strictEqual(recent.earningsScoreContribution, 0,
+  "recent board meetings must not create directional earnings points without a result filing");
 assert.strictEqual(recent.earningsBaseScore, 90, "base score should use the strongest existing score alias");
-assert.strictEqual(recent.earningsAdjustedScore, 95);
+assert.strictEqual(recent.earningsAdjustedScore, 90);
+assert.strictEqual(recent.earningsResultPublished, false);
 assert.strictEqual(movement({ currentPrice: 0, livePrice: 106, previousClose: 0, prevClose: 100 }).changePct, 6,
   "zero aliases must not hide valid later price aliases");
 assert.strictEqual(applyNoEvent({}, false).earningsEventStatus, "EARNINGS_DATA_UNAVAILABLE",
   "API failure must not be reported as a verified absence of results meetings");
-assert.strictEqual(applyNoEvent({}, true).earningsEventStatus, "NO_CONFIRMED_RESULTS_MEETING");
+assert.strictEqual(applyNoEvent({}, true).earningsEventStatus, "NO_RESULTS_MEETING_NOTICE");
 console.log("Earnings intelligence tests passed");
