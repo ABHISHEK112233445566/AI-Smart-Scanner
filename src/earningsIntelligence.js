@@ -157,15 +157,12 @@ function applyEvent(row, event, today) {
     : diff > 0 ? (diff === 1 ? "RESULTS_MEETING_TOMORROW" : "RESULTS_MEETING_UPCOMING")
     : diff === -1 ? "RECENT_RESULTS_MEETING_1D" : "RECENT_RESULTS_MEETING_2_3D";
   const { changePct, volumeRatio } = movement(row);
-  let direction = "NEUTRAL";
-  // Upcoming results add only a small neutral event-awareness contribution.
-  // They do not predict direction. Directional contribution is allowed only
-  // after a recent meeting and when price movement + volume confirm together.
-  let contribution = diff >= 0 ? 3 : 0;
-  if (diff < 0 && volumeRatio >= 1.2) {
-    if (changePct >= 1) { direction = "BULLISH"; contribution = 5; }
-    else if (changePct <= -1) { direction = "BEARISH"; contribution = -5; }
-  }
+  // This NSE endpoint identifies a scheduled board meeting, not proof that
+  // results were released or that the reported earnings beat/missed estimates.
+  // Add only a small neutral catalyst contribution for a future meeting.
+  // Do not assign a bullish/bearish earnings score from price action alone.
+  const direction = "NEUTRAL";
+  const contribution = diff >= 0 ? 3 : 0;
   const savedBase = row?.earningsBaseScore;
   const scoreValues = [row?.finalScore, row?.rankingScore, row?.aiFinalScore, row?.aiScore, row?.scannerScore, row?.score]
     .map(v => v === null || v === undefined || String(v).trim() === "" ? null : Number(v))
@@ -178,6 +175,8 @@ function applyEvent(row, event, today) {
   return {
     ...row,
     earningsEventDetected: true,
+    earningsEventType: "NSE_BOARD_MEETING_NOTICE",
+    earningsResultPublished: false,
     earningsEventStatus: status,
     earningsMeetingDate: event.earningsMeetingDate,
     earningsMeetingPurpose: event.earningsMeetingPurpose,
@@ -198,7 +197,9 @@ function applyNoEvent(row, dataAvailable = lastFetchAvailable) {
   return {
     ...row,
     earningsEventDetected: false,
-    earningsEventStatus: dataAvailable ? "NO_CONFIRMED_RESULTS_MEETING" : "EARNINGS_DATA_UNAVAILABLE",
+    earningsEventType: dataAvailable ? "NO_MEETING_NOTICE_IN_LOOKBACK_WINDOW" : "CALENDAR_UNAVAILABLE",
+    earningsResultPublished: false,
+    earningsEventStatus: dataAvailable ? "NO_RESULTS_MEETING_NOTICE" : "EARNINGS_DATA_UNAVAILABLE",
     earningsMeetingDate: "",
     earningsMeetingPurpose: "",
     earningsEventSource: "",
