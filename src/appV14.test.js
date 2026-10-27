@@ -1,5 +1,5 @@
 const assert=require("assert");
-const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates}=require("./appV14");
+const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates,mergeBySymbol}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 
@@ -242,4 +242,20 @@ const strongestScore=rankOptionCandidates([
 ],1);
 assert.strictEqual(strongestScore[0].symbol,"HIGHER_AI","option ranking must use the strongest available AI/scanner score");
 
+
+const mergedLiveQuote=mergeBySymbol([{
+  stock:"ATHERENERG",symbol:"ATHERENERG",price:1575,currentPrice:1575,livePrice:1575,
+  previousClose:1575,change:0,changePct:0,liveQuoteAvailable:false
+}],[{
+  stock:"ATHERENERG",symbol:"ATHERENERG",price:1674,previousClose:1575,
+  liveMarketConfirmed:true,liveVolumeRank:1,timestamp:"2026-10-27T15:59:00+05:30"
+}])[0];
+assert.strictEqual(mergedLiveQuote.price,1674);
+assert.strictEqual(mergedLiveQuote.currentPrice,1674,"live quote merge must update currentPrice alias");
+assert.strictEqual(mergedLiveQuote.livePrice,1674,"live quote merge must update livePrice alias");
+assert.strictEqual(mergedLiveQuote.liveQuotePrice,1674);
+assert.strictEqual(mergedLiveQuote.previousClose,1575);
+assert.strictEqual(mergedLiveQuote.change,99,"absolute change must be calculated from the same quote snapshot");
+assert.strictEqual(mergedLiveQuote.changePct,6.285714,"percentage change must be calculated from the same quote snapshot");
+assert.strictEqual(mergedLiveQuote.liveQuoteAvailable,true);
 console.log("V14 pipeline tests passed");

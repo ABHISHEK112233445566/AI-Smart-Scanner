@@ -13,6 +13,7 @@ const {getTop500ByLiveVolume,filterOptionEligibleStocks,getTopMovers}=require(".
 const {getUnderlyingOIMood}=require("./underlyingOI");
 const {DIVIDEND_LONG_TERM_SYMBOLS}=require("./dividendUniverse");
 const {enrichDashboardNews}=require("./newsService");
+const {enrichEarningsRows}=require("./earningsIntelligence");
 const config=require("./config");
 const DASHBOARD_MIN_SCORE = Number(config.DASHBOARD_CANDIDATE_MIN_SCORE ?? 5);
 
@@ -37,7 +38,44 @@ const decision=r=>String(r?.optionsDecision??r?.decision??"").trim().toUpperCase
 async function scanInBatches(symbols){const all=[];const source=[...new Set((symbols||[]).map(s=>String(s||"").trim().toUpperCase()).filter(Boolean))];for(let i=0;i<source.length;i+=STOCK_BATCH_SIZE){const batch=source.slice(i,i+STOCK_BATCH_SIZE);console.log(`STOCK BATCH ${i+1}-${Math.min(i+STOCK_BATCH_SIZE,source.length)} / ${source.length}`);try{const result=await scanStocks(batch);const rows=Array.isArray(result?.allResults)?result.allResults:(Array.isArray(result)?result:[]);all.push(...rows);}catch(e){console.error(`Batch failed: ${e?.message||e}`);for(const s of batch)all.push({stock:s,symbol:s,qualified:false,rejectionReason:"BATCH_ERROR"});}}const map=new Map();for(const r of all)map.set(key(r),r);const unique=[...map.values()];return{allResults:unique,qualified:unique.filter(r=>r?.qualified===true),rejected:unique.filter(r=>r?.qualified===false)};}
 async function enrichUnderlyingOI(rows=[]){const source=Array.isArray(rows)?rows:[];const concurrency=Math.max(4,Number(process.env.OI_ENRICH_CONCURRENCY||8));const out=[];for(let i=0;i<source.length;i+=concurrency){const batch=source.slice(i,i+concurrency);const checked=await Promise.all(batch.map(async r=>{try{const oi=await getUnderlyingOIMood({instrumentKey:r.instrumentKey,currentPrice:num(r.currentPrice??r.price),previousPrice:num(r.previousPrice??r.prevPrice??r.previousClose)});return{...r,oiCheckAttempted:true,oiMood:oi.mood||"UNKNOWN",oiSentiment:oi.sentiment||"UNKNOWN",oiDataAvailable:oi.dataAvailable===true,oiPriceChangePercent:num(oi.priceChangePercent),oiChangePercent:num(oi.oiChangePercent),oi:num(oi.oi),previousOI:num(oi.previousOI),underlyingOISource:oi.source||"",underlyingOIReason:oi.reason||""};}catch(e){return{...r,oiCheckAttempted:true,oiMood:"UNKNOWN",oiSentiment:"UNKNOWN",oiDataAvailable:false,oiPriceChangePercent:0,oiChangePercent:0,underlyingOIReason:`ENRICHMENT_FAILED:${e?.message||e}`};}}));out.push(...checked);}return out;}
 function isMissingEnrichmentValue(v){return v===null||v===undefined||(typeof v==="string"&&v.trim()==="")||(Array.isArray(v)&&v.length===0)||(v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).length===0);}
-function mergeBySymbol(base,extra){const map=new Map((Array.isArray(extra)?extra:[]).map(r=>[key(r),r]));return(Array.isArray(base)?base:[]).map(r=>{const incoming=map.get(key(r));if(!incoming)return r;const merged={...r};for(const [field,value] of Object.entries(incoming)){if(!isMissingEnrichmentValue(value)||isMissingEnrichmentValue(merged[field]))merged[field]=value;}return merged;});}
+function mergeBySymbol(base,extra){
+  const map=new Map((Array.isArray(extra)?extra:[]).map(r=>[key(r),r]));
+  return(Array.isArray(base)?base:[]).map(r=>{
+    const incoming=map.get(key(r));
+    if(!incoming)return r;
+    const merged={...r};
+    for(const [field,value] of Object.entries(incoming)){
+      if(!isMissingEnrichmentValue(value)||isMissingEnrichmentValue(merged[field]))merged[field]=value;
+    }
+    // Keep all underlying-price aliases aligned when a live quote row is merged.
+    const liveQuote=incoming.liveMarketConfirmed===true||incoming.liveQuoteAvailable===true||
+      String(incoming.priceSource||"").toUpperCase()==="UPSTOX_LIVE_QUOTE";
+    const marketPrice=firstPositive(incoming.price,incoming.currentPrice,incoming.livePrice,incoming.liveQuotePrice);
+    const previousClose=firstPositive(incoming.previousClose,incoming.prevClose,incoming.previousPrice,merged.previousClose);
+    if(liveQuote&&marketPrice>0){
+      merged.price=marketPrice;
+      merged.currentPrice=marketPrice;
+      merged.livePrice=marketPrice;
+      merged.liveQuotePrice=marketPrice;
+      merged.liveQuoteAvailable=true;
+      merged.priceSource="UPSTOX_LIVE_QUOTE";
+      if(incoming.timestamp||incoming.liveQuoteTimestamp||incoming.lastTradeTime){
+        merged.liveQuoteTimestamp=incoming.timestamp||incoming.liveQuoteTimestamp||incoming.lastTradeTime;
+      }
+      if(previousClose>0){
+        const change=marketPrice-previousClose;
+        const changePct=change/previousClose*100;
+        merged.previousClose=previousClose;
+        merged.change=Number(change.toFixed(4));
+        merged.changePct=Number(changePct.toFixed(6));
+        merged.changePercent=Number(changePct.toFixed(6));
+        merged.priceChangePercent=Number(changePct.toFixed(6));
+        merged.dayChangePercent=Number(changePct.toFixed(6));
+      }
+    }
+    return merged;
+  });
+}
 function rankTop(rows,limit){return[...(Array.isArray(rows)?rows:[])].sort((a,b)=>(score(b)-score(a))||(confidence(b)-confidence(a))||(num(b.riskReward)-num(a.riskReward))).slice(0,limit);}
 
 function optionDirection(row){
@@ -182,7 +220,17 @@ console.log("TOP MOVER FULL SCAN: scanned="+topMoverScan.allResults.length+" | q
 const topMoverRows=topMoverUniverse;
 const optionUniverseWithMovers=[...new Map([...topMoverRows,...optionUniverseRows].map(r=>[key(r),r])).values()];
 console.log("OPTION TOP MOVERS: "+topMoverRows.length+" F&O movers promoted into option preflight");
-const optionEligible=await collectOptionEligible(optionUniverseWithMovers,broker,topMoverRows);if(!optionEligible.length)console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${fnoUniverse.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);const top100=optionEligible.slice(0,TOP_100);console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → top movers promoted="+topMoverRows.length+" → eligible options="+top100.length+" (target "+TOP_100+")");const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);const optionScan=await scanInBatches(optionSymbols);const optionScanned=mergeBySymbol(optionScan.allResults,top100);const moverOptionScanned=topMoverScan.allResults;const combinedOptionScanned=mergeBySymbol(optionScanned,moverOptionScanned);const combinedFullScanMap=new Map(optionScanned.map(r=>[key(r),r]).filter(([k])=>k));for(const r of topMoverScan.allResults){const k=key(r);if(k)combinedFullScanMap.set(k,{...(combinedFullScanMap.get(k)||{}),...r});}const combinedFullScanRows=[...combinedFullScanMap.values()];
+const optionEligible=await collectOptionEligible(optionUniverseWithMovers,broker,topMoverRows);if(!optionEligible.length)console.warn(`⚠️ No liquid option candidate passed preflight. F&O=${fnoUniverse.symbols.length}, liveQuotes=${liveFnoRows.length}. Equity pipeline remains valid.`);const top100=optionEligible.slice(0,TOP_100);console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → top movers promoted="+topMoverRows.length+" → eligible options="+top100.length+" (target "+TOP_100+")");const optionSymbols=top100.map(x=>x.symbol).filter(Boolean);const optionScan=await scanInBatches(optionSymbols);const optionScanned=mergeBySymbol(optionScan.allResults,top100);const moverOptionScanned=topMoverScan.allResults;const combinedOptionScanned=mergeBySymbol(optionScanned,moverOptionScanned);const combinedFullScanMap=new Map(optionScanned.map(r=>[key(r),r]).filter(([k])=>k));for(const r of topMoverScan.allResults){const k=key(r);if(k)combinedFullScanMap.set(k,{...(combinedFullScanMap.get(k)||{}),...r});}let combinedFullScanRows=[...combinedFullScanMap.values()];
+try {
+  // Check the existing full F&O universe for confirmed results meetings.
+  // This enrichment happens before Top-20 ranking; it never changes the
+  // existing universe, gates, or options-engine logic. NSE failure is fail-open.
+  const earnings = await enrichEarningsRows(combinedFullScanRows, optionUniverseSymbols);
+  combinedFullScanRows = earnings.rows;
+  console.log(`EARNINGS INTELLIGENCE: checked universe=${earnings.checkedSymbols} | confirmed event symbols=${earnings.eventSymbols} | enriched candidates=${combinedFullScanRows.filter(r=>r.earningsEventDetected).length}`);
+} catch(e) {
+  console.warn(`Earnings intelligence skipped; existing ranking and decisions preserved: ${e?.message||e}`);
+}
 const optionTop20=rankOptionCandidates(combinedFullScanRows,TOP_20);console.log(`COMBINED TOP-20: original full-scan rows=${optionScanned.length} + top-mover full-scan rows=${topMoverScan.allResults.length} → Top-20=${optionTop20.length}`);const oiRows=await enrichUnderlyingOI(optionTop20);let decisions=[];try{decisions=(await calculateOptionsDecisions(oiRows)).map(sanitizeOptionRow)}catch(e){console.error(`Options engine failed: ${e?.message||e}`)}let decisionRows=mergeBySymbol(oiRows,decisions).map(sanitizeOptionRow);try{decisionRows=await enrichDashboardNews(decisionRows);console.log(`SCANNER NEWS: enriched ${decisionRows.length} Top-20 scanner rows`);}catch(e){console.warn(`Scanner news enrichment failed: ${e?.message||e}`)}let niftyDashboard=null;
 try{
   niftyDashboard=await scanNiftyIndex(broker);
@@ -224,4 +272,4 @@ if(niftyDashboardRow&&num(niftyDashboardRow.price)>0){
 const scanUpdatedAt=new Date().toISOString();const scanSource=process.env.GITHUB_ACTIONS?"GitHub Actions":"Local";decisionRows=decisionRows.map(r=>({...r,updatedAt:scanUpdatedAt,scanSource}));const finalTrade=dashboardRows.filter(r=>decision(r)==="TRADE").slice(0,ONE_TRADE_LIMIT);console.log(`SCANNER: option Top-20=${decisionRows.length}`);console.log(`DASHBOARD: option Top-5=${dashboardRows.length}`);console.log(`FINAL TRADE: ${finalTrade.length}`);let commodityOptions=[];try{const {scanCommodityOptions}=require("./commodityOptionsScanner");commodityOptions=await scanCommodityOptions(broker);console.log(`MCX OPTIONS: independent scan returned ${commodityOptions.length} candidates`);}catch(e){console.error(`MCX options scan failed without stopping stock scanner: ${e?.message||e}`)}let core=false,strategy=false;try{const sheetResult=await updateGoogleSheet({scannerData:decisionRows,dashboardData:dashboardRows});if(sheetResult?.success===false)throw new Error(`Google Sheet update partially failed: scanner=${JSON.stringify(sheetResult.scanner||{})}; dashboard=${JSON.stringify(sheetResult.dashboard||{})}`);core=true;}catch(e){console.error(`Sheet update failed: ${e?.message||e}`)}try{await updateStrategySheets(equityTop20,decisions,equityTop20,DIVIDEND_LONG_TERM_SYMBOLS.map(s=>dividendRows.find(r=>key(r)===String(s).toUpperCase())||{stock:s,symbol:s,rejectionReason:"NOT_SCANNED"}),commodityOptions);strategy=true;}catch(e){console.error(`Strategy sheet update failed: ${e?.message||e}`)}try{await buildDashboard(dashboardRows,decisions,equityUniverse.symbols.length)}catch(e){console.error(`Dashboard update failed: ${e?.message||e}`)}
 if(niftyDashboard?.index)console.log(`NIFTY stock-style row routed through SCANNER Top-20 and compact Dashboard Top-5 | ${niftyDashboard.index.trend} | LTP=${niftyDashboard.index.price}`);const elapsed=((Date.now()-started.getTime())/1000).toFixed(1);const counts={call:dashboardRows.filter(r=>["CALL","CE"].includes(String(r.optionType).toUpperCase())).length,put:dashboardRows.filter(r=>["PUT","PE"].includes(String(r.optionType).toUpperCase())).length,trade:decisions.filter(r=>decision(r)==="TRADE").length,watch:decisions.filter(r=>decision(r)==="WATCH").length,reject:decisions.filter(r=>decision(r)==="REJECT").length};const status=buildScannerStatus({status:core&&strategy?"SUCCESS":"PARTIAL_FAILURE",startedAt:started,universe:equityUniverse.name,broker:brokerName,scanned:decisionRows.length,successfulScans:decisionRows.filter(r=>!String(r.rejectionReason||"").includes("ERROR")).length,failedScans:decisionRows.filter(r=>String(r.rejectionReason||"").includes("ERROR")).length,callCandidates:counts.call,putCandidates:counts.put,tradeCount:counts.trade,watchCount:counts.watch,rejectCount:counts.reject,elapsedSeconds:elapsed});try{await updateGoogleSheet({action:"scanner_status",scannerStatus:status})}catch(e){console.error(`Status update failed: ${e?.message||e}`)}console.log(`✅ V14 COMPLETE in ${elapsed}s | FNO=${fnoUniverse.symbols.length} | LiveFNO=${liveFnoRows.length} | OptionTop100=${top100.length} | ScannerTop20=${decisionRows.length} | DashboardTop5=${dashboardRows.length}`);return{universe:equityUniverse,fnoUniverse,liveFnoRows,top100OptionRows:top100,optionScanned,optionTop20,optionDecisions:decisions,scannerData:decisionRows,finalDashboard:dashboardRows,finalTrade,equityTop20,dividendRows,scannerStatus:status};}
 if(require.main===module)main().catch(e=>{console.error(`FATAL: ${e?.stack||e}`);process.exitCode=1});
-module.exports={main,scanInBatches,rankTop,rankOptionCandidates,rankDashboard,validOptionRow,sanitizeOptionRow,buildEquityCandidates,collectOptionEligible};
+module.exports={main,scanInBatches,rankTop,rankOptionCandidates,rankDashboard,validOptionRow,sanitizeOptionRow,buildEquityCandidates,collectOptionEligible,mergeBySymbol};
