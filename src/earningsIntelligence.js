@@ -42,7 +42,7 @@ function financialResultsMeeting(item) {
   return /(financial\s+results?|quarterly\s+results?|half[- ]yearly\s+results?|annual\s+results?|audited\s+results?|unaudited\s+results?)/i.test(purpose);
 }
 function normalizeEvent(item) {
-  const symbol = cleanSymbol(item?.symbol ?? item?.companySymbol ?? item?.ticker);
+  const symbol = cleanSymbol(item?.bm_symbol ?? item?.symbol ?? item?.companySymbol ?? item?.ticker);
   const date = asDate(item?.bm_date ?? item?.meeting_date ?? item?.meetingDate ?? item?.date);
   if (!symbol || !date || !financialResultsMeeting(item)) return null;
   return {
