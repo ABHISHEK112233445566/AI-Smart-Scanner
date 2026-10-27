@@ -258,4 +258,4 @@ assert.strictEqual(mergedLiveQuote.previousClose,1575);
 assert.strictEqual(mergedLiveQuote.change,99,"absolute change must be calculated from the same quote snapshot");
 assert.strictEqual(mergedLiveQuote.changePct,6.285714,"percentage change must be calculated from the same quote snapshot");
 assert.strictEqual(mergedLiveQuote.liveQuoteAvailable,true);
-\nconsole.log("V14 pipeline tests passed");
+console.log("V14 pipeline tests passed");
