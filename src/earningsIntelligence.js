@@ -135,15 +135,15 @@ function applyEvent(row, event, today) {
     : diff === -1 ? "RECENT_RESULTS_MEETING_1D" : "RECENT_RESULTS_MEETING_2_3D";
   const { changePct, volumeRatio } = movement(row);
   let direction = "NEUTRAL";
-  let contribution = 0;
-  // Directional points are added only after a recent results meeting and only
-  // when price movement and volume both confirm. Upcoming results are event
-  // awareness, never a bullish/bearish prediction by themselves.
+  // Upcoming results add only a small neutral event-awareness contribution.
+  // They do not predict direction. Directional contribution is allowed only
+  // after a recent meeting and when price movement + volume confirm together.
+  let contribution = diff >= 0 ? 3 : 0;
   if (diff < 0 && volumeRatio >= 1.2) {
     if (changePct >= 1) { direction = "BULLISH"; contribution = 5; }
     else if (changePct <= -1) { direction = "BEARISH"; contribution = -5; }
   }
-  const base = firstNumber(row?.finalScore, row?.rankingScore, row?.aiFinalScore, row?.aiScore, row?.scannerScore, row?.score);
+  const base = firstNumber(row?.earningsBaseScore, row?.finalScore, row?.rankingScore, row?.aiFinalScore, row?.aiScore, row?.scannerScore, row?.score);
   const adjusted = base + contribution;
   return {
     ...row,
