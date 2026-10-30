@@ -181,7 +181,7 @@ const optionSymbols=[...new Set(optionUniverseRows.map(r=>key(r)).filter(Boolean
 const fullOptionScan=await scanInBatches(optionSymbols);
 const optionScanned=mergeBySymbol(fullOptionScan.allResults,optionUniverseRows);
 const combinedFullScanRows=optionScanned.map(r=>({...r,topMoverCandidate:topMoverKeys.has(key(r))}));
-const top100=optionUniverseRows;
+const top100=optionUniverseRows.slice(0,TOP_100);
 console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → technically scanned="+optionScanned.length+" → top movers tagged="+topMoverUniverse.length+" | option contract checks deferred until after stock ranking");
 const optionTop20=rankOptionCandidates(combinedFullScanRows,TOP_20);
 console.log("FULL F&O TECHNICAL SCAN: scanned="+optionScanned.length+" | qualified="+optionScanned.filter(r=>r?.qualified===true).length+" | rejected="+optionScanned.filter(r=>r?.qualified!==true).length+" | Top-20="+optionTop20.length);const oiRows=await enrichUnderlyingOI(optionTop20);let decisions=[];try{decisions=(await calculateOptionsDecisions(oiRows)).map(sanitizeOptionRow)}catch(e){console.error(`Options engine failed: ${e?.message||e}`)}let decisionRows=mergeBySymbol(oiRows,decisions).map(sanitizeOptionRow);try{decisionRows=await enrichDashboardNews(decisionRows);console.log(`SCANNER NEWS: enriched ${decisionRows.length} Top-20 scanner rows`);}catch(e){console.warn(`Scanner news enrichment failed: ${e?.message||e}`)}let niftyDashboard=null;
