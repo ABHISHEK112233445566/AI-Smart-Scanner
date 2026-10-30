@@ -179,7 +179,7 @@ console.log("TOP MOVER UNIVERSE: "+topMoverUniverse.length+" | included in compl
 const topMoverKeys=new Set(topMoverUniverse.map(r=>key(r)).filter(Boolean));
 const optionSymbols=[...new Set(optionUniverseRows.map(r=>key(r)).filter(Boolean))];
 const fullOptionScan=await scanInBatches(optionSymbols);
-const optionScanned=fullOptionScan.allResults;
+const optionScanned=mergeBySymbol(fullOptionScan.allResults,optionUniverseRows);
 const combinedFullScanRows=optionScanned.map(r=>({...r,topMoverCandidate:topMoverKeys.has(key(r))}));
 const top100=optionUniverseRows;
 console.log("OPTION PIPELINE: full F&O universe="+optionUniverseSymbols.length+" → live quoted="+optionUniverseRows.length+" → technically scanned="+optionScanned.length+" → top movers tagged="+topMoverUniverse.length+" | option contract checks deferred until after stock ranking");
