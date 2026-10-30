@@ -1,7 +1,7 @@
 const { EMA,SMA,RSI,MACD,BollingerBands,ATR,ADX,OBV,MFI }=require('technicalindicators');
 const { calculateSupertrend }=require('./supertrend');
 const MIN_CANDLES=2,RVOL_SPIKE_THRESHOLD=1.5,VOLUME_AVG_DAYS=5;
-const n=v=>{const x=Number(v);return Number.isFinite(x)?x:null};
+const n=v=>{if(v===null||v===undefined||(typeof v==='string'&&v.trim()===''))return null;const x=Number(v);return Number.isFinite(x)?x:null};
 const last=(a,d=null)=>Array.isArray(a)&&a.length?a[a.length-1]:d;
 const calc=(fn,d=null)=>{try{return last(fn(),d)}catch(_){return d}};
 function valid(c){if(!c||typeof c!=='object')return false;const o=n(c.open??c.close),h=n(c.high),l=n(c.low),cl=n(c.close),v=c.volume==null||c.volume===''?0:n(c.volume);return [o,h,l,cl,v].every(Number.isFinite)&&o>0&&h>0&&l>0&&cl>0&&h>=Math.max(o,cl)&&l<=Math.min(o,cl)&&v>=0}
