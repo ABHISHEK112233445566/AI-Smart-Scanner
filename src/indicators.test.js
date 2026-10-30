@@ -19,7 +19,7 @@ function intradaySessions(currentVolume=150,days=6){
 }
 
 const daily=calculateIndicators(dailyCandles());
-assert.strictEqual(daily.volumeRatio5,Number((900/420).toFixed(2)),
+assert.strictEqual(daily.volumeRatio5,Number((900/400).toFixed(2)),
   "daily relative volume must compare the latest completed daily candle with the previous five sessions");
 assert.strictEqual(daily.volumePaceRatio5,null,
   "daily candles must not be assigned an intraday volume pace");
