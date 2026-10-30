@@ -55,7 +55,7 @@ sheet.getRange(dataStartRow,i+1,count,1).setNumberFormat(fmt);
 for(var j=0;j<headers.length;j++){
 var key=String(headers[j]||"").trim().toLowerCase().replace(/[^a-z0-9]/g,"");
 if(/^(atmstrike|recommendedstrike|beststrike|optionstrike|strike|optionpremium(entry|stoploss|target1|target2|risk|reward|riskreward)|optionliquidityltp|optionltp|optionpremium|stock(entry|stoploss|target1|target2)|underlying(entry|stoploss|target1|target2)|marketentry|triggerprice)$/.test(key)){
-sheet.getRange(dataStartRow,j+1,count,1).setNumberFormat(/(strike)$/.test(key)?"0":"0.00");
+sheet.getRange(dataStartRow,j+1,count,1).setNumberFormat(/(strike)$/.test(key)?"0.##":"0.00");
 }
 }
 }
