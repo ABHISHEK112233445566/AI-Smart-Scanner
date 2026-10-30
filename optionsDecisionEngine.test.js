@@ -1,7 +1,15 @@
 const assert = require("assert");
-const { calculateOptionsDecision, isMarketSessionOpen } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs } = require("./src/optionsDecisionEngine");
 
 async function run() {
+  assert.strictEqual(stockEntry({ stockEntry: 100 }, 100, "CALL"), 100,
+    "a valid scanner-calculated stock entry at the live price must not be discarded");
+  assert.strictEqual(stockEntry({ stockEntry: 110, triggerPrice: 105, resistance1: 105 }, 100, "CALL"), 105,
+    "a stale supplied entry must not override a valid nearby breakout trigger");
+  assert.strictEqual(quoteTimestampMs("1793356188112"), 1793356188112,
+    "numeric-string broker timestamps must be parsed as epoch milliseconds");
+  assert.strictEqual(quoteTimestampMs("not-a-timestamp"), null,
+    "invalid quote timestamps must remain unavailable");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-24T10:00:00+05:30")), false,
     "weekend scans must never be marked executable");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T10:00:00+05:30")), true,
