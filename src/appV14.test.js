@@ -18,6 +18,10 @@ assert.strictEqual(enriched.liveMarketConfirmed,false,"enrichment must not resur
 assert.strictEqual(enriched.stockQuoteStale,true,"enrichment must not overwrite scanner quote staleness");
 assert.strictEqual(enriched.intradayTrigger,false,"enrichment must not overwrite the scanner intraday trigger");
 assert.strictEqual(enriched.oiMood,"LONG BUILDUP","non-authoritative enrichment fields must still merge");
+const inconsistentBase=mergeBySymbol([{symbol:"INCONSISTENT",marketSessionOpen:false,liveMarketConfirmed:true,liveStockQuoteAvailable:true,liveStockQuoteAgeMs:102466235,stockQuoteStale:true}],[{symbol:"INCONSISTENT",oiMood:"LONG BUILDUP"}])[0];
+assert.strictEqual(inconsistentBase.liveMarketConfirmed,false,"live-market confirmation must be recomputed from session and quote freshness, even when the scanner base row is inconsistent");
+const freshLiveBase=mergeBySymbol([{symbol:"FRESH",marketSessionOpen:true,liveMarketConfirmed:false,liveStockQuoteAvailable:true,liveStockQuoteAgeMs:15000,stockQuoteStale:false}],[{symbol:"FRESH",oiMood:"LONG BUILDUP"}])[0];
+assert.strictEqual(freshLiveBase.liveMarketConfirmed,true,"fresh live quotes during market hours should remain confirmed");
 
 const paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
 assert.strictEqual(paced.volumePaceRatio5,1.35,"scanner output must use the 5m intraday pace calculation");
