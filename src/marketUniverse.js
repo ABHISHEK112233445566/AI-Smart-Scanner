@@ -28,16 +28,16 @@ const ICICI_OPTION_STOCK_SYMBOLS = `360ONE ABB APLAPOLLO AUBANK ADANIENSOL ADANI
 
 async function getFastTradingUniverse(broker){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable');
-  const instruments=await broker.loadInstruments();
-  if(!Array.isArray(instruments)||!instruments.length)throw new Error('NSE instrument master is empty');
-  const symbols=[...ICICI_OPTION_STOCK_SYMBOLS];
+  const master=await getWholeNseUniverse(broker);
+  const symbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
+  if(!symbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
   return{
-    name:'ICICI_DIRECT_OPTION_STOCKS',
+    name:'UPSTOX_NSE_FNO_STOCK_OPTIONS',
     symbols,
     universeSize:symbols.length,
     optionEligibleSymbols:symbols,
     optionEligibleCount:symbols.length,
-    source:'ICICI Direct ALL options-stocks list'
+    source:'Live Upstox NSE derivative instrument master'
   };
 }
 function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(value===symbol)return true;return false;}
