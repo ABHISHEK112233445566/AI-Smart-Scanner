@@ -2,6 +2,21 @@ const assert=require("assert");
 const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
+const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require("./scanner");
+
+// Intraday readiness must never be confirmed outside NSE cash-market hours.
+assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
+  "Saturday evening in India must be treated as a closed market");
+assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T04:00:00.000Z")),false,
+  "weekday before 09:15 IST must be treated as a closed market");
+assert.strictEqual(quoteTimestampMs("1793356069098"),1793356069098,
+  "Upstox millisecond last-trade timestamps must remain milliseconds");
+const paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
+assert.strictEqual(paced.volumePaceRatio5,1.35,"scanner output must use the 5m intraday pace calculation");
+assert.strictEqual(paced.volumeExpectedByNow5,120000,"scanner output must use the 5m expected-volume calculation");
+const unavailablePace=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{});
+assert.strictEqual(unavailablePace.volumePaceRatio5,null,"unavailable volume pace must stay blank, not become zero");
+assert.strictEqual(unavailablePace.volumeExpectedByNow5,null,"unavailable expected volume must stay blank, not become zero");
 
 const trade={
   stockPrice:330.95,
