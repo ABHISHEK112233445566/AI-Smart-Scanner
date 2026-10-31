@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry } = require("./src/optionsDecisionEngine");
 
 async function run() {
   assert.strictEqual(stockEntry({ stockEntry: 100 }, 100, "CALL"), 100,
@@ -10,6 +10,14 @@ async function run() {
     "numeric-string broker timestamps must be parsed as epoch milliseconds");
   assert.strictEqual(quoteTimestampMs("not-a-timestamp"), null,
     "invalid quote timestamps must remain unavailable");
+  assert.strictEqual(normalizeExpiry("2026-10-29"), "2026-10-29",
+    "valid ISO option expiries must be preserved");
+  assert.strictEqual(normalizeExpiry("2026-02-30"), "",
+    "impossible calendar dates must not be accepted as option expiries");
+  assert.strictEqual(normalizeExpiry("1900-01-19"), "1900-01-19",
+    "valid historical dates remain parseable; the expiry eligibility gate rejects expired contracts");
+  assert.strictEqual(normalizeExpiry("not-a-date"), "",
+    "invalid expiry strings must not be passed through as dates");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-24T10:00:00+05:30")), false,
     "weekend scans must never be marked executable");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T10:00:00+05:30")), true,
