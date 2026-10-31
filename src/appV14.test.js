@@ -1,5 +1,5 @@
 const assert=require("assert");
-const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates}=require("./appV14");
+const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates,mergeBySymbol}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require("./scanner");
@@ -11,7 +11,7 @@ assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T03:00:00.000Z")),
   "weekday before 09:15 IST must be treated as a closed market");
 assert.strictEqual(quoteTimestampMs("1793356069098"),1793356069098,
   "Upstox millisecond last-trade timestamps must remain milliseconds");
-const paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
+const scannerAuthority={symbol:"MERGE_TEST",marketSessionOpen:false,liveMarketConfirmed:false,liveStockQuoteAvailable:true,liveStockQuoteTimestamp:"1793356069098",liveStockQuoteAgeMs:102466235,stockQuoteStale:true,intradayTrigger:false,intradayTriggerReason:"MARKET_CLOSED"};\nconst enriched=mergeBySymbol([scannerAuthority],[{symbol:"MERGE_TEST",marketSessionOpen:true,liveMarketConfirmed:true,liveStockQuoteAvailable:true,liveStockQuoteAgeMs:0,stockQuoteStale:false,intradayTrigger:true,intradayTriggerReason:"TRIGGER_CONFIRMED",oiMood:"LONG BUILDUP"}])[0];\nassert.strictEqual(enriched.marketSessionOpen,false,"enrichment must not overwrite scanner market-session state");\nassert.strictEqual(enriched.liveMarketConfirmed,false,"enrichment must not resurrect a closed/stale quote as live-confirmed");\nassert.strictEqual(enriched.stockQuoteStale,true,"enrichment must not overwrite scanner quote staleness");\nassert.strictEqual(enriched.intradayTrigger,false,"enrichment must not overwrite the scanner intraday trigger");\nassert.strictEqual(enriched.oiMood,"LONG BUILDUP","non-authoritative enrichment fields must still merge");\n\nconst paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
 assert.strictEqual(paced.volumePaceRatio5,1.35,"scanner output must use the 5m intraday pace calculation");
 assert.strictEqual(paced.volumeExpectedByNow5,120000,"scanner output must use the 5m expected-volume calculation");
 const unavailablePace=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{});
