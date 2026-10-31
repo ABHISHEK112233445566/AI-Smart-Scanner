@@ -7,7 +7,7 @@ const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require(
 // Intraday readiness must never be confirmed outside NSE cash-market hours.
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
   "Saturday evening in India must be treated as a closed market");
-assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T04:00:00.000Z")),false,
+assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T03:00:00.000Z")),false,
   "weekday before 09:15 IST must be treated as a closed market");
 assert.strictEqual(quoteTimestampMs("1793356069098"),1793356069098,
   "Upstox millisecond last-trade timestamps must remain milliseconds");
