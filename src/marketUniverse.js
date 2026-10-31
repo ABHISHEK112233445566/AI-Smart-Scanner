@@ -20,36 +20,24 @@ function getUnderlyingSymbol(i){return normalizeSymbol(i?.underlying_symbol??i?.
  * for the options pipeline. The instrument master is local/in-memory work;
  * the expensive market-quote calls are performed only for this subset.
  */
+// Complete stock-options symbol list copied from ICICI Direct's ALL options-stocks page.
+// This is the scanner's configured stock-option universe; no Top-N or liquidity
+// filtering is applied while building the universe. Live quote/contract availability
+// is handled later by the existing market-data and options-contract stages.
+const ICICI_OPTION_STOCK_SYMBOLS = `360ONE ABB APLAPOLLO AUBANK ADANIENSOL ADANIENT ADANIGREEN ADANIPORTS ADANIPOWER ABCAPITAL ALKEM AMBER AMBUJACEM ANANDRATHI ANGELONE APOLLOHOSP ASHOKLEY ASIANPAINT ASTRAL ATHERENERG AUROPHARMA DMART AXISBANK BSE BAJAJ-AUTO BAJFINANCE BAJAJFINSV BANDHANBNK BANKBARODA BANKINDIA MAHABANK BDL BEL BHARATFORG BHEL BPCL BHARTIARTL BIOCON BLUESTARCO BOSCHLTD BRITANNIA CGPOWER CANBK CDSL CHOLAFIN CIPLA CUB COALINDIA COCHINSHIP COFORGE COLPAL CAMS CONCOR COROMANDEL CROMPTON CUMMINSIND DLF DABUR DATAPATTNS DELHIVERY DIVISLAB DIXON DRREDDY EICHERMOT ETERNAL NYKAA FEDERALBNK FORCEMOT FORTIS GAIL GVT&D GMRAIRPORT GLENMARK GODFRYPHLP GODREJCP GODREJPROP GRASIM HCLTECH HDFCAMC HDFCBANK HDFCLIFE HAVELLS HEROMOTOCO HINDALCO HAL HINDPETRO HINDUNILVR HINDZINC HITACHIENERGY HYUNDAI ICICIBANK ICICIGI ICICIPRULI IDFCFIRSTB ITC INDIANB IEX INDHOTEL IOC IRFC IREDA INDUSTOWER INDUSINDBK NAUKRI INFY INOXWIND INDIGO JSWENERGY JSWSTEEL JINDALSTEL JIOFIN JUBLFOOD KEI KFINTECH KPITTECH KALYANKJIL KARURVYSYA KAYNES KOTAKBANK LTF LICHSGFIN LTM LT LAURUSLABS LICI LODHA LUPIN M&M MANAPPURAM MANKIND MARICO MARUTI MFSL MAXHEALTH MAZDOCK MOTILALOFS MPHASIS MCX MUTHOOTFIN NBCC NHPC NMDC NTPC NATIONALUM NAVINFLUOR NESTLEIND NAM-INDIA OBEROIRLTY ONGC OIL PAYTM OFSS PIIND POLICYBZR PGEL PNBHOUSING PAGEIND PATANJALI PERSISTENT PETRONET PHOENIXLTD PIDILITIND POLYCAB PFC POWERGRID PREMIERENE PRESTIGE PNB RBLBANK RECLTD RADICO RVNL RELIANCE SBICARD SBILIFE SRF SAGILITY MOTHERSON SHREECEM SHRIRAMFIN SIEMENS SOLARINDS SONACOMS SBIN SAIL SUNPHARMA SUPREMEIND SUZLON SWIGGY SYRMA TVSMOTOR TCS TATACONSUM TATAELXSI TMPV TATAPOWER TATASTEEL TECHM TITAN TORNTPHARM TRENT TIINDIA UPL UJJIVANSFB ULTRACEMCO UNIONBANK UNITDSPR UNOMINDA VBL VEDL VMM IDEA VOLTAS WAAREEENER WIPRO YESBANK ZYDUSLIFE`.split(/\\s+/).filter(Boolean);
+
 async function getFastTradingUniverse(broker){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable');
   const instruments=await broker.loadInstruments();
   if(!Array.isArray(instruments)||!instruments.length)throw new Error('NSE instrument master is empty');
-
-  const equityByKey=new Map();
-  for(const i of instruments.filter(isNseEquity)){
-    const key=String(i?.instrument_key??i?.instrumentKey??'').trim();
-    const symbol=normalizeSymbol(i?.trading_symbol??i?.tradingSymbol??i?.symbol);
-    if(key&&symbol&&!equityByKey.has(key))equityByKey.set(key,symbol);
-  }
-
-  const fno=new Set();
-  for(const derivative of instruments.filter(isNseDerivative)){
-    const underlyingKey=String(derivative?.underlying_key??derivative?.underlyingKey??derivative?.underlying_instrument_key??derivative?.underlyingInstrumentKey??'').trim();
-    if(underlyingKey&&equityByKey.has(underlyingKey)){fno.add(equityByKey.get(underlyingKey));continue;}
-    const symbol=getUnderlyingSymbol(derivative);
-    if(symbol)fno.add(symbol);
-  }
-
-  const symbols=[...fno].filter(s=>equityByKeyHasSymbol(equityByKey,s));
-  if(!symbols.length)throw new Error('No NSE F&O equity underlyings found');
-
+  const symbols=[...ICICI_OPTION_STOCK_SYMBOLS];
   return{
-    name:'FAST_FNO_UNIVERSE',
+    name:'ICICI_DIRECT_OPTION_STOCKS',
     symbols,
     universeSize:symbols.length,
     optionEligibleSymbols:symbols,
     optionEligibleCount:symbols.length,
-    source:'Upstox instrument master: NSE equity derivatives underlyings'
+    source:'ICICI Direct ALL options-stocks list'
   };
 }
 function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(value===symbol)return true;return false;}
