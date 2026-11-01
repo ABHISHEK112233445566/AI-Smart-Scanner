@@ -22,6 +22,10 @@ const inconsistentBase=mergeBySymbol([{symbol:"INCONSISTENT",marketSessionOpen:f
 assert.strictEqual(inconsistentBase.liveMarketConfirmed,false,"live-market confirmation must be recomputed from session and quote freshness, even when the scanner base row is inconsistent");
 const freshLiveBase=mergeBySymbol([{symbol:"FRESH",marketSessionOpen:true,liveMarketConfirmed:false,liveStockQuoteAvailable:true,liveStockQuoteAgeMs:15000,stockQuoteStale:false}],[{symbol:"FRESH",oiMood:"LONG BUILDUP"}])[0];
 assert.strictEqual(freshLiveBase.liveMarketConfirmed,true,"fresh live quotes during market hours should remain confirmed");
+const staleTimestampBase=mergeBySymbol([{symbol:"STALE_TIMESTAMP",marketSessionOpen:true,liveMarketConfirmed:true,liveStockQuoteAvailable:true,liveStockQuoteTimestamp:"2020-01-01T10:00:00.000Z",liveStockQuoteAgeMs:0,stockQuoteStale:false}],[{symbol:"STALE_TIMESTAMP",liveMarketConfirmed:true,liveStockQuoteAgeMs:0,stockQuoteStale:false}])[0];
+assert.strictEqual(staleTimestampBase.stockQuoteStale,true,"an old authoritative trade timestamp must override an incorrect fresh-age/stale flag");
+assert.ok(staleTimestampBase.liveStockQuoteAgeMs>120000,"quote age must be recalculated from the authoritative trade timestamp");
+assert.strictEqual(staleTimestampBase.liveMarketConfirmed,false,"an old trade timestamp must never be marked live-confirmed");
 
 const paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
 assert.strictEqual(paced.volumePaceRatio5,1.35,"scanner output must use the 5m intraday pace calculation");
