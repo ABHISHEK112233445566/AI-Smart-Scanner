@@ -29,15 +29,29 @@ const ICICI_OPTION_STOCK_SYMBOLS = `360ONE ABB APLAPOLLO AUBANK ADANIENSOL ADANI
 async function getFastTradingUniverse(broker){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable');
   const master=await getWholeNseUniverse(broker);
-  const symbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
-  if(!symbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
+  const liveFnoSymbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
+  if(!liveFnoSymbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
+
+  // The configured stock-options list is the intended base universe. Keep only
+  // symbols that are genuinely present in the active broker's NSE F&O master;
+  // this is a one-time instrument-master intersection, not a repeated per-stock
+  // option-liquidity preflight.
+  const liveFnoSet=new Set(liveFnoSymbols);
+  const configuredSymbols=[...new Set(ICICI_OPTION_STOCK_SYMBOLS.map(normalizeSymbol).filter(symbol=>liveFnoSet.has(symbol)))].sort();
+  const configuredMissing=ICICI_OPTION_STOCK_SYMBOLS.filter(symbol=>!liveFnoSet.has(normalizeSymbol(symbol)));
+  const symbols=configuredSymbols.length?configuredSymbols:liveFnoSymbols;
+  console.log('CONFIGURED OPTIONS UNIVERSE: '+configuredSymbols.length+'/'+ICICI_OPTION_STOCK_SYMBOLS.length+' configured symbols verified in live F&O master');
+  if(configuredMissing.length)console.log('CONFIGURED SYMBOLS NOT IN LIVE F&O MASTER: '+configuredMissing.join(', '));
   return{
-    name:'UPSTOX_NSE_FNO_STOCK_OPTIONS',
+    name:configuredSymbols.length?'CONFIGURED_NSE_FNO_STOCK_OPTIONS':'UPSTOX_NSE_FNO_STOCK_OPTIONS_FALLBACK',
     symbols,
     universeSize:symbols.length,
     optionEligibleSymbols:symbols,
     optionEligibleCount:symbols.length,
-    source:'Live Upstox NSE derivative instrument master'
+    configuredSymbols,
+    liveFnoSymbols,
+    configuredMissing,
+    source:configuredSymbols.length?'Configured options stocks intersected with live Upstox NSE F&O master':'Live Upstox NSE derivative instrument master fallback'
   };
 }
 function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(value===symbol)return true;return false;}
