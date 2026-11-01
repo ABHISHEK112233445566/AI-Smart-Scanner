@@ -65,7 +65,7 @@ const COMPANY_ALIASES=Object.freeze({
   AMBER:['AMBER ENTERPRISES INDIA','AMBER ENTERPRISES'],
   CONCOR:['CONTAINER CORPORATION OF INDIA','CONCOR']
 });
-const FINANCIAL_CONTEXT=/\\b(stock|shares?|share price|nse|bse|earnings|revenue|profit|loss|results?|quarter|q[1-4]|fy\\d|cy\\d|dividend|order|contract|acquisition|merger|guidance|capacity|plant|factory|production|business|company|corporate|board|investor|market|trading|brokerage|rating|upgrade|downgrade|debt|funding|sales|margin|ebitda|pat|tax|regulatory|exchange filing)\\b/i;
+const FINANCIAL_CONTEXT=/\b(stock|shares?|share price|nse|bse|earnings|revenue|profit|loss|results?|quarter|q[1-4]|fy\d|cy\d|dividend|order|contract|acquisition|merger|guidance|capacity|plant|factory|production|business|company|corporate|board|investor|market|trading|brokerage|rating|upgrade|downgrade|debt|funding|sales|margin|ebitda|pat|tax|regulatory|exchange filing)\b/i
 function normalizeNewsItem(item,symbol){
   const title=stripHtml(item?.title||''),link=String(item?.link||'').trim(),source=stripHtml(item?.source||item?.publisher||''),timestamp=Number(item?.providerPublishTime),published=Number.isFinite(timestamp)?new Date(timestamp*1000):new Date(item?.published||'');
   if(!title||!Number.isFinite(published.getTime()))return null;
