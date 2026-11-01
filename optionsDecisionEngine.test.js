@@ -90,7 +90,7 @@ async function run() {
     signal: "BULLISH",
     trend: "BULLISH",
     support: 95,
-    resistance: 110,
+    resistance: 125,
     volumeConfirmed5: true
   });
   assert.strictEqual(waiting.optionsDecision, "WATCH", "an untriggered setup should be watch-only, not rejected");
