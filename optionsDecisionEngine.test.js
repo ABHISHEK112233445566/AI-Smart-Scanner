@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry, optionMarketData } = require("./src/optionsDecisionEngine");
 
 async function run() {
   assert.strictEqual(stockEntry({ stockEntry: 100 }, 100, "CALL"), 100,
@@ -10,6 +10,16 @@ async function run() {
     "numeric-string broker timestamps must be parsed as epoch milliseconds");
   assert.strictEqual(quoteTimestampMs("not-a-timestamp"), null,
     "invalid quote timestamps must remain unavailable");
+  const quoteFreshness = optionMarketData({
+    ltp: 12,
+    timestamp: "2026-11-01T23:30:00+05:30",
+    last_trade_time: "2026-10-30T15:20:00+05:30"
+  });
+  assert.strictEqual(quoteFreshness.timestamp, "2026-10-30T15:20:00+05:30",
+    "option freshness must use actual last-trade time, not a fresh feed-update timestamp");
+  const missingTradeTime = optionMarketData({ ltp: 12, timestamp: "2026-11-01T23:30:00+05:30" });
+  assert.strictEqual(missingTradeTime.timestamp, null,
+    "a feed timestamp without an actual last-trade timestamp must not be treated as a fresh trade");
   assert.strictEqual(normalizeExpiry("2026-10-29"), "2026-10-29",
     "valid ISO option expiries must be preserved");
   assert.strictEqual(normalizeExpiry("2026-02-30"), "",
