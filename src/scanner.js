@@ -66,7 +66,7 @@ const historicalPrice=toNumber(liveCandle?.close||last?.close);if(historicalPric
 let liveQuote=null;try{liveQuote=await getQuote(instrumentKey);}catch(e){console.warn(`⚠️ Live quote unavailable for ${stockSymbol}: ${e?.message||e}`);}
 const liveQuoteData=liveQuote?.data?.[instrumentKey]||liveQuote;
 const liveQuotePrice=toNumber(liveQuoteData?.last_price??liveQuoteData?.lastPrice??liveQuoteData?.ltp);
-const liveQuoteTimestamp=liveQuoteData?.last_trade_time??liveQuoteData?.lastTradeTime??liveQuoteData?.timestamp??null;
+const liveQuoteTimestamp=liveQuoteData?.last_trade_time??liveQuoteData?.lastTradeTime??null;
 const parsedLiveQuoteTimestamp=quoteTimestampMs(liveQuoteTimestamp);
 const liveQuoteAgeMs=parsedLiveQuoteTimestamp===null?null:Math.max(0,Date.now()-parsedLiveQuoteTimestamp);
 const liveQuoteStale=liveQuoteAgeMs===null||liveQuoteAgeMs>120000;
