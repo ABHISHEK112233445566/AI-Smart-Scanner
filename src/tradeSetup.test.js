@@ -13,6 +13,15 @@ assert.strictEqual(call.valid,true,'bullish setup must use support as stop and r
 assert.strictEqual(call.stopLoss,98);
 assert.strictEqual(call.target1,103);
 
+const atrOnly=marketSetup({supportLevels:[98],atr:10,direction:'BULLISH'},100,'CALL');
+assert.strictEqual(atrOnly.valid,false,'ATR must never fabricate a stock target when no real resistance exists');
+assert.strictEqual(atrOnly.target1,0,'missing real resistance must leave target empty');
+
+const oneRealTarget=marketSetup({supportLevels:[98],resistanceLevels:[103],atr:10,direction:'BULLISH'},100,'CALL');
+assert.strictEqual(oneRealTarget.valid,true,'a real market-structure target may validate the setup');
+assert.strictEqual(oneRealTarget.target1,103);
+assert.strictEqual(oneRealTarget.target2,0,'a second target must not be fabricated with an RR multiple');
+
 const invalidRank=calculateFinalRank({direction:'BEARISH',score:90,stockEntry:100,stockStopLoss:102,stockTarget1:0,stockRiskReward:2,mtfScore:100,volumeConfirmed:true});
 assert.strictEqual(invalidRank.validatedRR,0,'missing stock target must never earn RR credit');
 assert.strictEqual(invalidRank.rrScore,0,'missing stock target must never earn RR score');
