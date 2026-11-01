@@ -59,17 +59,21 @@ async function fetchJson(url){
 function emptyNews(message="No major news in last 24h"){
   return{newsStatus:"NO_MAJOR_NEWS",newsDirection:"NEUTRAL",newsScope:"NONE",newsHeadline:message,newsSource:"",newsAge:"",newsUrl:""};
 }
+const COMPANY_ALIASES=Object.freeze({
+  GODFRYPHLP:['GODFREY PHILLIPS','GODFREY PHILLIPS INDIA'],
+  VBL:['VARUN BEVERAGES'],
+  AMBER:['AMBER ENTERPRISES INDIA','AMBER ENTERPRISES'],
+  CONCOR:['CONTAINER CORPORATION OF INDIA','CONCOR']
+});
+const FINANCIAL_CONTEXT=/\\b(stock|shares?|share price|nse|bse|earnings|revenue|profit|loss|results?|quarter|q[1-4]|fy\\d|cy\\d|dividend|order|contract|acquisition|merger|guidance|capacity|plant|factory|production|business|company|corporate|board|investor|market|trading|brokerage|rating|upgrade|downgrade|debt|funding|sales|margin|ebitda|pat|tax|regulatory|exchange filing)\\b/i;
 function normalizeNewsItem(item,symbol){
-  const title=stripHtml(item?.title||"");
-  const link=String(item?.link||"").trim();
-  const source=stripHtml(item?.source||item?.publisher||"");
-  const timestamp=Number(item?.providerPublishTime);
-  const published=Number.isFinite(timestamp)?new Date(timestamp*1000):new Date(item?.published||"");
+  const title=stripHtml(item?.title||''),link=String(item?.link||'').trim(),source=stripHtml(item?.source||item?.publisher||''),timestamp=Number(item?.providerPublishTime),published=Number.isFinite(timestamp)?new Date(timestamp*1000):new Date(item?.published||'');
   if(!title||!Number.isFinite(published.getTime()))return null;
-  const symbolClean=cleanSymbol(symbol).replace(/[^A-Z0-9]/g,"");
-  const titleClean=title.toUpperCase().replace(/[^A-Z0-9]/g,"");
-  const related=(Array.isArray(item?.relatedTickers)?item.relatedTickers:[]).map(x=>cleanSymbol(x)).map(x=>x.replace(/[^A-Z0-9]/g,""));
-  const relevant=titleClean.includes(symbolClean)||related.includes(symbolClean);
+  const s=cleanSymbol(symbol),titleUpper=title.toUpperCase(),related=(Array.isArray(item?.relatedTickers)?item.relatedTickers:[]).map(x=>cleanSymbol(x));
+  const tickerMatch=new RegExp('(^|[^A-Z0-9])'+s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^A-Z0-9]|$)').test(titleUpper);
+  const aliases=COMPANY_ALIASES[s]||[],aliasMatch=aliases.some(alias=>titleUpper.includes(alias));
+  const explicitTicker=related.includes(s);
+  const relevant=Boolean(explicitTicker||((tickerMatch||aliasMatch)&&FINANCIAL_CONTEXT.test(title)));
   return{title,link,source,published,relevant};
 }
 function chooseFreshNews(items,symbol){
@@ -78,6 +82,7 @@ function chooseFreshNews(items,symbol){
     .map(item=>normalizeNewsItem(item,symbol))
     .filter(Boolean)
     .filter(item=>item.published.getTime()>=cutoff)
+    .filter(item=>item.relevant)
     .sort((a,b)=>(Number(b.relevant)-Number(a.relevant))||(b.published-a.published))[0]||null;
 }
 async function fetchYahooNews(symbol){
