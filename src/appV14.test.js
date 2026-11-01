@@ -86,7 +86,7 @@ assert.strictEqual(validOptionRow({...trade,oiConflict:true}),false,"OI directio
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContract:"KEY_B",optionLiquidityContractData:{instrument_key:"KEY_A",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"liquidity contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
-assert.strictEqual(validOptionRow({...trade,optionPremiumTarget1:0}),false);
+assert.strictEqual(validOptionRow({...trade,optionPremiumStopLoss:0,optionPremiumTarget1:0,optionPremiumTarget2:0,optionPremiumRiskReward:0}),true,"verified underlying stock SL/targets must validate a trade without synthetic option premium targets");
 
 const bad=sanitizeOptionRow({stockPrice:330.95,optionType:"CE",entryPrice:330.95});
 assert.strictEqual(bad.optionEligible,false);
