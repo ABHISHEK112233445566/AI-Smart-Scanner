@@ -51,6 +51,14 @@ const trade={
   optionPremiumTarget1:22.04,
   optionPremiumTarget2:26.6,
   optionPremiumRiskReward:1.5,
+  marketSessionOpen:true,
+  liveStockQuoteAvailable:true,
+  liveMarketConfirmed:true,
+  liveStockQuoteAgeMs:1000,
+  stockQuoteStale:false,
+  optionQuoteAgeMs:1000,
+  optionQuoteStale:false,
+  stockDirection:"BULLISH",
   optionInstrumentKey:"TEST_OPTION_KEY",
   optionContractIdentityValid:true,
   optionLiveDataAvailable:true,
@@ -71,6 +79,10 @@ assert.strictEqual(validOptionRow({...trade,bestStrike:0}),false);
 assert.strictEqual(validOptionRow({...trade,optionContractIdentityValid:false}),false);
 assert.strictEqual(validOptionRow({...trade,optionLiquidityConfirmed:false}),false);
 assert.strictEqual(validOptionRow({...trade,marketSessionOpen:false}),false,"closed-market rows must never be executable trades");
+assert.strictEqual(validOptionRow({...trade,stockQuoteStale:true}),false,"stale underlying quotes must never be executable trades");
+assert.strictEqual(validOptionRow({...trade,liveMarketConfirmed:false}),false,"an unconfirmed underlying quote must never be executable");
+assert.strictEqual(validOptionRow({...trade,optionQuoteStale:true}),false,"stale option quotes must never be executable trades");
+assert.strictEqual(validOptionRow({...trade,oiConflict:true}),false,"OI direction conflicts must never be treated as clean directional candidates");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContract:"KEY_B",optionLiquidityContractData:{instrument_key:"KEY_A",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"liquidity contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
