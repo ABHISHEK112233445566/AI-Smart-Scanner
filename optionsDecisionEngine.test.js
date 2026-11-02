@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry, optionMarketData } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry, optionMarketData, premiumLevels } = require("./src/optionsDecisionEngine");
 
 async function run() {
   assert.strictEqual(stockEntry({ stockEntry: 100 }, 100, "CALL"), 100,
@@ -28,6 +28,30 @@ async function run() {
     "valid historical dates remain parseable; the expiry eligibility gate rejects expired contracts");
   assert.strictEqual(normalizeExpiry("not-a-date"), "",
     "invalid expiry strings must not be passed through as dates");
+
+  const premiumCandles = [
+    { high: 14, low: 12, close: 13 },
+    { high: 14, low: 11, close: 12 },
+    { high: 13, low: 10, close: 12 },
+    { high: 15, low: 12, close: 14 },
+    { high: 16, low: 13, close: 15 },
+    { high: 17, low: 14, close: 16 },
+    { high: 18, low: 15, close: 17 },
+    { high: 25, low: 16, close: 22 },
+    { high: 19, low: 15, close: 17 },
+    { high: 18, low: 14, close: 16 },
+    { high: 17, low: 13, close: 15 }
+  ];
+  const premiumPlan = premiumLevels({ ltp: 15 }, premiumCandles);
+  assert.strictEqual(premiumPlan.valid, true,
+    "option premium plan must use actual 5-minute swing levels");
+  assert.strictEqual(premiumPlan.entry, 15);
+  assert.strictEqual(premiumPlan.stopLoss, 10);
+  assert.strictEqual(premiumPlan.target1, 25);
+  assert.strictEqual(premiumPlan.riskReward, 2);
+  assert.strictEqual(premiumPlan.levelSource, "OPTION_5M_OHLC_SWINGS");
+  assert.strictEqual(premiumLevels({ ltp: 15 }, []).valid, false,
+    "missing option candles must never produce fabricated premium SL/targets");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-24T10:00:00+05:30")), false,
     "weekend scans must never be marked executable");
   assert.strictEqual(isMarketSessionOpen(new Date("2026-10-26T10:00:00+05:30")), true,
