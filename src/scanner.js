@@ -66,9 +66,10 @@ const historicalPrice=toNumber(liveCandle?.close||last?.close);if(historicalPric
 let liveQuote=null;try{liveQuote=await getQuote(instrumentKey);}catch(e){console.warn(`⚠️ Live quote unavailable for ${stockSymbol}: ${e?.message||e}`);}
 const liveQuoteData=liveQuote?.data?.[instrumentKey]||liveQuote;
 const liveQuotePrice=toNumber(liveQuoteData?.last_price??liveQuoteData?.lastPrice??liveQuoteData?.ltp);
-const liveQuoteTimestamp=liveQuoteData?.last_trade_time??liveQuoteData?.lastTradeTime??null;
+const liveQuoteTimestamp=liveQuoteData?.timestamp??liveQuoteData?.timestamp_nanos??liveQuoteData?.last_trade_time??liveQuoteData?.lastTradeTime??null;
 const parsedLiveQuoteTimestamp=quoteTimestampMs(liveQuoteTimestamp);
-const liveQuoteAgeMs=parsedLiveQuoteTimestamp===null?null:Math.max(0,Date.now()-parsedLiveQuoteTimestamp);
+const liveQuoteAgeRaw=parsedLiveQuoteTimestamp===null?null:Date.now()-parsedLiveQuoteTimestamp;
+const liveQuoteAgeMs=liveQuoteAgeRaw!==null&&liveQuoteAgeRaw>=-5000?Math.max(0,liveQuoteAgeRaw):null;
 const liveQuoteStale=liveQuoteAgeMs===null||liveQuoteAgeMs>120000;
 price=liveQuotePrice>0?liveQuotePrice:historicalPrice;if(price<=0)throw new Error("Invalid live stock price");
 indicators=safeObject(await calculateIndicators(daily));indicators.price=price;
@@ -82,8 +83,8 @@ const d15=intradayDirection(intraday15Indicators),d5=intradayDirection(intraday5
 const liveVWAP=toNumber(intraday15Indicators.vwap),liveEMA20=toNumber(intraday15Indicators.ema20);
 const marketOpenNow=isNseMarketSessionOpen();
 const candleTime=c=>c?.time??c?.timestamp??c?.datetime??c?.date;
-const latest15Time=Date.parse(candleTime(live15)||""),latest5Time=Date.parse(candleTime(live5)||"");
-const intradayDataStale=marketOpenNow&&(!Number.isFinite(latest15Time)||!Number.isFinite(latest5Time)||Date.now()-latest15Time>20*60*1000||Date.now()-latest5Time>20*60*1000);
+const latest15Time=quoteTimestampMs(candleTime(live15)),latest5Time=quoteTimestampMs(candleTime(live5));
+const intradayDataStale=marketOpenNow&&(latest15Time===null||latest5Time===null||latest15Time>Date.now()+5*60*1000||latest5Time>Date.now()+5*60*1000||Date.now()-latest15Time>25*60*1000||Date.now()-latest5Time>12*60*1000);
 let intradayTriggerReason="TRIGGER_CONFIRMED";
 if(!marketOpenNow)intradayTriggerReason="MARKET_CLOSED";
 else if(liveQuotePrice<=0)intradayTriggerReason="LIVE_STOCK_QUOTE_UNAVAILABLE";
