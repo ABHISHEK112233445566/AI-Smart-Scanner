@@ -30,9 +30,11 @@ assert.strictEqual(staleTimestampBase.liveMarketConfirmed,false,"an old trade ti
 const paced=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{volumePaceRatio5:1.35,volumeExpectedByNow5:120000});
 assert.strictEqual(paced.volumePaceRatio5,1.35,"scanner output must use the 5m intraday pace calculation");
 assert.strictEqual(paced.volumeExpectedByNow5,120000,"scanner output must use the 5m expected-volume calculation");
+assert.strictEqual(paced.volumeConfirmed5,true,"intraday volume pace above 1.0 must confirm volume");
 const unavailablePace=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpectedByNow5:null},{});
 assert.strictEqual(unavailablePace.volumePaceRatio5,null,"unavailable volume pace must stay blank, not become zero");
 assert.strictEqual(unavailablePace.volumeExpectedByNow5,null,"unavailable expected volume must stay blank, not become zero");
+assert.strictEqual(unavailablePace.volumeConfirmed5,false,"missing intraday volume pace must never be confirmed");
 
 const trade={
   stockPrice:330.95,
@@ -151,6 +153,8 @@ const invalidOptionDashboard=buildDashboardPayload([{
   symbol:"VMM",
   direction:"BEARISH",
   stockDirection:"BEARISH",
+  price:100,
+  stockPrice:100,
   optionType:"PE",
   qualified:true,
   finalScore:88,
@@ -167,14 +171,14 @@ const invalidOptionDashboard=buildDashboardPayload([{
 const invalidHeaders=invalidOptionDashboard.headers;
 const invalidValues=invalidOptionDashboard.rows[0];
 assert.ok(invalidValues, "directional scanner candidate should remain visible as WATCH");
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("entryPrice")],0);
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("bestStrike")],0);
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLTP")],0);
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionsDecision")],"WATCH");
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionEligible")],false);
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionRejectionReason")],"NO_VALID_OPTION_CONTRACTS");
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionContractIdentityValid")],false);
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("optionLiveDataAvailable")],false);
+assert.strictEqual(invalidHeaders.length,13,"Dashboard must contain exactly the approved 13 columns");
+assert.strictEqual(invalidHeaders.includes("entryPrice"),false,"option premium entry must not be added to Dashboard");
+assert.strictEqual(invalidHeaders.includes("optionsDecision"),false,"internal option decision must not be added to Dashboard");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("stock")],"VMM");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("strike")],"");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("stockEntryPrice")],"");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("stockStopLossPrice")],"");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("stockTargetPrice")],"");
 
 const conflictingDirectionDashboard=buildDashboardPayload([{
   stock:"DIRECTION_CONFLICT",
@@ -189,7 +193,7 @@ const conflictingDirectionDashboard=buildDashboardPayload([{
   optionEligible:false,
   optionDataValid:false
 }]);
-assert.strictEqual(conflictingDirectionDashboard.rows[0][conflictingDirectionDashboard.headers.indexOf("symbol")],"DIRECTION_CONFLICT",
+assert.strictEqual(conflictingDirectionDashboard.rows[0][conflictingDirectionDashboard.headers.indexOf("stock")],"DIRECTION_CONFLICT",
   "a stale NEUTRAL direction must not hide a valid bullish stock direction");
 
 const stockLevelDashboard=buildDashboardPayload([{
@@ -211,9 +215,9 @@ const stockLevelDashboard=buildDashboardPayload([{
 }]);
 const stockLevelHeaders=stockLevelDashboard.headers;
 const stockLevelValues=stockLevelDashboard.rows[0];
-assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("target")],355,
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockTargetPrice")],355,
   "Dashboard target must be the underlying stock target, not option premium target");
-assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stopLoss")],320,
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockStopLossPrice")],320,
   "Dashboard stop loss must be the underlying stock stop, not option premium stop");
 
 
@@ -225,20 +229,20 @@ assert.strictEqual(fallbackRows.length,2,"directional candidates with valid pric
 assert.ok(fallbackRows.every(r=>r.optionsDecision==="WATCH"&&r.optionEligible===false),"fallback rows must never become executable trades");
 const fallbackPayload=buildDashboardPayload(fallbackRows);
 assert.strictEqual(fallbackPayload.rows.length,2,"Dashboard should show ranked directional WATCH candidates");
-assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("symbol")],"STRONG_SCORE","highest-score candidate should rank first");
-assert.ok(fallbackPayload.rows.every(row=>row[fallbackPayload.headers.indexOf("optionsDecision")]==="WATCH"));
+assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("stock")],"STRONG_SCORE","highest-score candidate should rank first");
+assert.strictEqual(fallbackPayload.headers.length,13,"fallback Dashboard must retain the 13-column layout");
 
 const emptyDashboardPayload=buildDashboardPayload([]);
 assert.strictEqual(emptyDashboardPayload.rows.length,1,"empty dashboard must show an explicit no-candidate status row");
-assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("symbol")],"NO CURRENT DIRECTIONAL CANDIDATE");
-assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("optionsDecision")],"WATCH");
+assert.strictEqual(emptyDashboardPayload.rows[0][emptyDashboardPayload.headers.indexOf("stock")],"NO CURRENT DIRECTIONAL CANDIDATE");
+assert.strictEqual(emptyDashboardPayload.headers.length,13);
 const niftyBelowScore=buildDashboardPayload([{
   stock:"NIFTY",symbol:"NIFTY",price:22600,stockPrice:22600,
   direction:"BEARISH",stockDirection:"BEARISH",score:0,scannerScore:0,
   optionsDecision:"WATCH",optionEligible:false,optionDataValid:false,
   optionRejectionReason:"NIFTY_OPTION_GATE_NOT_PASSED"
 }]);
-assert.strictEqual(niftyBelowScore.rows[0][niftyBelowScore.headers.indexOf("symbol")],"NIFTY",
+assert.strictEqual(niftyBelowScore.rows[0][niftyBelowScore.headers.indexOf("stock")],"NIFTY",
   "NIFTY must remain visible on Dashboard when its score is low or its option gate fails");
 assert.strictEqual(niftyBelowScore.rows[0][niftyBelowScore.headers.indexOf("stockPrice")],22600,
   "NIFTY dashboard row must preserve underlying index price");
