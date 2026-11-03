@@ -23,6 +23,8 @@ assert.strictEqual(daily.volumeRatio5,Number((900/400).toFixed(2)),
   "daily relative volume must compare the latest completed daily candle with the previous five sessions");
 assert.strictEqual(daily.volumePaceRatio5,null,
   "daily candles must not be assigned an intraday volume pace");
+assert.strictEqual(daily.vwap,null,
+  "a daily candle typical price must not be mislabeled as VWAP");
 
 const intraday=calculateIndicators(intradaySessions(150,6));
 assert.strictEqual(intraday.avgVolume5,null,
@@ -33,6 +35,8 @@ assert.strictEqual(intraday.volumeExpectedByNow5,300,
   "expected volume must be the average cumulative volume of five prior sessions at the same IST time");
 assert.strictEqual(intraday.volumePaceRatio5,1.5,
   "volume pace must compare current cumulative session volume with the five-session same-time average");
+assert.ok(intraday.vwap>0,
+  "intraday candles should retain a valid session VWAP");
 assert.strictEqual(intraday.volumeConfirmed5,true);
 
 const insufficient=calculateIndicators(intradaySessions(150,5));
