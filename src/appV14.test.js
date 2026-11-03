@@ -35,6 +35,9 @@ const unavailablePace=applyIntradayVolumePace({volumePaceRatio5:null,volumeExpec
 assert.strictEqual(unavailablePace.volumePaceRatio5,null,"unavailable volume pace must stay blank, not become zero");
 assert.strictEqual(unavailablePace.volumeExpectedByNow5,null,"unavailable expected volume must stay blank, not become zero");
 assert.strictEqual(unavailablePace.volumeConfirmed5,false,"missing intraday volume pace must never be confirmed");
+const dailyVolumeFallback=applyIntradayVolumePace({volumeConfirmed5:true,volumeQuality:"CONFIRMED"},{ });
+assert.strictEqual(dailyVolumeFallback.volumeConfirmed5,true,"missing intraday pace must preserve valid daily volume confirmation");
+assert.strictEqual(dailyVolumeFallback.volumeQuality,"DAILY_VOLUME_CONFIRMATION");
 
 const trade={
   stockPrice:330.95,
@@ -172,6 +175,7 @@ const invalidHeaders=invalidOptionDashboard.headers;
 const invalidValues=invalidOptionDashboard.rows[0];
 assert.ok(invalidValues, "directional scanner candidate should remain visible as WATCH");
 assert.strictEqual(invalidHeaders.length,13,"Dashboard must contain exactly the approved 13 columns");
+assert.deepStrictEqual(invalidHeaders,["stock","stockPrice","optionType","strike","stockEntryPrice","stockStopLossPrice","stockTargetPrice","riskReward","confidence","oiMood","volume","newsStatus","newsHeadline"],"Dashboard headers and order must match the approved compact layout");
 assert.strictEqual(invalidHeaders.includes("entryPrice"),false,"option premium entry must not be added to Dashboard");
 assert.strictEqual(invalidHeaders.includes("optionsDecision"),false,"internal option decision must not be added to Dashboard");
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("stock")],"VMM");
