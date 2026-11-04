@@ -9,7 +9,7 @@
 
 const DASHBOARD_MIN_SCORE = 5;
 const DASHBOARD_STRONG_SCORE = 80;
-const DASHBOARD_MIN_CONFIDENCE = 0;
+const DASHBOARD_MIN_CONFIDENCE = 85;
 const DASHBOARD_MAX_ROWS = 5;
 
 function safeNumber(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
@@ -37,13 +37,31 @@ function isDirectional(option) { const values=[option?.direction,option?.stockDi
 function isAvoid(option) { const rating=String(option?.rating??option?.aiRating??"").trim().toUpperCase(),signal=String(option?.signal??"").trim().toUpperCase(); return rating.includes("AVOID")||signal==="AVOID"; }
 function isDashboardCandidate(option) { if(!option||typeof option!=="object")return false; if(!isDirectional(option)||isAvoid(option))return false; const name=getStockName(option),score=getScore(option); const strongScanner=scoreStrength(option)>=DASHBOARD_MIN_SCORE; const optionReady=hasRealOptionContract(option); const promoted=option?.optionEngineQualified===true||option?.scannerQualified===true||option?.qualified===true; return Boolean(name)&&Number.isFinite(score)&&score!==0&&strongScanner; }
 function isScoreQualified(option) { return isDashboardCandidate(option)&&scoreStrength(option)>=DASHBOARD_STRONG_SCORE; }
+function isStrictTradeCandidate(option) {
+    if (!option || typeof option !== "object") return false;
+    if (getDecision(option) !== "TRADE") return false;
+    if (!(option.qualified === true || option.optionEngineQualified === true || option.scannerQualified === true)) return false;
+    if (!hasRealOptionContract(option) || option.pipeline?.optionsTradeGatePassed !== true || option.gates?.tradePassed !== true) return false;
+    if (getConfidence(option) < DASHBOARD_MIN_CONFIDENCE || scoreStrength(option) < DASHBOARD_STRONG_SCORE) return false;
+    if (getStockRiskReward(option) < 1.5 || option.oiConflict === true || option.explicitDirectionConflict === true) return false;
+    if (option.marketSessionOpen !== true || option.liveStockQuoteAvailable !== true || option.liveMarketConfirmed !== true || option.stockQuoteStale !== false) return false;
+    if (option.intradayTrigger !== true || option.volumeConfirmed5 !== true) return false;
+    const age = Number(option.liveStockQuoteAgeMs), optionAge = Number(option.optionQuoteAgeMs);
+    if (!Number.isFinite(age) || age < 0 || age > 120000 || !Number.isFinite(optionAge) || optionAge < 0 || optionAge > 120000 || option.optionQuoteStale !== false) return false;
+    const type = getOptionType(option), entry = getStockEntry(option), sl = getStockStopLoss(option), t1 = getStockTarget1(option), t2 = getStockTarget2(option);
+    const live = safeNumber(option.currentPrice ?? option.price ?? option.stockPrice);
+    if (!(entry > 0 && live > 0 && sl > 0 && t1 > 0 && t2 > 0)) return false;
+    if (type === "CALL") return sl < entry && t1 > entry && t2 > t1 && live >= entry;
+    if (type === "PUT") return sl > entry && t1 < entry && t2 < t1 && live <= entry;
+    return false;
+}
 function buildDashboard(results=[],optionDecisions=[],totalStocks=0) {
     const scanResults=getDashboardUniverse(results),decisions=Array.isArray(optionDecisions)?optionDecisions.filter(Boolean):[],total=safeNumber(totalStocks)>0?safeNumber(totalStocks):scanResults.length;
     const successfulScans=scanResults.filter(row=>row&&typeof row==="object"&&String(row.rejectionReason||"").toUpperCase()!=="ERROR").length;
     const failedScans=Math.max(0,total-successfulScans),lastScan=getISTTimestamp(),minutes=getISTMinutes(),weekday=getISTWeekday(),marketStatus=weekday>=1&&weekday<=5&&minutes>=555&&minutes<=930?"Market Open":"Market Closed";
     const callCount=decisions.filter(o=>getOptionType(o)==="CALL").length,putCount=decisions.filter(o=>getOptionType(o)==="PUT").length,noDirectionCount=decisions.filter(o=>!getOptionType(o)).length,tradeCount=decisions.filter(o=>getDecision(o)==="TRADE").length,watchCount=decisions.filter(o=>getDecision(o)==="WATCH").length,rejectCount=decisions.filter(o=>getDecision(o)==="REJECT").length;
     const ranked=[...scanResults.filter(isDashboardCandidate)].sort((a,b)=>(scoreStrength(b)-scoreStrength(a))||(getConfidence(b)-getConfidence(a))||getStockName(a).localeCompare(getStockName(b)));
-    const strong=ranked.filter(isScoreQualified),selected=ranked.filter(option=>{const qualified=option?.qualified===true||option?.optionEngineQualified===true||option?.scannerQualified===true;return qualified&&hasRealOptionContract(option)&&getDecision(option)==="TRADE";}).slice(0,DASHBOARD_MAX_ROWS);
+    const strong=ranked.filter(isScoreQualified),selected=ranked.filter(isStrictTradeCandidate).slice(0,DASHBOARD_MAX_ROWS);
     const top10=selected.map((option,index)=>{const d=String(option.direction??option.stockDirection??option.technicalDirection??option.finalDirection??option.optionType??option.cePe??"").toUpperCase(),type=["BEARISH","SHORT","SELL","PUT","PE"].includes(d)?"PE":"CE",target=getStockTarget2(option)>0?getStockTarget2(option):getStockTarget1(option);const qualified=option?.qualified===true||option?.optionEngineQualified===true||option?.scannerQualified===true,contract=qualified&&hasRealOptionContract(option),decision=qualified&&contract&&getDecision(option)==="TRADE"?"TRADE":"WATCH";return{rank:index+1,stock:getStockName(option),cePe:type,score:getScore(option),entry:getStockEntry(option),stopLoss:getStockStopLoss(option),target,mood:getMood(option),adx:getADX(option),confidence:getConfidence(option),riskReward:getStockRiskReward(option),decision,strike:contract?safeNumber(option.optionStrike??option.recommendedStrike,0):0,optionLTP:hasRealOptionContract(option)?safeNumber(option.optionLTP??option.optionPremiumEntry,0):0,optionSymbol:hasRealOptionContract(option)?(option.optionSymbol||option.tradingSymbol||""):""};});
     const bullishCount=ranked.filter(r=>getScore(r)>0).length,bearishCount=ranked.filter(r=>getScore(r)<0).length,marketMood=bullishCount>bearishCount?"BULLISH":bearishCount>bullishCount?"BEARISH":"NEUTRAL";
     const headers=["Stock","CE / PE","Score","Stock Entry","Stock SL","Stock Target","Mood","ADX"];
