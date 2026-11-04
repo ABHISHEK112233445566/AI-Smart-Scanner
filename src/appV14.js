@@ -144,20 +144,30 @@ function validOptionRow(r){
 }
 function sanitizeOptionRow(r){if(validOptionRow(r)){const ltp=firstPositive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);return{...r,optionEligible:true,optionDataValid:true,optionEntry:ltp,optionPremiumEntry:ltp,entryPrice:ltp,stockEntry:firstPositive(r?.stockEntry,r?.underlyingEntry,r?.price)};}const side=String(r?.optionType??"").trim().toUpperCase();const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";const ltp=firstPositive(r?.optionLTP,r?.optionLtp,r?.optionPremiumEntry);const informationalQuote=r?.optionContractIdentityValid===true&&r?.optionLiveDataAvailable===true&&ltp>0;return{...r,optionsDecision:"WATCH",decision:"WATCH",optionEligible:false,optionDataValid:false,optionRejectionReason:[r?.decisionReason,r?.contractLookupReason,r?.rejectionReason,r?.optionRejectionReason,r?.reason].find(v=>String(v??"").trim())||"MISSING_LIVE_OPTION_CONTRACT_OR_LTP",optionSymbol:informationalQuote?(r.optionSymbol||""):"",recommendedStrike:informationalQuote?(r.recommendedStrike??null):null,atmStrike:informationalQuote?(r.atmStrike??null):null,optionExpiry:informationalQuote?(r.optionExpiry??null):null,optionInstrumentKey:informationalQuote?(r.optionInstrumentKey||""):"",optionLiquidityContractData:informationalQuote?(r.optionLiquidityContractData||null):null,optionLiquiditySide:expected,optionPremiumEntry:informationalQuote?ltp:0,optionPremiumStopLoss:informationalQuote?(num(r.optionPremiumStopLoss)||0):0,optionPremiumTarget1:informationalQuote?(num(r.optionPremiumTarget1)||0):0,optionPremiumTarget2:informationalQuote?(num(r.optionPremiumTarget2)||0):0,optionPremiumRisk:informationalQuote?(num(r.optionPremiumRisk)||0):0,optionPremiumReward:informationalQuote?(num(r.optionPremiumReward)||0):0,optionPremiumRiskReward:informationalQuote?(num(r.optionPremiumRiskReward)||0):0,optionVolume:informationalQuote?(num(r.optionVolume)||0):0,optionOI:informationalQuote?(num(r.optionOI)||0):0,optionPreviousOI:informationalQuote?(num(r.optionPreviousOI)||0):0,optionOIChange:informationalQuote?(num(r.optionOIChange)||0):0,optionOIChangePercent:informationalQuote?(num(r.optionOIChangePercent)||0):0,optionLiveDataAvailable:informationalQuote,optionLiquidityConfirmed:informationalQuote&&r.optionLiquidityConfirmed===true,optionLiquidityVolume:informationalQuote?(num(r.optionLiquidityVolume)||0):0,optionLiquidityOI:informationalQuote?(num(r.optionLiquidityOI)||0):0,optionContractIdentityValid:informationalQuote,optionEntry:informationalQuote?ltp:0,entryPrice:informationalQuote?ltp:0};}
 function rankDashboard(rows){
-  // Dashboard rows are trade candidates, not a watchlist. A WATCH/REJECT row
-  // must never be promoted simply to fill the available five slots.
+  // Put only fully validated live setups in the TRADE tier. If fewer than
+  // four trades exist, use strong directional scanner candidates as WATCH
+  // context rows; never manufacture entry/SL/target values for those rows.
   const source=Array.isArray(rows)?rows:[];
+  const eligible=r=>r&&typeof r==="object"&&
+    (r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true);
+  const directionValid=r=>{
+    if(r?.oiConflict===true||r?.explicitDirectionConflict===true)return false;
+    const d=optionDirection(r);
+    return d==="BULLISH"||d==="BEARISH";
+  };
   const sortRows=(a,b)=>
     (optionConfidence(b)-optionConfidence(a))||
     (optionScore(b)-optionScore(a))||
     (num(b.stockRiskReward??b.riskReward)-num(a.stockRiskReward??a.riskReward));
-  return source
-    .filter(r=>r&&typeof r==="object"&&key(r)!=="NIFTY"&&key(r)!=="NIFTY 50")
-    .filter(r=>r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true)
-    .filter(validOptionRow)
-    .map(sanitizeOptionRow)
+  const stocks=source.filter(r=>eligible(r)&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r));
+  const trades=stocks.filter(validOptionRow).map(sanitizeOptionRow).sort(sortRows);
+  const tradeKeys=new Set(trades.map(key));
+  const watch=stocks.filter(r=>!tradeKeys.has(key(r))&&
+    Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE)
     .sort(sortRows)
-    .slice(0,TOP_5);
+    .map(r=>({...sanitizeOptionRow(r),dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
+      optionEligible:false,optionDataValid:false}));
+  return [...trades,...watch].slice(0,TOP_5-1);
 }
 function buildEquityCandidates(liveRows){const rows=Array.isArray(liveRows)?liveRows:[];const bySymbol=new Map(rows.map(r=>[key(r),r]));const selected=[];const add=row=>{const k=key(row);if(!k||selected.some(x=>key(x)===k))return;selected.push(row);};for(const row of rows.slice(0,TOP_EQUITY))add(row);const movers=getTopMovers(rows,Math.max(20,Number(process.env.EQUITY_MOVER_POOL||30)));for(const mover of movers){if(selected.length<TOP_EQUITY){add(bySymbol.get(key(mover))||mover);continue;}if(selected.some(x=>key(x)===key(mover)))continue;const weakestIndex=selected.reduce((wi,row,i)=>num(row.volume)<num(selected[wi].volume)?i:wi,0);if(num(mover.volume)>num(selected[weakestIndex].volume))selected[weakestIndex]=bySymbol.get(key(mover))||mover;}return selected.slice(0,TOP_EQUITY);}
 async function collectOptionEligible(liveRows,broker,priorityRows=[]){
