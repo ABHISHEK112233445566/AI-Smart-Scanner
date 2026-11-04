@@ -130,6 +130,11 @@ function validOptionRow(r){
   const scannerStrength=firstPositive(r?.scannerStrength,r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.scannerScore,r?.score);
   const stockRR=firstPositive(r?.stockRiskReward,r?.riskReward);
   const optionRR=firstPositive(r?.optionPremiumRiskReward);
+  const oiMood=String(r?.oiMood??"").trim().toUpperCase();
+  const oiSentiment=String(r?.oiSentiment??"").trim().toUpperCase();
+  const oiAligned=r?.oiDataAvailable===true&&(bullish
+    ? oiSentiment==="BULLISH"||["LONG BUILDUP","SHORT COVERING"].includes(oiMood)
+    : bearish&&(oiSentiment==="BEARISH"||["SHORT BUILDUP","LONG UNWINDING"].includes(oiMood)));
   return strike>0&&ltp>0&&Boolean(instrument)&&Boolean(expected)&&(!contractSide||contractSide===expected)&&
     instrumentIdentityValid&&decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&
     r?.gates?.tradePassed===true&&tradeConfidence>=85&&scannerStrength>=85&&stockRR>=1.5&&optionRR>=1.5&&
