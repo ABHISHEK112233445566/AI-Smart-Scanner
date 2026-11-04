@@ -65,7 +65,16 @@ function selectDashboardRows(rows=[]){
     const marketReady=r?.marketSessionOpen===true&&r?.liveStockQuoteAvailable===true&&
       r?.liveMarketConfirmed===true&&r?.stockQuoteStale===false&&
       n(r?.liveStockQuoteAgeMs)!==null&&n(r?.liveStockQuoteAgeMs)>=0&&n(r?.liveStockQuoteAgeMs)<=120000;
-    const optionReady=r?.optionContractIdentityValid===true&&r?.optionLiveDataAvailable===true&&
+    const optionInstrument=String(r?.optionInstrumentKey??r?.optionInstrument??r?.optionKey??"").trim();
+    const contract=r?.optionLiquidityContractData&&typeof r.optionLiquidityContractData==="object"?r.optionLiquidityContractData:{};
+    const contractKey=String(contract.instrument_key??contract.instrumentKey??"").trim();
+    const liquidityKey=String(r?.optionLiquidityContract??"").trim();
+    const rawContractSide=String(contract.option_type??contract.optionType??contract.instrument_type??contract.trading_symbol??contract.tradingSymbol??"").trim().toUpperCase();
+    const contractSide=rawContractSide==="CE"||rawContractSide==="CALL"||rawContractSide.endsWith(" CE")||rawContractSide.endsWith("CE")?"CE":
+      rawContractSide==="PE"||rawContractSide==="PUT"||rawContractSide.endsWith(" PE")||rawContractSide.endsWith("PE")?"PE":"";
+    const contractIdentity=Boolean(optionInstrument)&&(!contractKey||contractKey===optionInstrument)&&
+      (!liquidityKey||liquidityKey===optionInstrument)&&(!contractSide||contractSide===side);
+    const optionReady=r?.optionContractIdentityValid===true&&contractIdentity&&r?.optionLiveDataAvailable===true&&
       r?.optionLiquidityConfirmed===true&&r?.optionQuoteStale===false&&
       n(r?.optionQuoteAgeMs)!==null&&n(r?.optionQuoteAgeMs)>=0&&n(r?.optionQuoteAgeMs)<=120000;
     return decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&r?.gates?.tradePassed===true&&
