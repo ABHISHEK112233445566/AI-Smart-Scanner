@@ -36,21 +36,68 @@ function optionType(r={}){const v=String(r.optionType??r.optionSymbol??'').toUpp
 function addOIMood(r={}){const x=r&&typeof r==='object'?r:{};let m=null;try{m=calculateOIMoodForStock(x);}catch(_){ }return{...x,oiMood:String(x.oiMood??x.OIMood??x.oi_mood??m?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(x.oiSentiment??x.OISentiment??m?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:m?.dataAvailable===true||x.oiDataAvailable===true,oiPriceChangePercent:n(x.oiPriceChangePercent??m?.priceChangePercent)??0,oiChangePercent:n(x.oiChangePercent??m?.oiChangePercent)??0};}
 function selectDashboardRows(rows=[]){
   const list=(Array.isArray(rows)?rows:[]).filter(Boolean).map(addOIMood);
-  const ranked=[...list].sort((a,b)=>(magnitude(b)-magnitude(a))||((n(b.confidence)??0)-(n(a.confidence)??0)));
   const niftyName=r=>["NIFTY","NIFTY 50"].includes(String(r?.symbol??r?.stock??"").trim().toUpperCase());
-  const noError=r=>String(r?.rejectionReason??"").toUpperCase().indexOf("ERROR")<0;
-  const validPrice=r=>[r?.stockPrice,r?.price,r?.currentPrice,r?.ltp].map(n).find(v=>v!==null&&v>0)>0;
-  const nifty=list.find(r=>niftyName(r)&&validPrice(r)&&noError(r));
-  const actionable=ranked.filter(r=>{
-    if(niftyName(r)||magnitude(r)<DASHBOARD_SCORE||!noError(r))return false;
-    const rating=String(r?.rating??r?.aiRating??"").toUpperCase(),signal=String(r?.signal??"").toUpperCase();
-    if(rating.includes("AVOID")||signal==="AVOID")return false;
-    return ["BULLISH","BEARISH"].includes(direction(r));
-  });
-  if(!nifty)return actionable.slice(0,DASHBOARD_MIN_ROWS);
-  return [...actionable.slice(0,DASHBOARD_MIN_ROWS-1),nifty];
+  const positive=(...values)=>values.map(n).find(v=>v!==null&&v>0)||0;
+  const validTrade=r=>{
+    const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
+    const side=optionType(r),bullish=side==="CE",bearish=side==="PE";
+    const entry=positive(r?.stockEntry,r?.underlyingEntry,r?.marketEntry,r?.entry);
+    const live=positive(r?.currentPrice,r?.price,r?.stockPrice,r?.livePrice);
+    const sl=positive(r?.stockStopLoss,r?.underlyingStopLoss,r?.stopLoss);
+    const target1=positive(r?.stockTarget1,r?.underlyingTarget1,r?.target1);
+    const target2=positive(r?.stockTarget2,r?.underlyingTarget2,r?.target2);
+    const rr=positive(r?.stockRiskReward,r?.riskReward);
+    const strike=positive(r?.recommendedStrike,r?.bestStrike,r?.optionStrike,r?.atmStrike);
+    const premium=positive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);
+    const confidence=positive(r?.tradeConfidence,r?.optionsConfidence,r?.confidence);
+    const scanner=positive(r?.scannerStrength,r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.scannerScore,r?.score);
+    const stockLevels=bullish
+      ? sl>0&&entry>sl&&target1>entry&&target2>target1&&live>=entry
+      : bearish&&sl>entry&&target1>0&&target1<entry&&target2<target1&&live<=entry;
+    const marketReady=r?.marketSessionOpen===true&&r?.liveStockQuoteAvailable===true&&
+      r?.liveMarketConfirmed===true&&r?.stockQuoteStale===false&&
+      n(r?.liveStockQuoteAgeMs)!==null&&n(r?.liveStockQuoteAgeMs)>=0&&n(r?.liveStockQuoteAgeMs)<=120000;
+    const optionReady=r?.optionContractIdentityValid===true&&r?.optionLiveDataAvailable===true&&
+      r?.optionLiquidityConfirmed===true&&r?.optionQuoteStale===false&&
+      n(r?.optionQuoteAgeMs)!==null&&n(r?.optionQuoteAgeMs)>=0&&n(r?.optionQuoteAgeMs)<=120000;
+    return decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&r?.gates?.tradePassed===true&&
+      (bullish||bearish)&&confidence>=85&&scanner>=85&&rr>=1.5&&stockLevels&&
+      strike>0&&premium>0&&optionReady&&marketReady&&r?.intradayTrigger===true&&
+      r?.volumeConfirmed5===true&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
+  };
+  const actionable=list.filter(r=>!niftyName(r)&&validTrade(r))
+    .sort((a,b)=>(positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
+      (magnitude(b)-magnitude(a))||
+      (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward)));
+  const selected=actionable.slice(0,4);
+  const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0);
+  if(nifty)selected.push(validTrade(nifty)?nifty:{...nifty,dashboardContextOnly:true});
+  return selected.slice(0,5);
 }
-function dashboardRow(r={}){const contract=r.optionLiquidityContractData&&typeof r.optionLiquidityContractData==='object'?r.optionLiquidityContractData:{};const strike=positive(r.recommendedStrike,r.bestStrike,r.optionStrike,r.atmStrike,contract.strike,contract.strike_price,contract.strikePrice);const stockEntry=positive(r.stockEntry,r.stock_entry,r.underlyingEntry,r.underlying_entry,r.marketEntry,r.triggerPrice,r.tradeSetup?.stockEntry,r.tradeSetup?.entry);const stockStopLoss=positive(r.stockStopLoss,r.stock_stop_loss,r.underlyingStopLoss,r.underlying_stop_loss,r.tradeSetup?.stockStopLoss,r.tradeSetup?.stopLoss);const stockTarget=positive(r.stockTarget1,r.stockTarget2,r.stock_target_1,r.stock_target_2,r.underlyingTarget1,r.underlyingTarget2,r.tradeSetup?.stockTarget1,r.tradeSetup?.stockTarget2,r.target1,r.target2);const riskReward=n(r.stockRiskReward??r.stockRiskRewardRatio??r.riskReward);return{stock:String(r.stock??r.symbol??r.name??r.tradingSymbol??'').trim(),stockPrice:positive(r.stockPrice,r.price,r.livePrice,r.currentPrice,r.ltp),optionType:optionType(r),strike:strike>0?strike:'',stockEntryPrice:stockEntry??'',stockStopLossPrice:stockStopLoss??'',stockTargetPrice:stockTarget??'',riskReward:riskReward??'',confidence:n(r.tradeConfidence??r.confidence??r.optionsConfidence)??'',oiMood:String(r.oiMood??r.OIMood??r.oi_mood??'UNKNOWN'),volume:n(r.volume)??'',newsStatus:String(r.newsStatus??'NO_MAJOR_NEWS'),newsHeadline:String(r.newsHeadline??'')};}
+function dashboardRow(r={}){
+ const contextOnly=r.dashboardContextOnly===true;
+ const contract=r.optionLiquidityContractData&&typeof r.optionLiquidityContractData==='object'?r.optionLiquidityContractData:{};
+ const strike=positive(r.recommendedStrike,r.bestStrike,r.optionStrike,r.atmStrike,contract.strike,contract.strike_price,contract.strikePrice);
+ const stockEntry=positive(r.stockEntry,r.stock_entry,r.underlyingEntry,r.underlying_entry,r.marketEntry,r.triggerPrice,r.tradeSetup?.stockEntry,r.tradeSetup?.entry);
+ const stockStopLoss=positive(r.stockStopLoss,r.stock_stop_loss,r.underlyingStopLoss,r.underlying_stop_loss,r.tradeSetup?.stockStopLoss,r.tradeSetup?.stopLoss);
+ const stockTarget=positive(r.stockTarget1,r.stockTarget2,r.stock_target_1,r.stock_target_2,r.underlyingTarget1,r.underlyingTarget2,r.tradeSetup?.stockTarget1,r.tradeSetup?.stockTarget2,r.target1,r.target2);
+ const riskReward=n(r.stockRiskReward??r.stockRiskRewardRatio??r.riskReward);
+ return{
+  stock:String(r.stock??r.symbol??r.name??r.tradingSymbol??'').trim(),
+  stockPrice:positive(r.stockPrice,r.price,r.livePrice,r.currentPrice,r.ltp),
+  optionType:contextOnly?'':optionType(r),
+  strike:!contextOnly&&strike>0?strike:'',
+  stockEntryPrice:!contextOnly?(stockEntry??''):'',
+  stockStopLossPrice:!contextOnly?(stockStopLoss??''):'',
+  stockTargetPrice:!contextOnly?(stockTarget??''):'',
+  riskReward:!contextOnly?(riskReward??''):'',
+  confidence:!contextOnly?(n(r.tradeConfidence??r.confidence??r.optionsConfidence)??''):'',
+  oiMood:String(r.oiMood??r.OIMood??r.oi_mood??'UNKNOWN'),
+  volume:n(r.volume)??'',
+  newsStatus:String(r.newsStatus??'NO_MAJOR_NEWS'),
+  newsHeadline:String(r.newsHeadline??'')
+ };
+}
 function clean(v){if(v==null)return'';if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function toIST(v){if(!v)return'';const d=v instanceof Date?new Date(v.getTime()):new Date(v);if(Number.isNaN(d.getTime()))return String(v);const p=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(d).reduce((o,x)=>(o[x.type]=x.value,o),{});return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} IST`;}
 function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood),headers=[];const seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});rows.forEach(r=>Object.keys(r).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));return{action:'replaceSheet',sheet,clearFirst:true,headers,rows:rows.map(r=>headers.map(h=>/date|expiry|timestamp|updatedat|lasttradetime/i.test(h)&&(r[h]===0||r[h]==='0'||r[h]===null||r[h]===undefined||r[h]==='')?'':h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore'?Math.max(-100,Math.min(100,Number(r[h])||0)):clean(r[h]))),timestamp:new Date().toISOString()};}
