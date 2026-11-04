@@ -321,4 +321,36 @@ const strongestScore=rankOptionCandidates([
 ],1);
 assert.strictEqual(strongestScore[0].symbol,"HIGHER_AI","option ranking must use the strongest available AI/scanner score");
 
+
+// Dashboard selection regression: four strong directional WATCH rows plus
+// compulsory NIFTY must occupy the compact five-row Dashboard without
+// exposing any WATCH entry/SL/target as a trade.
+const watchCandidates=["LAURUSLABS","GRASIM","RELIANCE","POWERGRID"].map((symbol,i)=>({
+  stock:symbol,symbol,price:100+i,currentPrice:100+i,stockPrice:100+i,
+  direction:"BULLISH",stockDirection:"BULLISH",technicalDirection:"BULLISH",
+  qualified:true,scannerScore:90-i,score:90-i,finalScore:90-i,confidence:80,
+  optionType:"CE",optionsDecision:"WATCH",decision:"WATCH",
+  optionContractIdentityValid:false,optionLiveDataAvailable:false,
+  optionLiquidityConfirmed:false,optionEligible:false,optionDataValid:false,
+  optionPremiumEntry:0,stockEntry:100+i,stockStopLoss:95+i,stockTarget1:110+i,stockTarget2:115+i,
+  stockRiskReward:2,oiConflict:false
+}));
+const rankedWatch=rankDashboard(watchCandidates);
+assert.strictEqual(rankedWatch.length,4,"four directional WATCH candidates should be available alongside NIFTY");
+assert.ok(rankedWatch.every(r=>r.dashboardContextOnly===true),"all non-TRADE dashboard candidates must be context-only");
+const mixedDashboard=buildDashboardPayload([...watchCandidates,{
+  stock:"NIFTY",symbol:"NIFTY",price:24000,stockPrice:24000,direction:"BULLISH",
+  optionsDecision:"WATCH",decision:"WATCH",score:0,scannerScore:0
+}]);
+assert.strictEqual(mixedDashboard.rows.length,5,"Dashboard should contain four strongest stocks plus NIFTY");
+assert.deepStrictEqual(mixedDashboard.headers,["stock","stockPrice","optionType","strike","stockEntryPrice","stockStopLossPrice","stockTargetPrice","riskReward","confidence","oiMood","volume","newsStatus","newsHeadline"]);
+for(const row of mixedDashboard.rows.slice(0,4)){
+  assert.strictEqual(row[mixedDashboard.headers.indexOf("optionType")],"","WATCH option side must not be shown as a trade");
+  assert.strictEqual(row[mixedDashboard.headers.indexOf("strike")],"","WATCH strike must remain blank");
+  assert.strictEqual(row[mixedDashboard.headers.indexOf("stockEntryPrice")],"","WATCH entry must remain blank");
+  assert.strictEqual(row[mixedDashboard.headers.indexOf("stockStopLossPrice")],"","WATCH stop must remain blank");
+  assert.strictEqual(row[mixedDashboard.headers.indexOf("stockTargetPrice")],"","WATCH target must remain blank");
+}
+assert.strictEqual(mixedDashboard.rows[4][mixedDashboard.headers.indexOf("stock")],"NIFTY","NIFTY must remain compulsory");
+
 console.log("V14 pipeline tests passed");
