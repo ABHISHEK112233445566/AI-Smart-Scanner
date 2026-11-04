@@ -338,6 +338,19 @@ const watchCandidates=["LAURUSLABS","GRASIM","RELIANCE","POWERGRID"].map((symbol
 const rankedWatch=rankDashboard(watchCandidates);
 assert.strictEqual(rankedWatch.length,4,"four directional WATCH candidates should be available alongside NIFTY");
 assert.ok(rankedWatch.every(r=>r.dashboardContextOnly===true),"all non-TRADE dashboard candidates must be context-only");
+const endToEndDashboard=buildDashboardPayload([...rankedWatch,{
+  stock:"NIFTY",symbol:"NIFTY",price:24000,stockPrice:24000,direction:"BULLISH",
+  optionsDecision:"WATCH",decision:"WATCH",score:0,scannerScore:0
+}]);
+assert.strictEqual(endToEndDashboard.rows.length,5,"context-only rows from rankDashboard must survive the Sheets selector");
+assert.strictEqual(endToEndDashboard.rows[4][endToEndDashboard.headers.indexOf("stock")],"NIFTY","NIFTY must remain last and compulsory");
+assert.ok(endToEndDashboard.rows.slice(0,4).every(row=>
+  row[endToEndDashboard.headers.indexOf("optionType")]===""&&
+  row[endToEndDashboard.headers.indexOf("strike")]===""&&
+  row[endToEndDashboard.headers.indexOf("stockEntryPrice")]===""&&
+  row[endToEndDashboard.headers.indexOf("stockStopLossPrice")]===""&&
+  row[endToEndDashboard.headers.indexOf("stockTargetPrice")]===""
+),"WATCH context rows must not expose trade levels");
 const mixedDashboard=buildDashboardPayload([...watchCandidates,{
   stock:"NIFTY",symbol:"NIFTY",price:24000,stockPrice:24000,direction:"BULLISH",
   optionsDecision:"WATCH",decision:"WATCH",score:0,scannerScore:0
