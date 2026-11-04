@@ -100,6 +100,7 @@ function validOptionRow(r){
   const liquidityInstrument=String(r?.optionLiquidityContract??"").trim();
   const side=String(r?.optionType??"").trim().toUpperCase();
   const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";
+  const bullish=expected==="CE",bearish=expected==="PE";
   const contractSide=optionContractSide(r);
   const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
   const identityValid=r?.optionContractIdentityValid===true;
