@@ -44,6 +44,12 @@ function isStrictTradeCandidate(option) {
     if (!hasRealOptionContract(option) || option.pipeline?.optionsTradeGatePassed !== true || option.gates?.tradePassed !== true) return false;
     if (getConfidence(option) < DASHBOARD_MIN_CONFIDENCE || scoreStrength(option) < DASHBOARD_STRONG_SCORE) return false;
     if (getStockRiskReward(option) < 1.5 || option.oiConflict === true || option.explicitDirectionConflict === true) return false;
+    const oiMood = String(option.oiMood ?? "").trim().toUpperCase(), oiSentiment = String(option.oiSentiment ?? "").trim().toUpperCase();
+    const typeForOI = getOptionType(option);
+    const oiAligned = option.oiDataAvailable === true && (typeForOI === "CALL"
+        ? oiSentiment === "BULLISH" || ["LONG BUILDUP", "SHORT COVERING"].includes(oiMood)
+        : oiSentiment === "BEARISH" || ["SHORT BUILDUP", "LONG UNWINDING"].includes(oiMood));
+    if (!oiAligned) return false;
     if (option.marketSessionOpen !== true || option.liveStockQuoteAvailable !== true || option.liveMarketConfirmed !== true || option.stockQuoteStale !== false) return false;
     if (option.intradayTrigger !== true || option.volumeConfirmed5 !== true) return false;
     const age = Number(option.liveStockQuoteAgeMs), optionAge = Number(option.optionQuoteAgeMs);
