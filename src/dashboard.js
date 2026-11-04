@@ -1,10 +1,9 @@
 // ============================================================
 // AI SMART SCANNER - DASHBOARD ENGINE V6
 // ============================================================
-// Dashboard keeps equity and options separate. A strong directional
-// scanner candidate remains visible even if the option contract/LTP
-// lookup fails; the row is shown as WATCH/SCANNER until the option
-// engine can validate a tradable contract.
+// Dashboard keeps equity and options separate. Its actionable trade list
+// contains only fully validated TRADE decisions. WATCH/REJECT candidates
+// remain available in scanner outputs and never fill trade slots.
 // ============================================================
 
 const DASHBOARD_MIN_SCORE = 5;
