@@ -88,7 +88,7 @@ function selectDashboardRows(rows=[]){
     (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward));
   const directional=list.filter(r=>!niftyName(r)&&
     (r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true)&&
-    !r.dashboardContextOnly&&r.oiConflict!==true&&r.explicitDirectionConflict!==true&&
+    r.oiConflict!==true&&r.explicitDirectionConflict!==true&&
     ["BULLISH","BEARISH"].includes(direction(r))&&
     positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&scoreOf(r)>=DASHBOARD_SCORE);
   const trades=directional.filter(validTrade).sort(sortRows);
