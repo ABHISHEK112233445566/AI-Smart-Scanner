@@ -45,6 +45,8 @@ const trade={
   stockStopLoss:320,
   stockTarget1:350,
   stockTarget2:360,
+  stockRiskReward:1.78,
+  riskReward:1.78,
   stockDirection:"BULLISH",
   direction:"BULLISH",
   symbol:"TEST",
@@ -56,6 +58,10 @@ const trade={
   optionPremiumTarget1:22.04,
   optionPremiumTarget2:26.6,
   optionPremiumRiskReward:1.5,
+  tradeConfidence:90,
+  scannerStrength:90,
+  volumeConfirmed5:true,
+  intradayTrigger:true,
   marketSessionOpen:true,
   liveStockQuoteAvailable:true,
   liveMarketConfirmed:true,
@@ -92,6 +98,14 @@ assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLi
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
 assert.strictEqual(validOptionRow({...trade,optionPremiumStopLoss:0,optionPremiumTarget1:0,optionPremiumTarget2:0,optionPremiumRiskReward:0}),true,"verified underlying stock SL/targets must validate a trade without synthetic option premium targets");
+
+const strictTradePayload=buildDashboardPayload([trade]);
+assert.strictEqual(strictTradePayload.rows.length,1,"a fully validated TRADE should enter Dashboard");
+assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf("stock")],"TEST");
+assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf("stockTargetPrice")],350,
+  "trade Dashboard target must use underlying stock levels");
+assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf("stockStopLossPrice")],320,
+  "trade Dashboard stop must use underlying stock levels");
 
 const bad=sanitizeOptionRow({stockPrice:330.95,optionType:"CE",entryPrice:330.95});
 assert.strictEqual(bad.optionEligible,false);
@@ -132,9 +146,7 @@ const watchRows=rankDashboard([{
   finalScore:88,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }]);
-assert.strictEqual(watchRows.length,1,"directional WATCH candidates should remain visible when no validated trade exists");
-assert.strictEqual(watchRows[0].optionsDecision,"WATCH");
-assert.strictEqual(watchRows[0].optionEligible,false);
+assert.strictEqual(watchRows.length,0,"WATCH candidates must never enter the trade Dashboard");
 
 const dashboardEligibleRows=rankDashboard([{
   ...trade,
@@ -146,9 +158,7 @@ const dashboardEligibleRows=rankDashboard([{
   optionLiveDataAvailable:false,
   pipeline:{optionsTradeGatePassed:false}
 }]);
-assert.strictEqual(dashboardEligibleRows.length,1,"invalid option contracts may appear as WATCH, never as TRADE");
-assert.strictEqual(dashboardEligibleRows[0].optionsDecision,"WATCH");
-assert.strictEqual(dashboardEligibleRows[0].optionEligible,false);
+assert.strictEqual(dashboardEligibleRows.length,0,"invalid option contracts must be excluded from the trade Dashboard");
 
 
 const invalidOptionDashboard=buildDashboardPayload([{
@@ -178,7 +188,7 @@ assert.strictEqual(invalidHeaders.length,13,"Dashboard must contain exactly the 
 assert.deepStrictEqual(invalidHeaders,["stock","stockPrice","optionType","strike","stockEntryPrice","stockStopLossPrice","stockTargetPrice","riskReward","confidence","oiMood","volume","newsStatus","newsHeadline"],"Dashboard headers and order must match the approved compact layout");
 assert.strictEqual(invalidHeaders.includes("entryPrice"),false,"option premium entry must not be added to Dashboard");
 assert.strictEqual(invalidHeaders.includes("optionsDecision"),false,"internal option decision must not be added to Dashboard");
-assert.strictEqual(invalidValues[invalidHeaders.indexOf("stock")],"VMM");
+assert.strictEqual(invalidValues[invalidHeaders.indexOf("stock")],"NO CURRENT DIRECTIONAL CANDIDATE","invalid WATCH rows must not be displayed as trade candidates");
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("strike")],"");
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("stockEntryPrice")],"");
 assert.strictEqual(invalidValues[invalidHeaders.indexOf("stockStopLossPrice")],"");
@@ -197,8 +207,8 @@ const conflictingDirectionDashboard=buildDashboardPayload([{
   optionEligible:false,
   optionDataValid:false
 }]);
-assert.strictEqual(conflictingDirectionDashboard.rows[0][conflictingDirectionDashboard.headers.indexOf("stock")],"DIRECTION_CONFLICT",
-  "a stale NEUTRAL direction must not hide a valid bullish stock direction");
+assert.strictEqual(conflictingDirectionDashboard.rows[0][conflictingDirectionDashboard.headers.indexOf("stock")],"NO CURRENT DIRECTIONAL CANDIDATE",
+  "direction-only WATCH candidates must not be displayed as trades");
 
 const stockLevelDashboard=buildDashboardPayload([{
   stock:"LEVEL_TEST",
@@ -219,21 +229,20 @@ const stockLevelDashboard=buildDashboardPayload([{
 }]);
 const stockLevelHeaders=stockLevelDashboard.headers;
 const stockLevelValues=stockLevelDashboard.rows[0];
-assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockTargetPrice")],355,
-  "Dashboard target must be the underlying stock target, not option premium target");
-assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockStopLossPrice")],320,
-  "Dashboard stop loss must be the underlying stock stop, not option premium stop");
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockTargetPrice")],"",
+  "WATCH rows must not display trade targets");
+assert.strictEqual(stockLevelValues[stockLevelHeaders.indexOf("stockStopLossPrice")],"",
+  "WATCH rows must not display trade stop losses");
 
 
 const fallbackRows=rankDashboard([
   {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",price:100,finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
   {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",price:200,finalScore:69,aiScore:92,scannerScore:65,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
 ]);
-assert.strictEqual(fallbackRows.length,2,"directional candidates with valid prices should remain visible as WATCH rows");
-assert.ok(fallbackRows.every(r=>r.optionsDecision==="WATCH"&&r.optionEligible===false),"fallback rows must never become executable trades");
+assert.strictEqual(fallbackRows.length,0,"WATCH/REJECT fallbacks must not enter the trade Dashboard");
 const fallbackPayload=buildDashboardPayload(fallbackRows);
-assert.strictEqual(fallbackPayload.rows.length,2,"Dashboard should show ranked directional WATCH candidates");
-assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("stock")],"STRONG_SCORE","highest-score candidate should rank first");
+assert.strictEqual(fallbackPayload.rows.length,1,"empty trade Dashboard should show only the explicit no-candidate row");
+assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("stock")],"NO CURRENT DIRECTIONAL CANDIDATE");
 assert.strictEqual(fallbackPayload.headers.length,13,"fallback Dashboard must retain the 13-column layout");
 
 const emptyDashboardPayload=buildDashboardPayload([]);
