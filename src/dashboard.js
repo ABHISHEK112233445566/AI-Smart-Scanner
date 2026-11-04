@@ -41,7 +41,8 @@ function isStrictTradeCandidate(option) {
     if (!option || typeof option !== "object") return false;
     if (getDecision(option) !== "TRADE") return false;
     if (!(option.qualified === true || option.optionEngineQualified === true || option.scannerQualified === true)) return false;
-    if (!hasRealOptionContract(option) || option.pipeline?.optionsTradeGatePassed !== true || option.gates?.tradePassed !== true) return false;
+    if (!hasRealOptionContract(option) || option.optionContractIdentityValid !== true || option.optionLiveDataAvailable !== true || option.optionLiquidityConfirmed !== true || option.pipeline?.optionsTradeGatePassed !== true || option.gates?.tradePassed !== true) return false;
+    if (safeNumber(option.optionPremiumRiskReward) < 1.5) return false;
     if (getConfidence(option) < DASHBOARD_MIN_CONFIDENCE || scoreStrength(option) < DASHBOARD_STRONG_SCORE) return false;
     if (getStockRiskReward(option) < 1.5 || option.oiConflict === true || option.explicitDirectionConflict === true) return false;
     const oiMood = String(option.oiMood ?? "").trim().toUpperCase(), oiSentiment = String(option.oiSentiment ?? "").trim().toUpperCase();
