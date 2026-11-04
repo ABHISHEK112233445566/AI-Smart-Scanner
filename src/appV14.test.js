@@ -164,7 +164,8 @@ const watchRows=rankDashboard([{
   finalScore:88,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }]);
-assert.strictEqual(watchRows.length,0,"WATCH candidates must never enter the trade Dashboard");
+assert.strictEqual(watchRows.length,1,"strong directional WATCH candidates should fill unused Dashboard slots as context only");
+assert.strictEqual(watchRows[0].dashboardContextOnly,true,"WATCH candidates must be explicitly context-only");
 
 const dashboardEligibleRows=rankDashboard([{
   ...trade,
@@ -257,10 +258,10 @@ const fallbackRows=rankDashboard([
   {stock:"LOWER_SCORE",symbol:"LOWER_SCORE",direction:"BULLISH",price:100,finalScore:69,scannerScore:80,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"WAIT_FOR_STOCK_TRIGGER",optionEligible:false,optionDataValid:false},
   {stock:"STRONG_SCORE",symbol:"STRONG_SCORE",direction:"BEARISH",price:200,finalScore:69,aiScore:92,scannerScore:65,qualified:false,decision:"REJECT",optionsDecision:"REJECT",decisionReason:"NO_VALID_OPTION_CONTRACTS",optionEligible:false,optionDataValid:false}
 ]);
-assert.strictEqual(fallbackRows.length,0,"WATCH/REJECT fallbacks must not enter the trade Dashboard");
+assert.strictEqual(fallbackRows.length,2,"strong directional WATCH candidates should remain visible as context rows");
 const fallbackPayload=buildDashboardPayload(fallbackRows);
-assert.strictEqual(fallbackPayload.rows.length,1,"empty trade Dashboard should show only the explicit no-candidate row");
-assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("stock")],"NO CURRENT DIRECTIONAL CANDIDATE");
+assert.strictEqual(fallbackPayload.rows.length,2,"strong directional WATCH candidates should appear in Dashboard");
+assert.strictEqual(fallbackPayload.rows[0][fallbackPayload.headers.indexOf("stock")],"STRONG_SCORE");
 assert.strictEqual(fallbackPayload.headers.length,13,"fallback Dashboard must retain the 13-column layout");
 
 const emptyDashboardPayload=buildDashboardPayload([]);
@@ -283,7 +284,7 @@ const internalDashboard=buildDashboard([{
   optionsDecision:"REJECT",decision:"REJECT",optionContractIdentityValid:false,optionLiveDataAvailable:false,
   optionRejectionReason:"WAIT_FOR_STOCK_TRIGGER"
 }],[],1);
-assert.strictEqual(internalDashboard.top10.length,0,"internal Top-5 trade list must exclude WATCH candidates");
+assert.strictEqual(internalDashboard.top10.length,0,"secondary internal trade list must continue excluding WATCH candidates");
 
 
 assert.strictEqual(validOptionRow({
