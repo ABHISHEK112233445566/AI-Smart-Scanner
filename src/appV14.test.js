@@ -62,6 +62,9 @@ const trade={
   scannerStrength:90,
   volumeConfirmed5:true,
   intradayTrigger:true,
+  oiMood:"LONG BUILDUP",
+  oiSentiment:"BULLISH",
+  oiDataAvailable:true,
   marketSessionOpen:true,
   liveStockQuoteAvailable:true,
   liveMarketConfirmed:true,
@@ -94,6 +97,8 @@ assert.strictEqual(validOptionRow({...trade,stockQuoteStale:true}),false,"stale 
 assert.strictEqual(validOptionRow({...trade,liveMarketConfirmed:false}),false,"an unconfirmed underlying quote must never be executable");
 assert.strictEqual(validOptionRow({...trade,optionQuoteStale:true}),false,"stale option quotes must never be executable trades");
 assert.strictEqual(validOptionRow({...trade,oiConflict:true}),false,"OI direction conflicts must never be treated as clean directional candidates");
+assert.strictEqual(validOptionRow({...trade,oiMood:"SHORT BUILDUP",oiSentiment:"BEARISH"}),false,"opposing underlying OI must reject a CE trade");
+assert.strictEqual(validOptionRow({...trade,oiDataAvailable:false}),false,"missing underlying OI confirmation must not qualify as a strict trade");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContract:"KEY_B",optionLiquidityContractData:{instrument_key:"KEY_A",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"liquidity contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
