@@ -162,8 +162,16 @@ function rankDashboard(rows){
   const stocks=source.filter(r=>eligible(r)&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r));
   const trades=stocks.filter(validOptionRow).map(sanitizeOptionRow).sort(sortRows);
   const tradeKeys=new Set(trades.map(key));
-  const watch=stocks.filter(r=>!tradeKeys.has(key(r))&&
-    Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE)
+  const watch=stocks.filter(r=>{
+    if(tradeKeys.has(key(r)))return false;
+    // A failed trigger can remain visible as WATCH context, but an explicit
+    // REJECT or a known-invalid option contract must not be promoted back to
+    // WATCH merely because dashboardEligible is true.
+    const explicitDecision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
+    if(explicitDecision==="REJECT")return false;
+    if(r?.optionContractIdentityValid===false||r?.optionLiveDataAvailable===false)return false;
+    return Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE;
+  })
     .sort(sortRows)
     .map(r=>({...sanitizeOptionRow(r),dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
