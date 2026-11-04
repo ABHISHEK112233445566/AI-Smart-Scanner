@@ -82,12 +82,23 @@ function selectDashboardRows(rows=[]){
       strike>0&&premium>0&&optionRR>=1.5&&optionReady&&marketReady&&oiAligned&&r?.intradayTrigger===true&&
       r?.volumeConfirmed5===true&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
   };
-  const actionable=list.filter(r=>!niftyName(r)&&validTrade(r))
-    .sort((a,b)=>(positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
-      (magnitude(b)-magnitude(a))||
-      (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward)));
+  const scoreOf=r=>Math.min(100,Math.abs(score(r)));
+  const sortRows=(a,b)=>(magnitude(b)-magnitude(a))||
+    (positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
+    (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward));
+  const directional=list.filter(r=>!niftyName(r)&&
+    (r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true)&&
+    !r.dashboardContextOnly&&r.oiConflict!==true&&r.explicitDirectionConflict!==true&&
+    ["BULLISH","BEARISH"].includes(direction(r))&&
+    positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&scoreOf(r)>=DASHBOARD_SCORE);
+  const trades=directional.filter(validTrade).sort(sortRows);
+  const tradeKeys=new Set(trades.map(r=>String(r.symbol??r.stock??"").trim().toUpperCase()));
+  const watches=directional.filter(r=>!tradeKeys.has(String(r.symbol??r.stock??"").trim().toUpperCase()))
+    .sort(sortRows).map(r=>({...r,dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
+      optionEligible:false,optionDataValid:false}));
   const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0);
-  const selected=actionable.slice(0,nifty?4:5);
+  const selected=[...trades.slice(0,nifty?4:5)];
+  for(const row of watches){if(selected.length>=(nifty?4:5))break;selected.push(row);}
   if(nifty)selected.push(validTrade(nifty)?nifty:{...nifty,dashboardContextOnly:true});
   return selected.slice(0,5);
 }
