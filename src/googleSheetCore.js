@@ -36,7 +36,7 @@ function optionType(r={}){const v=String(r.optionType??r.optionSymbol??'').toUpp
 function addOIMood(r={}){const x=r&&typeof r==='object'?r:{};let m=null;try{m=calculateOIMoodForStock(x);}catch(_){ }return{...x,oiMood:String(x.oiMood??x.OIMood??x.oi_mood??m?.mood??'UNKNOWN').trim()||'UNKNOWN',oiSentiment:String(x.oiSentiment??x.OISentiment??m?.sentiment??'UNKNOWN').trim()||'UNKNOWN',oiDataAvailable:m?.dataAvailable===true||x.oiDataAvailable===true,oiPriceChangePercent:n(x.oiPriceChangePercent??m?.priceChangePercent)??0,oiChangePercent:n(x.oiChangePercent??m?.oiChangePercent)??0};}
 function selectDashboardRows(rows=[]){
   const list=(Array.isArray(rows)?rows:[]).filter(Boolean).map(addOIMood);
-  const niftyName=r=>["NIFTY","NIFTY 50"].includes(String(r?.symbol??r?.stock??"").trim().toUpperCase());
+  const niftyName=r=>["NIFTY","NIFTY 50"].includes(String(r?.symbol||r?.stock||"").trim().toUpperCase());
   const positive=(...values)=>values.map(n).find(v=>v!==null&&v>0)||0;
   const validTrade=r=>{
     const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
