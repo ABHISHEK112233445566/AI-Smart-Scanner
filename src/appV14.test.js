@@ -111,6 +111,9 @@ assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf
   "trade Dashboard target must use underlying stock levels");
 assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf("stockStopLossPrice")],320,
   "trade Dashboard stop must use underlying stock levels");
+const secondaryDashboard=buildDashboard([trade],[trade],1);
+assert.strictEqual(secondaryDashboard.top10.length,1,"secondary dashboard must also require and preserve a fully validated trade");
+assert.strictEqual(secondaryDashboard.top10[0].decision,"TRADE");
 
 const bad=sanitizeOptionRow({stockPrice:330.95,optionType:"CE",entryPrice:330.95});
 assert.strictEqual(bad.optionEligible,false);
