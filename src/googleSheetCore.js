@@ -86,8 +86,8 @@ function selectDashboardRows(rows=[]){
     .sort((a,b)=>(positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
       (magnitude(b)-magnitude(a))||
       (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward)));
-  const selected=actionable.slice(0,4);
   const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0);
+  const selected=actionable.slice(0,nifty?4:5);
   if(nifty)selected.push(validTrade(nifty)?nifty:{...nifty,dashboardContextOnly:true});
   return selected.slice(0,5);
 }
