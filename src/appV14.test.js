@@ -111,6 +111,16 @@ assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf
   "trade Dashboard target must use underlying stock levels");
 assert.strictEqual(strictTradePayload.rows[0][strictTradePayload.headers.indexOf("stockStopLossPrice")],320,
   "trade Dashboard stop must use underlying stock levels");
+const fiveTradePayload=buildDashboardPayload(Array.from({length:6},(_,i)=>({...trade,stock:"TRADE_"+i,symbol:"TRADE_"+i})));
+assert.strictEqual(fiveTradePayload.rows.length,5,"Dashboard must never exceed the Top-5 limit");
+const niftyContextPayload=buildDashboardPayload([
+  ...Array.from({length:5},(_,i)=>({...trade,stock:"TRADE_NIFTY_"+i,symbol:"TRADE_NIFTY_"+i})),
+  {stock:"NIFTY",symbol:"NIFTY",price:23810,stockPrice:23810,optionType:"CE",optionsDecision:"WATCH",decision:"WATCH",oiMood:"BOTH SIDES BUILDING"}
+]);
+assert.strictEqual(niftyContextPayload.rows.length,5,"NIFTY must occupy one of the five Dashboard slots");
+assert.strictEqual(niftyContextPayload.rows[4][niftyContextPayload.headers.indexOf("stock")],"NIFTY");
+assert.strictEqual(niftyContextPayload.rows[4][niftyContextPayload.headers.indexOf("optionType")],"","unqualified NIFTY must be context only, not an option trade");
+
 const secondaryDashboard=buildDashboard([trade],[trade],1);
 assert.strictEqual(secondaryDashboard.top10.length,1,"secondary dashboard must also require and preserve a fully validated trade");
 assert.strictEqual(secondaryDashboard.top10[0].decision,"TRADE");
