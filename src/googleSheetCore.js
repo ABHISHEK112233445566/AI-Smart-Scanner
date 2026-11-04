@@ -47,6 +47,9 @@ function selectDashboardRows(rows=[]){
     const target1=positive(r?.stockTarget1,r?.underlyingTarget1,r?.target1);
     const target2=positive(r?.stockTarget2,r?.underlyingTarget2,r?.target2);
     const rr=positive(r?.stockRiskReward,r?.riskReward);
+    const stockRisk=bullish?entry-sl:sl-entry;
+    const stockReward=bullish?target1-entry:entry-target1;
+    const calculatedStockRR=stockRisk>0&&stockReward>0?stockReward/stockRisk:0;
     const strike=positive(r?.recommendedStrike,r?.bestStrike,r?.optionStrike,r?.atmStrike);
     const premium=positive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);
     const optionRR=positive(r?.optionPremiumRiskReward);
@@ -66,7 +69,7 @@ function selectDashboardRows(rows=[]){
       r?.optionLiquidityConfirmed===true&&r?.optionQuoteStale===false&&
       n(r?.optionQuoteAgeMs)!==null&&n(r?.optionQuoteAgeMs)>=0&&n(r?.optionQuoteAgeMs)<=120000;
     return decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&r?.gates?.tradePassed===true&&
-      (bullish||bearish)&&confidence>=85&&scanner>=85&&rr>=1.5&&stockLevels&&
+      (bullish||bearish)&&confidence>=85&&scanner>=85&&rr>=1.5&&calculatedStockRR>=1.5&&stockLevels&&
       strike>0&&premium>0&&optionRR>=1.5&&optionReady&&marketReady&&oiAligned&&r?.intradayTrigger===true&&
       r?.volumeConfirmed5===true&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
   };
