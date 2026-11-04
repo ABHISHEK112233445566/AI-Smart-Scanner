@@ -67,7 +67,7 @@ function selectDashboardRows(rows=[]){
       n(r?.optionQuoteAgeMs)!==null&&n(r?.optionQuoteAgeMs)>=0&&n(r?.optionQuoteAgeMs)<=120000;
     return decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&r?.gates?.tradePassed===true&&
       (bullish||bearish)&&confidence>=85&&scanner>=85&&rr>=1.5&&stockLevels&&
-      strike>0&&premium>0&&optionReady&&marketReady&&r?.intradayTrigger===true&&
+      strike>0&&premium>0&&optionRR>=1.5&&optionReady&&marketReady&&oiAligned&&r?.intradayTrigger===true&&
       r?.volumeConfirmed5===true&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
   };
   const actionable=list.filter(r=>!niftyName(r)&&validTrade(r))
