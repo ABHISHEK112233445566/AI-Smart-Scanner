@@ -30,6 +30,7 @@ async function getFastTradingUniverse(broker){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable');
   const master=await getWholeNseUniverse(broker);
   const liveFnoSymbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
+  const configuredEquitySymbols=[...new Set(ICICI_OPTION_STOCK_SYMBOLS.map(normalizeSymbol).filter(symbol=>master.equityInstrumentKeyBySymbol?.has(symbol)))].sort();
   if(!liveFnoSymbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
 
   // Audit each configured symbol against the actual NSE_EQ instrument key and
@@ -40,7 +41,7 @@ async function getFastTradingUniverse(broker){
     const equityKeys=[...(master.equityKeysBySymbol?.get(symbol)||[])].sort();
     const equityKey=equityKeys.length===1?equityKeys[0]:null;
     const foKeys=[...(master.foRowsByUnderlyingSymbol?.get(symbol)||[])].sort();
-    const exactFoLinked=equityKey?!!master.foRowsByUnderlyingKey?.has(equityKey):false;
+    const exactFoLinked=equityKey?master.foRowsByUnderlyingKey?.get(equityKey)?.has(symbol)===true:false;
     const foSymbolPresent=foKeys.length>0||(master.optionEligibleSymbols||[]).some(x=>normalizeSymbol(x)===symbol);
     let status='MATCH';
     if(equityKeys.length===0)status='NO_NSE_EQ';
@@ -68,8 +69,10 @@ async function getFastTradingUniverse(broker){
     optionEligibleSymbols:symbols,
     optionEligibleCount:symbols.length,
     configuredSymbols,
+    configuredEquitySymbols,
     liveFnoSymbols,
     configuredMissing,
+    configuredEquityMissing:ICICI_OPTION_STOCK_SYMBOLS.filter(symbol=>!master.equityInstrumentKeyBySymbol?.has(normalizeSymbol(symbol))),
     configuredInstrumentAudit,
     instrumentAuditCounts:auditCounts,
     source:configuredSymbols.length?'Configured options stocks intersected with live Upstox NSE F&O master':'Live Upstox NSE derivative instrument master fallback'
