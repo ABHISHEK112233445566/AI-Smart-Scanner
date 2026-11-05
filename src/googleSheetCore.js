@@ -53,6 +53,17 @@ function selectDashboardRows(rows=[]){
     const strike=positive(r?.recommendedStrike,r?.bestStrike,r?.optionStrike,r?.atmStrike);
     const premium=positive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);
     const optionRR=positive(r?.optionPremiumRiskReward);
+    const premiumSetup=r?.optionPremiumSetup&&typeof r.optionPremiumSetup==="object"?r.optionPremiumSetup:{};
+    const premiumEntry=positive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);
+    const premiumStop=positive(r?.optionPremiumStopLoss,premiumSetup.stopLoss);
+    const premiumTarget=positive(r?.optionPremiumTarget1,premiumSetup.target1);
+    const premiumRisk=premiumEntry-premiumStop,premiumReward=premiumTarget-premiumEntry;
+    const calculatedPremiumRR=premiumRisk>0&&premiumReward>0?premiumReward/premiumRisk:0;
+    const premiumStructure=premiumSetup.valid===true&&
+      String(premiumSetup.levelSource??r?.optionPremiumLevelsSource??"").trim().toUpperCase()==="OPTION_5M_OHLC_SWINGS"&&
+      n(premiumSetup.candlesUsed??r?.optionPremiumCandlesUsed)!==null&&n(premiumSetup.candlesUsed??r?.optionPremiumCandlesUsed)>=7&&
+      premiumEntry>0&&premiumStop>0&&premiumTarget>premiumEntry&&calculatedPremiumRR>=1.5&&
+      n(premiumSetup.riskReward??r?.optionPremiumRiskReward)>=1.5&&optionRR>=1.5;
     const oiMood=String(r?.oiMood??"").trim().toUpperCase(),oiSentiment=String(r?.oiSentiment??"").trim().toUpperCase();
     const oiAligned=r?.oiDataAvailable===true&&(bullish
       ? oiSentiment==="BULLISH"||["LONG BUILDUP","SHORT COVERING"].includes(oiMood)
@@ -79,7 +90,7 @@ function selectDashboardRows(rows=[]){
       n(r?.optionQuoteAgeMs)!==null&&n(r?.optionQuoteAgeMs)>=0&&n(r?.optionQuoteAgeMs)<=120000;
     return decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&r?.gates?.tradePassed===true&&
       (bullish||bearish)&&confidence>=85&&scanner>=85&&rr>=1.5&&calculatedStockRR>=1.5&&stockLevels&&
-      strike>0&&premium>0&&optionRR>=1.5&&optionReady&&marketReady&&oiAligned&&r?.intradayTrigger===true&&
+      strike>0&&premium>0&&premiumStructure&&optionReady&&marketReady&&oiAligned&&r?.intradayTrigger===true&&
       r?.volumeConfirmed5===true&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
   };
   const scoreOf=r=>Math.min(100,Math.abs(score(r)));
