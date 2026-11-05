@@ -93,8 +93,17 @@ function selectDashboardRows(rows=[]){
     positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&scoreOf(r)>=DASHBOARD_SCORE);
   const trades=directional.filter(validTrade).sort(sortRows);
   const tradeKeys=new Set(trades.map(r=>String(r.symbol??r.stock??"").trim().toUpperCase()));
-  const watches=directional.filter(r=>!tradeKeys.has(String(r.symbol??r.stock??"").trim().toUpperCase()))
-    .sort(sortRows).map(r=>({...r,dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
+  const watches=directional.filter(r=>{
+    if(tradeKeys.has(String(r.symbol??r.stock??"").trim().toUpperCase()))return false;
+    // A directional score is not enough to qualify as a Dashboard context
+    // candidate when the option engine explicitly confirms that no valid
+    // option contract exists. Keep ordinary trigger-pending WATCH rows, but
+    // suppress hard contract failures such as VMM/NO_VALID_OPTION_CONTRACTS.
+    const failureReason=[r.optionRejectionReason,r.contractLookupReason,r.decisionReason,r.rejectionReason,r.reason]
+      .map(v=>String(v??"").trim().toUpperCase()).find(Boolean)||"";
+    if(/NO_VALID_OPTION_CONTRACTS|INVALID_OPTION_CONTRACT|OPTION_CONTRACT_NOT_FOUND|MISSING_LIVE_OPTION_CONTRACT/.test(failureReason))return false;
+    return true;
+  }).sort(sortRows).map(r=>({...r,dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
   const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0);
   const selected=[...trades.slice(0,nifty?4:5)];
