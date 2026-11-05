@@ -32,10 +32,29 @@ async function getFastTradingUniverse(broker){
   const liveFnoSymbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
   if(!liveFnoSymbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
 
-  // The configured stock-options list is the intended base universe. Keep only
-  // symbols that are genuinely present in the active broker's NSE F&O master;
-  // this is a one-time instrument-master intersection, not a repeated per-stock
-  // option-liquidity preflight.
+  // Audit each configured symbol against the actual NSE_EQ instrument key and
+  // the NSE_FO underlying_key. Do not change the configured universe based on
+  // symbol-name similarity alone; report exact-key and symbol-only matches.
+  const configuredInstrumentAudit=ICICI_OPTION_STOCK_SYMBOLS.map(raw=>{
+    const symbol=normalizeSymbol(raw);
+    const equityKeys=[...(master.equityKeysBySymbol?.get(symbol)||[])].sort();
+    const equityKey=equityKeys.length===1?equityKeys[0]:null;
+    const foKeys=[...(master.foRowsByUnderlyingSymbol?.get(symbol)||[])].sort();
+    const exactFoLinked=equityKey?!!master.foRowsByUnderlyingKey?.has(equityKey):false;
+    const foSymbolPresent=foKeys.length>0||(master.optionEligibleSymbols||[]).some(x=>normalizeSymbol(x)===symbol);
+    let status='MATCH';
+    if(equityKeys.length===0)status='NO_NSE_EQ';
+    else if(equityKeys.length>1)status='DUPLICATE_NSE_EQ_KEYS';
+    else if(exactFoLinked)status='MATCH';
+    else if(foSymbolPresent)status='FO_SYMBOL_ONLY_KEY_MISMATCH';
+    else status='NO_NSE_FO';
+    return{configuredSymbol:raw,nseEquitySymbol:symbol,nseEquityInstrumentKey:equityKey,equityKeyCount:equityKeys.length,foUnderlyingKeys:foKeys,exactFoKeyMatch:exactFoLinked,status};
+  });
+  const auditCounts=configuredInstrumentAudit.reduce((a,row)=>(a[row.status]=(a[row.status]||0)+1,a),{});
+  console.log('NSE_EQ + NSE_FO INSTRUMENT-KEY AUDIT: '+JSON.stringify(auditCounts));
+  for(const row of configuredInstrumentAudit)console.log('INSTRUMENT KEY MATCH: '+JSON.stringify(row));
+
+  // Preserve current symbol-intersection behavior until the complete audit is reviewed.
   const liveFnoSet=new Set(liveFnoSymbols);
   const configuredSymbols=[...new Set(ICICI_OPTION_STOCK_SYMBOLS.map(normalizeSymbol).filter(symbol=>liveFnoSet.has(symbol)))].sort();
   const configuredMissing=ICICI_OPTION_STOCK_SYMBOLS.filter(symbol=>!liveFnoSet.has(normalizeSymbol(symbol)));
@@ -51,6 +70,8 @@ async function getFastTradingUniverse(broker){
     configuredSymbols,
     liveFnoSymbols,
     configuredMissing,
+    configuredInstrumentAudit,
+    instrumentAuditCounts:auditCounts,
     source:configuredSymbols.length?'Configured options stocks intersected with live Upstox NSE F&O master':'Live Upstox NSE derivative instrument master fallback'
   };
 }
@@ -102,8 +123,38 @@ async function getWholeNseUniverse(broker){
   const equityByKey=new Map();
   for(const equity of equityRows){const key=String(equity?.instrument_key??equity?.instrumentKey??'').trim(),symbol=normalizeSymbol(equity?.trading_symbol??equity?.tradingSymbol??equity?.symbol);if(key&&symbol)equityByKey.set(key,symbol);}
   const optionUnderlyings=new Set();
-  for(const derivative of instruments.filter(isNseDerivative)){const underlyingKey=String(derivative?.underlying_key??derivative?.underlyingKey??derivative?.underlying_instrument_key??derivative?.underlyingInstrumentKey??'').trim();if(underlyingKey&&equityByKey.has(underlyingKey)){optionUnderlyings.add(equityByKey.get(underlyingKey));continue;}const symbol=getUnderlyingSymbol(derivative);if(symbol)optionUnderlyings.add(symbol);}
-  return{name:'WHOLE_NSE',symbols:equities,universeSize:equities.length,optionEligibleSymbols:[...optionUnderlyings],optionEligibleCount:optionUnderlyings.size,source:'Upstox complete NSE instrument master'};
+  const equityInstrumentKeyBySymbol=new Map();
+  const equityKeysBySymbol=new Map();
+  for(const equity of equityRows){
+    const symbol=normalizeSymbol(equity?.trading_symbol??equity?.tradingSymbol??equity?.symbol);
+    const key=String(equity?.instrument_key??equity?.instrumentKey??'').trim();
+    if(!symbol||!key)continue;
+    if(!equityKeysBySymbol.has(symbol))equityKeysBySymbol.set(symbol,new Set());
+    equityKeysBySymbol.get(symbol).add(key);
+    if(!equityInstrumentKeyBySymbol.has(symbol))equityInstrumentKeyBySymbol.set(symbol,key);
+  }
+  const foRowsByUnderlyingKey=new Map();
+  const foRowsByUnderlyingSymbol=new Map();
+  for(const derivative of instruments.filter(isNseDerivative)){
+    const underlyingKey=String(derivative?.underlying_key??derivative?.underlyingKey??derivative?.underlying_instrument_key??derivative?.underlyingInstrumentKey??'').trim();
+    const symbol=getUnderlyingSymbol(derivative);
+    if(underlyingKey){
+      if(!foRowsByUnderlyingKey.has(underlyingKey))foRowsByUnderlyingKey.set(underlyingKey,new Set());
+      if(symbol)foRowsByUnderlyingKey.get(underlyingKey).add(symbol);
+    }
+    if(symbol){
+      optionUnderlyings.add(symbol);
+      if(!foRowsByUnderlyingSymbol.has(symbol))foRowsByUnderlyingSymbol.set(symbol,new Set());
+      if(underlyingKey)foRowsByUnderlyingSymbol.get(symbol).add(underlyingKey);
+    }
+    if(underlyingKey&&equityByKey.has(underlyingKey))optionUnderlyings.add(equityByKey.get(underlyingKey));
+  }
+  return{
+    name:'WHOLE_NSE',symbols:equities,universeSize:equities.length,
+    optionEligibleSymbols:[...optionUnderlyings],optionEligibleCount:optionUnderlyings.size,
+    equityInstrumentKeyBySymbol,equityKeysBySymbol,foRowsByUnderlyingKey,foRowsByUnderlyingSymbol,
+    source:'Upstox complete NSE instrument master'
+  };
 }
 
 module.exports={getFastTradingUniverse,getNifty500Universe,getWholeNseUniverse,normalizeSymbol,isNseEquity,isNseDerivative};
