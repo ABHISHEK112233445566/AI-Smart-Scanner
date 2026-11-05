@@ -159,19 +159,17 @@ function rankDashboard(rows){
     (optionConfidence(b)-optionConfidence(a))||
     (optionScore(b)-optionScore(a))||
     (num(b.stockRiskReward??b.riskReward)-num(a.stockRiskReward??a.riskReward));
-  const stocks=source.filter(r=>eligible(r)&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r));
-  const trades=stocks.filter(validOptionRow).map(sanitizeOptionRow).sort(sortRows);
+  // TRADE candidates must be explicitly qualified and pass every option gate.
+  const tradeStocks=source.filter(r=>eligible(r)&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r));
+  const trades=tradeStocks.filter(validOptionRow).map(sanitizeOptionRow).sort(sortRows);
   const tradeKeys=new Set(trades.map(key));
-  const watch=stocks.filter(r=>{
-    if(tradeKeys.has(key(r)))return false;
-    // A failed trigger can remain visible as WATCH context, but an explicit
-    // REJECT or a known-invalid option contract must not be promoted back to
-    // WATCH merely because dashboardEligible is true.
-    const explicitDecision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
-    if(explicitDecision==="REJECT")return false;
-    if(r?.optionContractIdentityValid===false||r?.optionLiveDataAvailable===false)return false;
-    return Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE;
-  })
+  // WATCH is a stock-direction context tier, not an option-execution tier.
+  // Keep strong directional rows even when option selection/qualification
+  // failed, but suppress explicit hard failures of contract identity/data.
+  const watch=source.filter(r=>r&&typeof r==="object"&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r)&&
+    !tradeKeys.has(key(r))&&
+    r?.optionContractIdentityValid!==false&&r?.optionLiveDataAvailable!==false&&
+    Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE)
     .sort(sortRows)
     .map(r=>({...sanitizeOptionRow(r),dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
