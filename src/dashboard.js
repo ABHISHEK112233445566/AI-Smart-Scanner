@@ -43,6 +43,15 @@ function isStrictTradeCandidate(option) {
     if (!hasRealOptionContract(option) || option.optionContractIdentityValid !== true || option.optionLiveDataAvailable !== true || option.optionLiquidityConfirmed !== true || option.pipeline?.optionsTradeGatePassed !== true || option.gates?.tradePassed !== true) return false;
     if (getConfidence(option) < DASHBOARD_MIN_CONFIDENCE || scoreStrength(option) < DASHBOARD_STRONG_SCORE) return false;
     if (getStockRiskReward(option) < 1.5 || option.oiConflict === true || option.explicitDirectionConflict === true) return false;
+    const premiumSetup=option.optionPremiumSetup&&typeof option.optionPremiumSetup==="object"?option.optionPremiumSetup:{};
+    const premiumEntry=safeNumber(option.optionPremiumEntry??option.optionLTP??option.optionLtp);
+    const premiumStop=safeNumber(option.optionPremiumStopLoss??premiumSetup.stopLoss);
+    const premiumTarget=safeNumber(option.optionPremiumTarget1??premiumSetup.target1);
+    const premiumRisk=premiumEntry-premiumStop,premiumReward=premiumTarget-premiumEntry;
+    const premiumRR=premiumRisk>0&&premiumReward>0?premiumReward/premiumRisk:0;
+    if(premiumSetup.valid!==true||String(premiumSetup.levelSource??option.optionPremiumLevelsSource??"").toUpperCase()!=="OPTION_5M_OHLC_SWINGS"||
+       safeNumber(premiumSetup.candlesUsed??option.optionPremiumCandlesUsed)<7||premiumRR<1.5||
+       safeNumber(premiumSetup.riskReward??option.optionPremiumRiskReward)<1.5)return false;
     const oiMood = String(option.oiMood ?? "").trim().toUpperCase(), oiSentiment = String(option.oiSentiment ?? "").trim().toUpperCase();
     const typeForOI = getOptionType(option);
     const oiAligned = option.oiDataAvailable === true && (typeForOI === "CALL"
