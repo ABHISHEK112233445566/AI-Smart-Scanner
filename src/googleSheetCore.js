@@ -86,11 +86,15 @@ function selectDashboardRows(rows=[]){
   const sortRows=(a,b)=>(magnitude(b)-magnitude(a))||
     (positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
     (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward));
-  const directional=list.filter(r=>!niftyName(r)&&
-    (r.qualified===true||r.dashboardEligible===true||r.scannerQualified===true||r.optionEngineQualified===true)&&
-    r.oiConflict!==true&&r.explicitDirectionConflict!==true&&
-    ["BULLISH","BEARISH"].includes(direction(r))&&
-    positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&scoreOf(r)>=DASHBOARD_SCORE);
+  const directional=list.filter(r=>{
+    if(niftyName(r)||r.oiConflict===true||r.explicitDirectionConflict===true)return false;
+    // An explicit NEUTRAL/SIDEWAYS primary direction overrides secondary
+    // directional hints; do not turn conflicting metadata into a candidate.
+    const primaryDirection=String(r.direction??"").trim().toUpperCase();
+    if(["NEUTRAL","SIDEWAYS","RANGEBOUND","RANGE_BOUND"].includes(primaryDirection))return false;
+    return ["BULLISH","BEARISH"].includes(direction(r))&&
+      positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&scoreOf(r)>=DASHBOARD_SCORE;
+  });
   const trades=directional.filter(validTrade).sort(sortRows);
   const tradeKeys=new Set(trades.map(r=>String(r.symbol??r.stock??"").trim().toUpperCase()));
   const watches=directional.filter(r=>{
@@ -99,9 +103,13 @@ function selectDashboardRows(rows=[]){
     // candidate when the option engine explicitly confirms that no valid
     // option contract exists. Keep ordinary trigger-pending WATCH rows, but
     // suppress hard contract failures such as VMM/NO_VALID_OPTION_CONTRACTS.
-    const failureReason=[r.optionRejectionReason,r.contractLookupReason,r.decisionReason,r.rejectionReason,r.reason]
-      .map(v=>String(v??"").trim().toUpperCase()).find(Boolean)||"";
-    if(/NO_VALID_OPTION_CONTRACTS|INVALID_OPTION_CONTRACT|OPTION_CONTRACT_NOT_FOUND|MISSING_LIVE_OPTION_CONTRACT/.test(failureReason))return false;
+    // Only an explicit option-contract rejection is a hard exclusion here.
+    // Generic decisionReason/reason values (including WAIT_FOR_STOCK_TRIGGER
+    // and upstream NO_VALID_OPTION_CONTRACTS context) must not erase a strong
+    // directional WATCH row.
+    const hardContractFailure=[r.optionRejectionReason,r.contractLookupReason]
+      .map(v=>String(v??"").trim().toUpperCase());
+    if(hardContractFailure.some(reason=>/NO_VALID_OPTION_CONTRACTS|INVALID_OPTION_CONTRACT|OPTION_CONTRACT_NOT_FOUND|MISSING_LIVE_OPTION_CONTRACT/.test(reason)))return false;
     return true;
   }).sort(sortRows).map(r=>({...r,dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
