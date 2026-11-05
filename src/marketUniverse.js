@@ -122,7 +122,6 @@ async function getWholeNseUniverse(broker){
   if(!equities.length)throw new Error('No NSE equity symbols found in instrument master');
   const equityByKey=new Map();
   for(const equity of equityRows){const key=String(equity?.instrument_key??equity?.instrumentKey??'').trim(),symbol=normalizeSymbol(equity?.trading_symbol??equity?.tradingSymbol??equity?.symbol);if(key&&symbol)equityByKey.set(key,symbol);}
-  const optionUnderlyings=new Set();
   const equityInstrumentKeyBySymbol=new Map();
   const equityKeysBySymbol=new Map();
   for(const equity of equityRows){
@@ -131,10 +130,18 @@ async function getWholeNseUniverse(broker){
     if(!symbol||!key)continue;
     if(!equityKeysBySymbol.has(symbol))equityKeysBySymbol.set(symbol,new Set());
     equityKeysBySymbol.get(symbol).add(key);
-    if(!equityInstrumentKeyBySymbol.has(symbol))equityInstrumentKeyBySymbol.set(symbol,key);
   }
+  // Only unambiguous NSE_EQ symbols can be used as stock instrument identities.
+  for(const [symbol,keys] of equityKeysBySymbol){
+    if(keys.size===1)equityInstrumentKeyBySymbol.set(symbol,[...keys][0]);
+  }
+
+  // Keep raw F&O records indexed both ways for diagnostics. Option eligibility
+  // is derived only from a strict symbol + underlying_key match to NSE_EQ.
   const foRowsByUnderlyingKey=new Map();
   const foRowsByUnderlyingSymbol=new Map();
+  const exactOptionUnderlyings=new Set();
+  const foSymbolOnlyUnderlyings=new Set();
   for(const derivative of instruments.filter(isNseDerivative)){
     const underlyingKey=String(derivative?.underlying_key??derivative?.underlyingKey??derivative?.underlying_instrument_key??derivative?.underlyingInstrumentKey??'').trim();
     const symbol=getUnderlyingSymbol(derivative);
@@ -143,15 +150,21 @@ async function getWholeNseUniverse(broker){
       if(symbol)foRowsByUnderlyingKey.get(underlyingKey).add(symbol);
     }
     if(symbol){
-      optionUnderlyings.add(symbol);
+      foSymbolOnlyUnderlyings.add(symbol);
       if(!foRowsByUnderlyingSymbol.has(symbol))foRowsByUnderlyingSymbol.set(symbol,new Set());
       if(underlyingKey)foRowsByUnderlyingSymbol.get(symbol).add(underlyingKey);
     }
-    if(underlyingKey&&equityByKey.has(underlyingKey))optionUnderlyings.add(equityByKey.get(underlyingKey));
+    if(!underlyingKey||!symbol)continue;
+    const equitySymbol=equityByKey.get(underlyingKey);
+    if(equitySymbol&&equitySymbol===symbol&&equityInstrumentKeyBySymbol.get(symbol)===underlyingKey){
+      exactOptionUnderlyings.add(symbol);
+    }
   }
   return{
     name:'WHOLE_NSE',symbols:equities,universeSize:equities.length,
-    optionEligibleSymbols:[...optionUnderlyings],optionEligibleCount:optionUnderlyings.size,
+    optionEligibleSymbols:[...exactOptionUnderlyings].sort(),
+    optionEligibleCount:exactOptionUnderlyings.size,
+    foSymbolOnlyUnderlyings:[...foSymbolOnlyUnderlyings].sort(),
     equityInstrumentKeyBySymbol,equityKeysBySymbol,foRowsByUnderlyingKey,foRowsByUnderlyingSymbol,
     source:'Upstox complete NSE instrument master'
   };
