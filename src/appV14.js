@@ -166,10 +166,19 @@ function rankDashboard(rows){
   // WATCH is a stock-direction context tier, not an option-execution tier.
   // Keep strong directional rows even when option selection/qualification
   // failed, but suppress explicit hard failures of contract identity/data.
-  const watch=source.filter(r=>r&&typeof r==="object"&&!["NIFTY","NIFTY 50"].includes(key(r))&&directionValid(r)&&
-    !tradeKeys.has(key(r))&&
-    r?.optionContractIdentityValid!==false&&r?.optionLiveDataAvailable!==false&&
-    Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE)
+  const watch=source.filter(r=>{
+    if(!r||typeof r!=="object"||["NIFTY","NIFTY 50"].includes(key(r))||!directionValid(r)||tradeKeys.has(key(r)))return false;
+    // Explicit contract failures are hard exclusions. Missing/false live
+    // option flags alone do not erase a valid stock-direction WATCH context.
+    const hardContractFailure=[r?.optionRejectionReason,r?.contractLookupReason]
+      .map(v=>String(v??"").trim().toUpperCase());
+    if(hardContractFailure.some(reason=>/NO_VALID_OPTION_CONTRACTS|INVALID_OPTION_CONTRACT|OPTION_CONTRACT_NOT_FOUND|MISSING_LIVE_OPTION_CONTRACT/.test(reason)))return false;
+    const explicitDecision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
+    const hasDecisionContext=Boolean(String(r?.decisionReason??"").trim());
+    if(explicitDecision==="REJECT"&&!hasDecisionContext&&
+      (r?.optionContractIdentityValid===false||r?.optionLiveDataAvailable===false))return false;
+    return Math.max(optionScore(r),Math.abs(num(r.scannerScore)),Math.abs(num(r.score)))>=DASHBOARD_MIN_SCORE;
+  })
     .sort(sortRows)
     .map(r=>({...sanitizeOptionRow(r),dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
