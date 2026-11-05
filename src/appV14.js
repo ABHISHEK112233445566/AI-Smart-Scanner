@@ -124,9 +124,21 @@ function validOptionRow(r){
     r?.stockQuoteStale===false&&Number.isFinite(stockQuoteAge)&&stockQuoteAge>=0&&stockQuoteAge<=120000;
   const optionQuoteAge=Number(r?.optionQuoteAgeMs);
   const optionQuoteFresh=r?.optionQuoteStale===false&&Number.isFinite(optionQuoteAge)&&optionQuoteAge>=0&&optionQuoteAge<=120000;
-  // Option premium SL/targets intentionally remain blank unless independently
-  // supported by real option-candle structure. Trade risk/targets are the
-  // verified underlying stock levels above, not synthetic premium estimates.
+  // A long CE/PE trade requires independently verified option-premium
+  // support/resistance from the selected contract's 5-minute OHLC candles.
+  // Underlying stock RR must never substitute for missing option-premium RR.
+  const premiumSetup=r?.optionPremiumSetup&&typeof r.optionPremiumSetup==="object"?r.optionPremiumSetup:{};
+  const premiumEntry=firstPositive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);
+  const premiumStop=firstPositive(r?.optionPremiumStopLoss,premiumSetup.stopLoss);
+  const premiumTarget=firstPositive(r?.optionPremiumTarget1,premiumSetup.target1);
+  const premiumRisk=premiumEntry-premiumStop;
+  const premiumReward=premiumTarget-premiumEntry;
+  const calculatedPremiumRR=premiumRisk>0&&premiumReward>0?premiumReward/premiumRisk:0;
+  const premiumStructureValid=premiumSetup.valid===true&&
+    String(premiumSetup.levelSource??r?.optionPremiumLevelsSource??"").trim().toUpperCase()==="OPTION_5M_OHLC_SWINGS"&&
+    num(premiumSetup.candlesUsed??r?.optionPremiumCandlesUsed)>=7&&
+    premiumEntry>0&&premiumStop>0&&premiumTarget>premiumEntry&&
+    calculatedPremiumRR>=1.5&&num(premiumSetup.riskReward??r?.optionPremiumRiskReward)>=1.5;
   const tradeConfidence=firstPositive(r?.tradeConfidence,r?.optionsConfidence,r?.confidence);
   const scannerStrength=firstPositive(r?.scannerStrength,r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.scannerScore,r?.score);
   const stockRR=firstPositive(r?.stockRiskReward,r?.riskReward);
@@ -139,7 +151,7 @@ function validOptionRow(r){
     instrumentIdentityValid&&decision==="TRADE"&&r?.pipeline?.optionsTradeGatePassed===true&&
     r?.gates?.tradePassed===true&&tradeConfidence>=85&&scannerStrength>=85&&stockRR>=1.5&&
     identityValid&&quoteValid&&optionQuoteFresh&&liquidityValid&&directionValid&&stockLevelsValid&&stockQuoteFresh&&
-    r?.marketSessionOpen===true&&r?.intradayTrigger===true&&r?.volumeConfirmed5===true&&
+    premiumStructureValid&&r?.marketSessionOpen===true&&r?.intradayTrigger===true&&r?.volumeConfirmed5===true&&
     oiAligned&&r?.oiConflict!==true&&r?.explicitDirectionConflict!==true;
 }
 function sanitizeOptionRow(r){if(validOptionRow(r)){const ltp=firstPositive(r?.optionPremiumEntry,r?.optionLTP,r?.optionLtp);return{...r,optionEligible:true,optionDataValid:true,optionEntry:ltp,optionPremiumEntry:ltp,entryPrice:ltp,stockEntry:firstPositive(r?.stockEntry,r?.underlyingEntry,r?.price)};}const side=String(r?.optionType??"").trim().toUpperCase();const expected=side==="CALL"||side==="CE"?"CE":side==="PUT"||side==="PE"?"PE":"";const ltp=firstPositive(r?.optionLTP,r?.optionLtp,r?.optionPremiumEntry);const informationalQuote=r?.optionContractIdentityValid===true&&r?.optionLiveDataAvailable===true&&ltp>0;return{...r,optionsDecision:"WATCH",decision:"WATCH",optionEligible:false,optionDataValid:false,optionRejectionReason:[r?.contractLookupReason,r?.rejectionReason,r?.optionRejectionReason,(String(r?.decisionReason??"").trim().toUpperCase()==="NO_VALID_OPTION_CONTRACTS"?"":r?.decisionReason),r?.reason].find(v=>String(v??"").trim())||"OPTION_NOT_READY",optionSymbol:informationalQuote?(r.optionSymbol||""):"",recommendedStrike:informationalQuote?(r.recommendedStrike??null):null,atmStrike:informationalQuote?(r.atmStrike??null):null,optionExpiry:informationalQuote?(r.optionExpiry??null):null,optionInstrumentKey:informationalQuote?(r.optionInstrumentKey||""):"",optionLiquidityContractData:informationalQuote?(r.optionLiquidityContractData||null):null,optionLiquiditySide:expected,optionPremiumEntry:informationalQuote?ltp:0,optionPremiumStopLoss:informationalQuote?(num(r.optionPremiumStopLoss)||0):0,optionPremiumTarget1:informationalQuote?(num(r.optionPremiumTarget1)||0):0,optionPremiumTarget2:informationalQuote?(num(r.optionPremiumTarget2)||0):0,optionPremiumRisk:informationalQuote?(num(r.optionPremiumRisk)||0):0,optionPremiumReward:informationalQuote?(num(r.optionPremiumReward)||0):0,optionPremiumRiskReward:informationalQuote?(num(r.optionPremiumRiskReward)||0):0,optionVolume:informationalQuote?(num(r.optionVolume)||0):0,optionOI:informationalQuote?(num(r.optionOI)||0):0,optionPreviousOI:informationalQuote?(num(r.optionPreviousOI)||0):0,optionOIChange:informationalQuote?(num(r.optionOIChange)||0):0,optionOIChangePercent:informationalQuote?(num(r.optionOIChangePercent)||0):0,optionLiveDataAvailable:informationalQuote,optionLiquidityConfirmed:informationalQuote&&r.optionLiquidityConfirmed===true,optionLiquidityVolume:informationalQuote?(num(r.optionLiquidityVolume)||0):0,optionLiquidityOI:informationalQuote?(num(r.optionLiquidityOI)||0):0,optionContractIdentityValid:informationalQuote,optionEntry:informationalQuote?ltp:0,entryPrice:informationalQuote?ltp:0};}
