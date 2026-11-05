@@ -58,6 +58,12 @@ const trade={
   optionPremiumTarget1:22.04,
   optionPremiumTarget2:26.6,
   optionPremiumRiskReward:1.5,
+  optionPremiumSetup:{
+    valid:true,entry:15.2,stopLoss:10.64,target1:22.04,target2:26.6,
+    riskReward:1.5,levelSource:"OPTION_5M_OHLC_SWINGS",candlesUsed:150
+  },
+  optionPremiumLevelsSource:"OPTION_5M_OHLC_SWINGS",
+  optionPremiumCandlesUsed:150,
   tradeConfidence:90,
   scannerStrength:90,
   volumeConfirmed5:true,
@@ -102,7 +108,10 @@ assert.strictEqual(validOptionRow({...trade,oiDataAvailable:false}),false,"missi
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContract:"KEY_B",optionLiquidityContractData:{instrument_key:"KEY_A",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"liquidity contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"embedded contract key must match selected option instrument");
 assert.strictEqual(validOptionRow({...trade,optionInstrumentKey:"KEY_A",optionLiquidityContractData:{instrument_key:"KEY_B",instrument_type:"CE",trading_symbol:"TEST CE"}}),false,"mismatched embedded option instrument key must be rejected");
-assert.strictEqual(validOptionRow({...trade,optionPremiumStopLoss:0,optionPremiumTarget1:0,optionPremiumTarget2:0,optionPremiumRiskReward:0}),true,"verified underlying stock SL/targets must validate a trade without synthetic option premium targets");
+assert.strictEqual(validOptionRow({...trade,optionPremiumStopLoss:0,optionPremiumTarget1:0,optionPremiumTarget2:0,optionPremiumRiskReward:0,optionPremiumSetup:{valid:false,reason:"NO_REAL_OPTION_PREMIUM_RESISTANCE",levelSource:"OPTION_5M_OHLC_SWINGS",candlesUsed:150}}),false,"underlying stock RR must never substitute for missing real option-premium structure");
+assert.strictEqual(validOptionRow({...trade,optionPremiumSetup:{...trade.optionPremiumSetup,levelSource:"MATH_ONLY"}}),false,"math-only option premium levels must never qualify");
+assert.strictEqual(validOptionRow({...trade,optionPremiumSetup:{...trade.optionPremiumSetup,candlesUsed:3}}),false,"insufficient option 5m candles must never qualify");
+assert.strictEqual(validOptionRow({...trade,optionPremiumSetup:{...trade.optionPremiumSetup,riskReward:1.2}}),false,"option premium RR below 1.5 must never qualify");
 
 const strictTradePayload=buildDashboardPayload([trade]);
 assert.strictEqual(strictTradePayload.rows.length,1,"a fully validated TRADE should enter Dashboard");
