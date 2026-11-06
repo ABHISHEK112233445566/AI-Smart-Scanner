@@ -25,6 +25,10 @@ assert.strictEqual(daily.volumePaceRatio5,null,
   "daily candles must not be assigned an intraday volume pace");
 assert.strictEqual(daily.vwap,null,
   "a daily candle typical price must not be mislabeled as VWAP");
+assert.ok(Number.isFinite(daily.obvChange),
+  "OBV change must be calculated from consecutive OBV values");
+assert.strictEqual(daily.obvTrend,"BULLISH",
+  "rising OBV in the fixture must expose a bullish directional signal");
 
 const intraday=calculateIndicators(intradaySessions(150,6));
 assert.strictEqual(intraday.avgVolume5,null,
