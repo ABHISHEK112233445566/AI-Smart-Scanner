@@ -21,7 +21,6 @@ async function getFastTradingUniverse(broker,nifty500Symbols){
   const candidates=[...new Set((Array.isArray(nifty500Symbols)?nifty500Symbols:[]).map(normalizeSymbol).filter(Boolean))].sort();
   if(!candidates.length)throw new Error('NIFTY 500 candidate universe is empty; refusing to use a fallback stock list');
   const master=await getWholeNseUniverse(broker);
-  const candidateSet=new Set(candidates);
   const configuredInstrumentAudit=candidates.map(symbol=>{
     const equityKeys=[...(master.equityKeysBySymbol?.get(symbol)||[])].sort();
     const equityKey=equityKeys.length===1?equityKeys[0]:null;
