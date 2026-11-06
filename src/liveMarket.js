@@ -3,7 +3,7 @@ const axios=require("axios");
 const UPSTOX_BASE="https://api.upstox.com";
 const MAX_TOP_STOCKS=20;
 const TOP_NSE_STOCKS=500;
-const TOP_OPTION_STOCKS=220;
+const TOP_OPTION_STOCKS=500;
 const MIN_VOLUME=1;
 const MIN_OI=1;
 const MIN_OPTION_VOLUME=Math.max(1,Number(process.env.MIN_OPTION_VOLUME||5000));
@@ -25,9 +25,45 @@ let equityKeyCache=null;
 let equityKeyCacheSource=null;
 let equityKeyCachePromise=null;
 function isNseEquity(i){const segment=String(i?.segment||"").toUpperCase();const exchange=String(i?.exchange||"").toUpperCase();const type=String(i?.instrument_type||"").toUpperCase();return segment==="NSE_EQ"||(exchange==="NSE"&&type==="EQ");}
-function buildEquityKeyMap(instruments){const map=new Map();for(const i of Array.isArray(instruments)?instruments:[]){if(!isNseEquity(i))continue;const key=String(i?.instrument_key||i?.instrumentKey||"").trim();const symbol=normalizeSymbol(i?.trading_symbol??i?.tradingSymbol??i?.symbol);if(key&&symbol&&!map.has(symbol))map.set(symbol,key);}return map;}
-async function getEquityKeyMap(broker){if(!broker)throw new Error("Broker is required for live-volume ranking");if(equityKeyCache&&equityKeyCacheSource===broker)return equityKeyCache;if(equityKeyCachePromise&&equityKeyCacheSource===broker)return equityKeyCachePromise;equityKeyCacheSource=broker;equityKeyCachePromise=(async()=>{let instruments=null;if(typeof broker.loadInstruments==="function")instruments=await broker.loadInstruments();if(Array.isArray(instruments)&&instruments.length){const map=buildEquityKeyMap(instruments);if(map.size){equityKeyCache=map;return map;}}return null;})();try{const map=await equityKeyCachePromise;if(map)return map;}finally{equityKeyCachePromise=null;}return null;}
-async function resolveEquityKeys(symbols,broker){const source=[...new Set((symbols||[]).map(normalizeSymbol).filter(Boolean))];const map=await getEquityKeyMap(broker);if(map){const rows=[];for(const symbol of source){const key=map.get(symbol);if(key)rows.push({symbol,key});}return rows;}const rows=[];for(const symbol of source){try{const instrument=await broker.getInstrument(symbol);const key=instrument?.instrument_key||instrument?.instrumentKey||null;if(key)rows.push({symbol,key});}catch(_){} }return rows;}
+function buildEquityKeyMap(instruments){
+ const keysBySymbol=new Map();
+ for(const i of Array.isArray(instruments)?instruments:[]){
+  if(!isNseEquity(i))continue;
+  const key=String(i?.instrument_key||i?.instrumentKey||"").trim();
+  const symbol=normalizeSymbol(i?.trading_symbol??i?.tradingSymbol??i?.symbol);
+  if(!key||!symbol)continue;
+  if(!keysBySymbol.has(symbol))keysBySymbol.set(symbol,new Set());
+  keysBySymbol.get(symbol).add(key);
+ }
+ const map=new Map();
+ for(const [symbol,keys] of keysBySymbol)if(keys.size===1)map.set(symbol,[...keys][0]);
+ const duplicateSymbols=[...keysBySymbol].filter(([,keys])=>keys.size>1).map(([symbol])=>symbol).sort();
+ return{map,duplicateSymbols,ambiguousCount:duplicateSymbols.length};
+}
+async function getEquityKeyMap(broker){
+ if(!broker)throw new Error("Broker is required for live-volume ranking");
+ if(equityKeyCache&&equityKeyCacheSource===broker)return equityKeyCache;
+ if(equityKeyCachePromise&&equityKeyCacheSource===broker)return equityKeyCachePromise;
+ equityKeyCacheSource=broker;
+ equityKeyCachePromise=(async()=>{
+  if(typeof broker.loadInstruments!=="function")throw new Error("Broker cannot load instrument master");
+  const instruments=await broker.loadInstruments();
+  if(!Array.isArray(instruments)||!instruments.length)throw new Error("Upstox NSE instrument master is empty");
+  const built=buildEquityKeyMap(instruments);
+  if(!built.map.size)throw new Error("No unambiguous NSE_EQ instrument keys found");
+  equityKeyCache=built.map;
+  if(built.ambiguousCount)console.warn("AMBIGUOUS NSE_EQ SYMBOLS EXCLUDED: "+built.duplicateSymbols.join(", "));
+  return built.map;
+ })();
+ try{return await equityKeyCachePromise;}finally{equityKeyCachePromise=null;}
+}
+async function resolveEquityKeys(symbols,broker){
+ const source=[...new Set((symbols||[]).map(normalizeSymbol).filter(Boolean))];
+ const map=await getEquityKeyMap(broker),rows=[],missing=[];
+ for(const symbol of source){const key=map.get(symbol);if(key)rows.push({symbol,key});else missing.push(symbol);}
+ if(missing.length)console.warn("NIFTY 500 SYMBOLS WITHOUT UNIQUE NSE_EQ KEY: "+missing.join(", "));
+ return rows;
+}
 async function rankByLiveVolume(symbols,broker,limit){const started=Date.now();const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];const resolved=await resolveEquityKeys(source,broker);if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");let quotes=[];const chunkSize=450;for(let i=0;i<resolved.length;i+=chunkSize){const chunk=resolved.slice(i,i+chunkSize);const result=await upstoxFullQuotes(chunk.map(x=>x.key));const byKey=new Map(result.map(q=>[q.instrumentKey,q]));for(const item of chunk){const q=byKey.get(item.key);if(q)quotes.push({symbol:item.symbol,instrumentKey:item.key,...q});}}const valid=quotes.filter(q=>q.price>0&&q.volume>=MIN_VOLUME);if(!valid.length)throw new Error("Live market volume unavailable for scanner universe");valid.sort((a,b)=>(b.volume-a.volume)||(b.price-a.price));const top=valid.slice(0,Math.min(limit,valid.length)).map((q,index)=>({...q,liveVolumeRank:index+1,volumeConfirmed:q.volume>=MIN_VOLUME,liveMarketConfirmed:true,liveQuoteTimestamp:q.timestamp||q.lastTradeTime||null}));console.log(`⚡ LIVE VOLUME RANKING: ${source.length} symbols → ${resolved.length} keys → ${valid.length} live quotes → Top ${top.length} in ${((Date.now()-started)/1000).toFixed(1)}s`);return{top,allQuotes:valid,universeSize:source.length};}
 async function getTop500ByLiveVolume(symbols,broker,limit=TOP_NSE_STOCKS){return rankByLiveVolume(symbols,broker,Math.min(TOP_NSE_STOCKS,Math.max(1,limit)));}
 function getTopMovers(rows,limit=100){const valid=(Array.isArray(rows)?rows:[]).filter(r=>n(r?.price)>0&&n(r?.previousClose)>0&&n(r?.volume)>=MIN_VOLUME).map(r=>({...r,changePercent:((n(r.price)-n(r.previousClose))/n(r.previousClose))*100}));const gainers=[...valid].sort((a,b)=>(b.changePercent-a.changePercent)||(b.volume-a.volume)).slice(0,limit);const losers=[...valid].sort((a,b)=>(a.changePercent-b.changePercent)||(b.volume-a.volume)).slice(0,limit);const map=new Map();for(const r of [...gainers,...losers])map.set(normalizeSymbol(r.symbol),r);return[...map.values()];}
