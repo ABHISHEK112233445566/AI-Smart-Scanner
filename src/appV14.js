@@ -229,13 +229,19 @@ async function main(){const started=new Date();console.log("=== AI SMART SCANNER
 const dividendSymbols=[...DIVIDEND_LONG_TERM_SYMBOLS];const dividendScan=await scanInBatches(dividendSymbols);dividendRows=[...dividendScan.allResults];console.log(`EQUITY PIPELINE: Complete F&O live ranking → protected Top-50 scan → Top-20 output | rows=${equityTop20.length}`);}else{console.log("EQUITY SCAN: OFF — equity scan and dividend scan skipped; options pipeline unchanged.");}const optionLiveRanking=await getTop500ByLiveVolume(optionUniverseSymbols,broker,optionUniverseSymbols.length);const liveOptionRows=Array.isArray(optionLiveRanking?.top)?optionLiveRanking.top:[];if(!liveOptionRows.length)throw new Error("Live F&O option-universe ranking returned no stocks");console.log(`LIVE F&O OPTION COVERAGE: ${liveOptionRows.length}/${optionUniverseSymbols.length} underlyings have live quotes`);
 const fnoSymbolSet=new Set(optionUniverseSymbols);
 const configuredLiveRows=liveOptionRows.filter(r=>fnoSymbolSet.has(key(r)));
-const liveMoverSource=(Array.isArray(liveFnoRows)?liveFnoRows:[]).filter(r=>fnoSymbolSet.has(key(r)));
-const topMoverUniverse=getTopMovers(liveMoverSource,Math.max(20,Number(process.env.TOP_MOVER_SCAN_POOL||30)));
+// Discover movers across the complete live-quoted NIFTY 500 first. Then
+// enforce the same exact NSE_EQ/NSE_FO eligibility gate before adding them
+// to the options pipeline. This keeps non-F&O movers visible in diagnostics
+// without allowing them into option contract analysis.
+const liveMoverSource=Array.isArray(liveFnoRows)?liveFnoRows:[];
+const rawTopMoverUniverse=getTopMovers(liveMoverSource,Math.max(20,Number(process.env.TOP_MOVER_SCAN_POOL||30)));
+const topMoverUniverse=rawTopMoverUniverse.filter(r=>fnoSymbolSet.has(key(r)));
+const rejectedTopMovers=rawTopMoverUniverse.filter(r=>!fnoSymbolSet.has(key(r)));
 const optionRowMap=new Map(configuredLiveRows.map(r=>[key(r),r]));
 for(const mover of topMoverUniverse){const k=key(mover);if(k&&!optionRowMap.has(k))optionRowMap.set(k,mover);}
 const optionUniverseRows=[...optionRowMap.values()];
-console.log("OPTIONS INPUT: configured F&O live quotes="+configuredLiveRows.length+" | verified F&O top movers="+topMoverUniverse.length+" | combined unique="+optionUniverseRows.length);
-console.log("TOP MOVER UNIVERSE: "+topMoverUniverse.length+" | F&O verified and included in complete options scan=ON");
+console.log("OPTIONS INPUT: NIFTY500 F&O live quotes="+configuredLiveRows.length+" | NIFTY500 raw top movers="+rawTopMoverUniverse.length+" | exact F&O-eligible movers="+topMoverUniverse.length+" | non-F&O movers rejected="+rejectedTopMovers.length+" | combined unique="+optionUniverseRows.length);
+console.log("TOP MOVER UNIVERSE: discovered across NIFTY 500="+rawTopMoverUniverse.length+" | F&O verified and included="+topMoverUniverse.length+" | excluded without verified stock options="+rejectedTopMovers.length);
 const topMoverKeys=new Set(topMoverUniverse.map(r=>key(r)).filter(Boolean));
 const optionSymbols=[...new Set(optionUniverseRows.map(r=>key(r)).filter(Boolean))];
 const fullOptionScan=await scanInBatches(optionSymbols);
