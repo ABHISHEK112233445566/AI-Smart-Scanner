@@ -80,3 +80,22 @@ function mobileScannerEditTrigger(e) {
 function testMobileScannerTrigger() {
   return startScannerFromSheet();
 }
+
+
+// Starts the GitHub Actions scanner workflow. Configure Script Property
+// GITHUB_TOKEN with a fine-grained token that has Actions: write permission.
+function startScannerFromSheet() {
+  var token = PropertiesService.getScriptProperties().getProperty("GITHUB_TOKEN");
+  if (!token) throw new Error("Missing Script Property GITHUB_TOKEN. Add a GitHub token with Actions: write permission.");
+  var url = "https://api.github.com/repos/ABHISHEK112233445566/AI-Smart-Scanner/actions/workflows/scanner.yml/dispatches";
+  var response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+    payload: JSON.stringify({ ref: "master" }),
+    muteHttpExceptions: true
+  });
+  var code = response.getResponseCode();
+  if (code !== 204) throw new Error("GitHub Actions dispatch failed (HTTP " + code + "): " + response.getContentText().slice(0, 300));
+  return "GitHub Actions scanner workflow dispatched successfully.";
+}
