@@ -54,9 +54,11 @@ function isStrictTradeCandidate(option) {
        safeNumber(premiumSetup.riskReward??option.optionPremiumRiskReward)<1.5)return false;
     const oiMood = String(option.oiMood ?? "").trim().toUpperCase(), oiSentiment = String(option.oiSentiment ?? "").trim().toUpperCase();
     const typeForOI = getOptionType(option);
-    const oiAligned = option.oiDataAvailable === true && (typeForOI === "CALL"
-        ? oiSentiment === "BULLISH" || ["LONG BUILDUP", "SHORT COVERING"].includes(oiMood)
-        : oiSentiment === "BEARISH" || ["SHORT BUILDUP", "LONG UNWINDING"].includes(oiMood));
+    const oiOpposes = typeForOI === "CALL"
+        ? oiSentiment === "BEARISH" || ["SHORT BUILDUP", "LONG UNWINDING"].includes(oiMood)
+        : oiSentiment === "BULLISH" || ["LONG BUILDUP", "SHORT COVERING"].includes(oiMood);
+    // Neutral OI is not a conflict. Missing OI and opposing OI still fail.
+    const oiAligned = option.oiDataAvailable === true && !oiOpposes;
     if (!oiAligned) return false;
     if (option.marketSessionOpen !== true || option.liveStockQuoteAvailable !== true || option.liveMarketConfirmed !== true || option.stockQuoteStale !== false) return false;
     if (option.intradayTrigger !== true || option.volumeConfirmed5 !== true) return false;
