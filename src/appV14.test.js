@@ -5,7 +5,16 @@ const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require("./scanner");
 
-// NIFTY 500 equity universe regression: scanning must not truncate to the former Top-50 pool.\nconst nifty500Mock=Array.from({length:500},(_,i)=>({symbol:`NIFTY500_${String(i+1).padStart(3,"0")}`,stock:`NIFTY500_${String(i+1).padStart(3,"0")}`,price:100+i,volume:500000-i,instrumentKey:`NSE_EQ|KEY_${i+1}`,liveVolumeRank:i+1}));\nconst fullNifty500EquityCandidates=buildEquityCandidates(nifty500Mock);\nassert.strictEqual(fullNifty500EquityCandidates.length,500,"all 500 live-quoted NIFTY 500 constituents must enter the equity technical scan");\nassert.strictEqual(fullNifty500EquityCandidates[499].symbol,"NIFTY500_500","the lowest-volume valid constituent must not be removed by a Top-50 cutoff");\nassert.strictEqual(buildEquityCandidates([...nifty500Mock,{symbol:"NO_PRICE",price:0,instrumentKey:"NSE_EQ|NO_PRICE"},{symbol:"NO_KEY",price:100,instrumentKey:""}]).length,500,"rows without a valid price or NSE equity instrument key must not enter technical scanning");\n\n// Intraday readiness must never be confirmed outside NSE cash-market hours.
+// NIFTY 500 coverage regression: all constituents remain visible, while only
+// rows with valid price, volume and instrument identity are technical-scan ready.
+const nifty500Mock=Array.from({length:500},(_,i)=>({symbol:`NIFTY500_${String(i+1).padStart(3,"0")}`,stock:`NIFTY500_${String(i+1).padStart(3,"0")}`,price:100+i,volume:500000-i,instrumentKey:`NSE_EQ|KEY_${i+1}`,liveVolumeRank:i+1,dataStatus:"LIVE_DATA_AVAILABLE"}));
+const fullNifty500EquityCandidates=buildEquityCandidates(nifty500Mock);
+assert.strictEqual(fullNifty500EquityCandidates.length,500,"all NIFTY 500 constituents must remain in the equity coverage set");
+assert.strictEqual(fullNifty500EquityCandidates[499].symbol,"NIFTY500_500","the lowest-volume valid constituent must not be removed by a Top-50 cutoff");
+const withMissingData=buildEquityCandidates([...nifty500Mock,{symbol:"NO_PRICE",price:0,volume:0,instrumentKey:"NSE_EQ|NO_PRICE",dataStatus:"INVALID_PRICE"},{symbol:"NO_KEY",price:100,volume:0,instrumentKey:"",dataStatus:"INSTRUMENT_KEY_MISSING"}]);
+assert.strictEqual(withMissingData.length,502,"constituents with unavailable data must remain visible for diagnostics");
+assert.strictEqual(withMissingData.find(r=>r.symbol==="NO_PRICE").dataStatus,"INVALID_PRICE");
+assert.strictEqual(withMissingData.find(r=>r.symbol==="NO_KEY").dataStatus,"INSTRUMENT_KEY_MISSING");\n\n// Intraday readiness must never be confirmed outside NSE cash-market hours.
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
   "Saturday evening in India must be treated as a closed market");
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T03:00:00.000Z")),false,
