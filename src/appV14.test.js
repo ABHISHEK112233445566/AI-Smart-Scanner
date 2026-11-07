@@ -37,7 +37,9 @@ const uniqueKeyMap=buildEquityKeyMap([
   {segment:"NSE_EQ",trading_symbol:"DUP",instrument_key:"NSE_EQ|DUP2"}
 ]);
 assert.strictEqual(uniqueKeyMap.get("ABC"),"NSE_EQ|ABC");
-assert.strictEqual(uniqueKeyMap.has("DUP"),false,"ambiguous NSE_EQ instrument keys must not be silently selected");\n\n// Intraday readiness must never be confirmed outside NSE cash-market hours.
+assert.strictEqual(uniqueKeyMap.has("DUP"),false,"ambiguous NSE_EQ instrument keys must not be silently selected");
+
+// Intraday readiness must never be confirmed outside NSE cash-market hours.
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
   "Saturday evening in India must be treated as a closed market");
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T03:00:00.000Z")),false,
