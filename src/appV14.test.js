@@ -1,6 +1,7 @@
 const assert=require("assert");
 const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates,mergeBySymbol}=require("./appV14");
 const {buildEquityCandidates}=require("./appV14");
+const {buildLiveQuoteCoverage,buildEquityKeyMap}=require("./liveMarket");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require("./scanner");
@@ -14,7 +15,29 @@ assert.strictEqual(fullNifty500EquityCandidates[499].symbol,"NIFTY500_500","the 
 const withMissingData=buildEquityCandidates([...nifty500Mock,{symbol:"NO_PRICE",price:0,volume:0,instrumentKey:"NSE_EQ|NO_PRICE",dataStatus:"INVALID_PRICE"},{symbol:"NO_KEY",price:100,volume:0,instrumentKey:"",dataStatus:"INSTRUMENT_KEY_MISSING"}]);
 assert.strictEqual(withMissingData.length,502,"constituents with unavailable data must remain visible for diagnostics");
 assert.strictEqual(withMissingData.find(r=>r.symbol==="NO_PRICE").dataStatus,"INVALID_PRICE");
-assert.strictEqual(withMissingData.find(r=>r.symbol==="NO_KEY").dataStatus,"INSTRUMENT_KEY_MISSING");\n\n// Intraday readiness must never be confirmed outside NSE cash-market hours.
+
+assert.strictEqual(withMissingData.find(r=>r.symbol==="NO_KEY").dataStatus,"INSTRUMENT_KEY_MISSING");
+
+const quoteCoverage=buildLiveQuoteCoverage(
+  ["ABC","NO_KEY","NO_QUOTE","NO_PRICE","ZERO_VOL"],
+  [{symbol:"ABC",key:"NSE_EQ|ABC"},{symbol:"NO_QUOTE",key:"NSE_EQ|NO_QUOTE"},{symbol:"NO_PRICE",key:"NSE_EQ|NO_PRICE"},{symbol:"ZERO_VOL",key:"NSE_EQ|ZERO_VOL"}],
+  [
+    {instrumentKey:"NSE_EQ|ABC",price:100,volume:1000},
+    {instrumentKey:"NSE_EQ|NO_PRICE",price:0,volume:100},
+    {instrumentKey:"NSE_EQ|ZERO_VOL",price:200,volume:0}
+  ],
+  ["NSE_EQ|NO_QUOTE"]
+);
+assert.deepStrictEqual(quoteCoverage.map(r=>r.dataStatus),[
+  "LIVE_DATA_AVAILABLE","INSTRUMENT_KEY_MISSING","QUOTE_REQUEST_FAILED","INVALID_PRICE","ZERO_VOLUME"
+],"each NIFTY constituent must receive an explicit live-data status");
+const uniqueKeyMap=buildEquityKeyMap([
+  {segment:"NSE_EQ",trading_symbol:"ABC",instrument_key:"NSE_EQ|ABC"},
+  {segment:"NSE_EQ",trading_symbol:"DUP",instrument_key:"NSE_EQ|DUP1"},
+  {segment:"NSE_EQ",trading_symbol:"DUP",instrument_key:"NSE_EQ|DUP2"}
+]);
+assert.strictEqual(uniqueKeyMap.get("ABC"),"NSE_EQ|ABC");
+assert.strictEqual(uniqueKeyMap.has("DUP"),false,"ambiguous NSE_EQ instrument keys must not be silently selected");\n\n// Intraday readiness must never be confirmed outside NSE cash-market hours.
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
   "Saturday evening in India must be treated as a closed market");
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-11-02T03:00:00.000Z")),false,
