@@ -100,7 +100,9 @@ function selectDashboardRows(rows=[]){
     (positive(b.tradeConfidence,b.optionsConfidence,b.confidence)-positive(a.tradeConfidence,a.optionsConfidence,a.confidence))||
     (positive(b.stockRiskReward,b.riskReward)-positive(a.stockRiskReward,a.riskReward));
   const directional=list.filter(r=>{
-    if(niftyName(r)||r.oiConflict===true||r.explicitDirectionConflict===true)return false;
+    const decision=String(r?.optionsDecision??r?.decision??"").trim().toUpperCase();
+    const rating=String(r?.rating??r?.aiRating??r?.signal??"").trim().toUpperCase();
+    if(decision==="REJECT"||rating==="AVOID"||rating.includes("AVOID")||niftyName(r)||r.oiConflict===true||r.explicitDirectionConflict===true)return false;
     // An explicit NEUTRAL/SIDEWAYS primary direction overrides secondary
     // directional hints; do not turn conflicting metadata into a candidate.
     const primaryDirection=String(r.direction??"").trim().toUpperCase();
@@ -126,7 +128,9 @@ function selectDashboardRows(rows=[]){
     return true;
   }).sort(sortRows).map(r=>({...r,dashboardContextOnly:true,optionsDecision:"WATCH",decision:"WATCH",
       optionEligible:false,optionDataValid:false}));
-  const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0);
+  const nifty=list.find(r=>niftyName(r)&&positive(r.stockPrice,r.price,r.currentPrice,r.livePrice)>0&&
+    String(r?.optionsDecision??r?.decision??"").trim().toUpperCase()!=="REJECT"&&
+    !String(r?.rating??r?.aiRating??r?.signal??"").trim().toUpperCase().includes("AVOID"));
   const selected=[...trades.slice(0,nifty?4:5)];
   for(const row of watches){if(selected.length>=(nifty?4:5))break;selected.push(row);}
   if(nifty)selected.push(validTrade(nifty)?nifty:{...nifty,dashboardContextOnly:true});
@@ -159,7 +163,7 @@ function dashboardRow(r={}){
 function clean(v){if(v==null)return'';if(typeof v==='number')return Number.isFinite(v)?v:'';if(typeof v==='boolean')return v;if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function toIST(v){if(!v)return'';const d=v instanceof Date?new Date(v.getTime()):new Date(v);if(Number.isNaN(d.getTime()))return String(v);const p=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(d).reduce((o,x)=>(o[x.type]=x.value,o),{});return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} IST`;}
 function buildSheetPayload(sheet,objects=[]){const rows=(Array.isArray(objects)?objects:[]).filter(Boolean).map(addOIMood),headers=[];const seen=new Set();REQUIRED_OI_HEADERS.forEach(h=>{seen.add(h);headers.push(h);});rows.forEach(r=>Object.keys(r).forEach(k=>{if(!seen.has(k)){seen.add(k);headers.push(k);}}));return{action:'replaceSheet',sheet,clearFirst:true,headers,rows:rows.map(r=>headers.map(h=>/date|expiry|timestamp|updatedat|lasttradetime/i.test(h)&&(r[h]===0||r[h]==='0'||r[h]===null||r[h]===undefined||r[h]==='')?'':h==='score'||h==='finalScore'||h==='rankingScore'||h==='aiFinalScore'?Math.max(-100,Math.min(100,Number(r[h])||0)):clean(r[h]))),timestamp:new Date().toISOString()};}
-function buildDashboardPayload(rows=[]){const selected=selectDashboardRows(rows).map(r=>{const decision=String(r.optionsDecision??r.decision??'').trim().toUpperCase();return dashboardRow(decision==='REJECT'?{...r,optionsDecision:'WATCH',decision:'WATCH',optionEligible:false,optionDataValid:false}:r);});if(!selected.length)selected.push(dashboardRow({stock:'NO CURRENT DIRECTIONAL CANDIDATE',symbol:'NO CURRENT DIRECTIONAL CANDIDATE',optionsDecision:'WATCH',decision:'WATCH',optionEligible:false,optionDataValid:false,optionRejectionReason:'NO_DIRECTIONAL_CANDIDATE_PASSED_MINIMUM_SCORE_OR_DIRECTION_GATES'}));return{action:'replaceSheet',sheet:'Dashboard',clearFirst:true,headers:DASHBOARD_HEADERS,rows:selected.map(r=>DASHBOARD_HEADERS.map(h=>clean(r[h]))),timestamp:new Date().toISOString()};}
+function buildDashboardPayload(rows=[]){const selected=selectDashboardRows(rows).map(r=>dashboardRow(r));if(!selected.length)selected.push(dashboardRow({stock:'NO CURRENT DIRECTIONAL CANDIDATE',symbol:'NO CURRENT DIRECTIONAL CANDIDATE',optionsDecision:'WATCH',decision:'WATCH',optionEligible:false,optionDataValid:false,optionRejectionReason:'NO_DIRECTIONAL_CANDIDATE_PASSED_MINIMUM_SCORE_OR_DIRECTION_GATES'}));return{action:'replaceSheet',sheet:'Dashboard',clearFirst:true,headers:DASHBOARD_HEADERS,rows:selected.map(r=>DASHBOARD_HEADERS.map(h=>clean(r[h]))),timestamp:new Date().toISOString()};}
 async function postToGoogleSheet(payload){
     const url=getGoogleSheetUrl();
     if(!url)throw new Error('Google Sheet webhook URL is not configured.');
