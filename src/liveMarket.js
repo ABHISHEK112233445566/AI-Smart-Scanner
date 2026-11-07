@@ -96,7 +96,7 @@ async function rankByLiveVolume(symbols,broker,limit){
  const started=Date.now();
  const source=[...new Set((Array.isArray(symbols)?symbols:[]).map(normalizeSymbol).filter(Boolean))];
  const resolved=await resolveEquityKeys(source,broker);
- if(!resolved.length)throw new Error("No NSE equity instruments resolved for live-volume ranking");
+ if(!resolved.length){const allRows=buildLiveQuoteCoverage(source,[],[],[]);const coverage=allRows.reduce((out,row)=>(out[row.dataStatus]=(out[row.dataStatus]||0)+1,out),{});console.warn("LIVE QUOTE DATA COVERAGE: "+JSON.stringify({universe:source.length,instrumentKeys:0,quotes:0,status:coverage}));return{top:[],allQuotes:[],allRows,coverage,universeSize:source.length,resolvedCount:0,quoteCount:0};}
  const quotes=[],failedKeys=[];
  const chunkSize=450;
  for(let i=0;i<resolved.length;i+=chunkSize){
