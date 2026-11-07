@@ -90,8 +90,8 @@ async function updateStrategySheets(scannerData,optionDecisions,equityData=scann
  const equityPlaceholder={rank:1,horizon:"WATCH",investmentStatus:"DATA_UNAVAILABLE",equityScore:0,shortTermScore:0,longTermScore:0,dataQuality:"INVALID",stock:"NO CURRENT EQUITY CANDIDATE",symbol:"NO CURRENT EQUITY CANDIDATE",price:0,recommendation:"WATCH",reason:"NO_VALID_EQUITY_CANDIDATES_THIS_SCAN"};
  const equityWriteRows=equityRows.length?equityRows:[EQUITY_COLUMNS.map(c=>clean(equityPlaceholder[c]))];
  const equityResult=config.EQUITY_SCAN_ENABLED===false?{success:true,skipped:true,sheet:"EQUITY"}:await postSheet("EQUITY",EQUITY_COLUMNS,equityWriteRows);
- const callResult=await postSheet("CALL_OPTIONS",OPTION_COLUMNS,callRows);
- const putResult=await postSheet("PUT_OPTIONS",OPTION_COLUMNS,putRows);
- return{success:true,scannerRows:scanner.length,equityRows:equityRows.length,normalEquityRows:equity.length,dividendEquityRows:dividendEquity.length,callRows:callRows.length,putRows:putRows.length,commodityCallRows:commodityCalls.length,commodityPutRows:commodityPuts.length,equity:equityResult,calls:callResult,puts:putResult};
+ // CALL/PUT analysis remains active in the scanner and SCANNER output.
+ // The dedicated CALL_OPTIONS and PUT_OPTIONS tabs are intentionally retired.
+ return{success:Boolean(equityResult?.success),scannerRows:scanner.length,equityRows:equityRows.length,normalEquityRows:equity.length,dividendEquityRows:dividendEquity.length,callRows:callRows.length,putRows:putRows.length,commodityCallRows:commodityCalls.length,commodityPutRows:commodityPuts.length,equity:equityResult,calls:{success:true,skipped:true,reason:"DEDICATED_OPTION_TABS_RETIRED"},puts:{success:true,skipped:true,reason:"DEDICATED_OPTION_TABS_RETIRED"}};
 }
 module.exports={EQUITY_COLUMNS,OPTION_COLUMNS,updateStrategySheets};
