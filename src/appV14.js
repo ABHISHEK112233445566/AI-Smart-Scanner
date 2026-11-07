@@ -23,7 +23,6 @@ const TOP_5=5;
 // Options pipeline only: keep both bullish/CE and bearish/PE candidates in
 // the scanner candidate pool. This does NOT change the equity ranking.
 const OPTION_SIDE_MIN_CANDIDATES=Math.min(5,Math.floor(TOP_20/2));
-const TOP_EQUITY=50;
 const OPTION_PREFLIGHT_POOL=Math.max(TOP_100,Number(process.env.OPTION_PREFLIGHT_POOL||260));
 const ONE_TRADE_LIMIT=1;
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
