@@ -199,15 +199,19 @@ function rankDashboard(rows){
   return [...trades,...watch].slice(0,TOP_5-1);
 }
 function buildEquityCandidates(liveRows){
-  // Keep every NIFTY 500 constituent with a valid NSE instrument and positive
-  // quote. Zero-volume rows remain visible in EQUITY for diagnostics, but the
-  // downstream liquidity/volume gates must prevent them becoming trade signals.
+  // Retain all constituents, including missing quote/key rows, for diagnostics.
+  // Only LIVE_DATA_AVAILABLE rows are sent to technical scanning in main().
   const rows=Array.isArray(liveRows)?liveRows:[];
   const unique=new Map();
   for(const row of rows){
     const symbol=key(row);
-    if(!symbol||num(row.price)<=0||!String(row.instrumentKey||"").trim())continue;
-    if(!unique.has(symbol))unique.set(symbol,row);
+    if(!symbol||unique.has(symbol))continue;
+    unique.set(symbol,{...row,dataStatus:String(row.dataStatus||(
+      num(row.price)>0&&String(row.instrumentKey||"").trim()&&num(row.volume)>0
+        ?"LIVE_DATA_AVAILABLE"
+        :!String(row.instrumentKey||"").trim()?"INSTRUMENT_KEY_MISSING"
+        :!(num(row.price)>0)?"INVALID_PRICE":"ZERO_VOLUME"
+    ))});
   }
   return [...unique.values()].sort((a,b)=>(num(a.liveVolumeRank)-num(b.liveVolumeRank))||(num(b.volume)-num(a.volume)));
 }
