@@ -95,6 +95,14 @@ const trade={
 };
 
 assert.strictEqual(validOptionRow(trade),true);
+const neutralOiTrade={...trade,oiMood:"NEUTRAL",oiSentiment:"NEUTRAL",oiDataAvailable:true};
+assert.strictEqual(validOptionRow(neutralOiTrade),true,"neutral OI must not veto an otherwise fully validated trade");
+const neutralOiSheet=buildDashboardPayload([neutralOiTrade]);
+assert.strictEqual(neutralOiSheet.rows[0][neutralOiSheet.headers.indexOf("stock")],"TEST",
+  "the Sheets Dashboard must not drop a valid trade solely because OI is neutral");
+const neutralOiInternal=buildDashboard([neutralOiTrade],[neutralOiTrade],1);
+assert.strictEqual(neutralOiInternal.top10.length,1,
+  "the secondary dashboard must use the same neutral-OI qualification rule");
 assert.strictEqual(validOptionRow({...trade,bestStrike:0}),false);
 assert.strictEqual(validOptionRow({...trade,optionContractIdentityValid:false}),false);
 assert.strictEqual(validOptionRow({...trade,optionLiquidityConfirmed:false}),false);
