@@ -65,9 +65,11 @@ function selectDashboardRows(rows=[]){
       premiumEntry>0&&premiumStop>0&&premiumTarget>premiumEntry&&calculatedPremiumRR>=1.5&&
       n(premiumSetup.riskReward??r?.optionPremiumRiskReward)>=1.5&&optionRR>=1.5;
     const oiMood=String(r?.oiMood??"").trim().toUpperCase(),oiSentiment=String(r?.oiSentiment??"").trim().toUpperCase();
-    const oiAligned=r?.oiDataAvailable===true&&(bullish
-      ? oiSentiment==="BULLISH"||["LONG BUILDUP","SHORT COVERING"].includes(oiMood)
-      : bearish&&(oiSentiment==="BEARISH"||["SHORT BUILDUP","LONG UNWINDING"].includes(oiMood)));
+    const oiOpposes=bullish
+      ? oiSentiment==="BEARISH"||["SHORT BUILDUP","LONG UNWINDING"].includes(oiMood)
+      : bearish&&(oiSentiment==="BULLISH"||["LONG BUILDUP","SHORT COVERING"].includes(oiMood));
+    // Neutral OI is not a directional contradiction; missing OI remains unconfirmed.
+    const oiAligned=r?.oiDataAvailable===true&&!oiOpposes;
     const confidence=positive(r?.tradeConfidence,r?.optionsConfidence,r?.confidence);
     const scanner=positive(r?.scannerStrength,r?.finalScore,r?.rankingScore,r?.aiFinalScore,r?.scannerScore,r?.score);
     const stockLevels=bullish
