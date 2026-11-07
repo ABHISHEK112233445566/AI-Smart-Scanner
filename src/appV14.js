@@ -198,7 +198,19 @@ function rankDashboard(rows){
       optionEligible:false,optionDataValid:false}));
   return [...trades,...watch].slice(0,TOP_5-1);
 }
-function buildEquityCandidates(liveRows){\n  // NIFTY 500 is the complete stock-analysis universe. Do not shrink it to a\n  // volume Top-50: volume ranking is metadata for prioritisation, not an\n  // eligibility filter. The separate F&O universe is applied only downstream\n  // by the options pipeline.\n  const rows=Array.isArray(liveRows)?liveRows:[];\n  const unique=new Map();\n  for(const row of rows){const symbol=key(row);if(!symbol||num(row.price)<=0||!String(row.instrumentKey||\"\").trim())continue;if(!unique.has(symbol))unique.set(symbol,row);}\n  return [...unique.values()].sort((a,b)=>(num(a.liveVolumeRank)-num(b.liveVolumeRank))||(num(b.volume)-num(a.volume)));\n}
+function buildEquityCandidates(liveRows){
+  // Keep every NIFTY 500 constituent with a valid NSE instrument and positive
+  // quote. Zero-volume rows remain visible in EQUITY for diagnostics, but the
+  // downstream liquidity/volume gates must prevent them becoming trade signals.
+  const rows=Array.isArray(liveRows)?liveRows:[];
+  const unique=new Map();
+  for(const row of rows){
+    const symbol=key(row);
+    if(!symbol||num(row.price)<=0||!String(row.instrumentKey||"").trim())continue;
+    if(!unique.has(symbol))unique.set(symbol,row);
+  }
+  return [...unique.values()].sort((a,b)=>(num(a.liveVolumeRank)-num(b.liveVolumeRank))||(num(b.volume)-num(a.volume)));
+}
 async function collectOptionEligible(liveRows,broker,priorityRows=[]){
   const rows=Array.isArray(liveRows)?liveRows:[];
   const priority=Array.isArray(priorityRows)?priorityRows:[];
