@@ -150,7 +150,7 @@ function dashboardRow(r={}){
  const stockRisk=side==='BULLISH'?stockEntry-stockStopLoss:side==='BEARISH'?stockStopLoss-stockEntry:0;
  const stockReward=side==='BULLISH'?stockTarget-stockEntry:side==='BEARISH'?stockEntry-stockTarget:0;
  const stockPlanValid=stockEntry>0&&stockStopLoss>0&&stockTarget>0&&stockRisk>0&&stockReward>0;
- const reportedRR=n(r.stockRiskReward??r.stockRiskRewardRatio??r.riskReward);
+ const reportedRR=n(r.stockRiskReward??r.stockRiskRewardRatio);
  const calculatedRR=stockPlanValid?Number((stockReward/stockRisk).toFixed(2)):null;
  const displayRR=reportedRR!==null?reportedRR:calculatedRR;
  const displayConfidence=positive(r.tradeConfidence,r.confidence,r.optionsConfidence,r.technicalConfidence,r.niftyAnalysisConfidence,r.scannerStrength,r.scannerScore,r.score);
