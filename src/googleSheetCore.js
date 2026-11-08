@@ -140,30 +140,20 @@ function dashboardRow(r={}){
  const contextOnly=r.dashboardContextOnly===true;
  const contract=r.optionLiquidityContractData&&typeof r.optionLiquidityContractData==='object'?r.optionLiquidityContractData:{};
  const strike=positive(r.recommendedStrike,r.bestStrike,r.optionStrike,r.atmStrike,contract.strike,contract.strike_price,contract.strikePrice);
- // WATCH rows may still have a fully calculated underlying stock plan. Keep
- // those real market-structure levels visible, but never imply an option
- // contract exists unless the row passed the option-trade gate.
- const side=direction(r);
  const stockEntry=positive(r.stockEntry,r.stock_entry,r.underlyingEntry,r.underlying_entry,r.marketEntry,r.triggerPrice,r.tradeSetup?.stockEntry,r.tradeSetup?.entry);
  const stockStopLoss=positive(r.stockStopLoss,r.stock_stop_loss,r.underlyingStopLoss,r.underlying_stop_loss,r.tradeSetup?.stockStopLoss,r.tradeSetup?.stopLoss);
- const stockTarget=positive(r.stockTarget1,r.stock_target_1,r.underlyingTarget1,r.tradeSetup?.stockTarget1,r.target1,r.stockTarget2,r.stock_target_2,r.underlyingTarget2,r.tradeSetup?.stockTarget2,r.target2);
- const stockRisk=side==='BULLISH'?stockEntry-stockStopLoss:side==='BEARISH'?stockStopLoss-stockEntry:0;
- const stockReward=side==='BULLISH'?stockTarget-stockEntry:side==='BEARISH'?stockEntry-stockTarget:0;
- const stockPlanValid=stockEntry>0&&stockStopLoss>0&&stockTarget>0&&stockRisk>0&&stockReward>0;
- const reportedRR=n(r.stockRiskReward??r.stockRiskRewardRatio);
- const calculatedRR=stockPlanValid?Number((stockReward/stockRisk).toFixed(2)):null;
- const displayRR=reportedRR!==null?reportedRR:calculatedRR;
- const displayConfidence=positive(r.tradeConfidence,r.confidence,r.optionsConfidence,r.technicalConfidence,r.niftyAnalysisConfidence,r.scannerStrength,r.scannerScore,r.score);
+ const stockTarget=positive(r.stockTarget1,r.stockTarget2,r.stock_target_1,r.stock_target_2,r.underlyingTarget1,r.underlyingTarget2,r.tradeSetup?.stockTarget1,r.tradeSetup?.stockTarget2,r.target1,r.target2);
+ const riskReward=n(r.stockRiskReward??r.stockRiskRewardRatio??r.riskReward);
  return{
   stock:String(r.stock??r.symbol??r.name??r.tradingSymbol??'').trim(),
   stockPrice:positive(r.stockPrice,r.price,r.livePrice,r.currentPrice,r.ltp),
   optionType:contextOnly?'':optionType(r),
   strike:!contextOnly&&strike>0?strike:'',
-  stockEntryPrice:stockPlanValid?stockEntry:'',
-  stockStopLossPrice:stockPlanValid?stockStopLoss:'',
-  stockTargetPrice:stockPlanValid?stockTarget:'',
-  riskReward:stockPlanValid?(displayRR??''):'',
-  confidence:displayConfidence??'',
+  stockEntryPrice:!contextOnly?(stockEntry??''):'',
+  stockStopLossPrice:!contextOnly?(stockStopLoss??''):'',
+  stockTargetPrice:!contextOnly?(stockTarget??''):'',
+  riskReward:!contextOnly?(riskReward??''):'',
+  confidence:!contextOnly?(n(r.tradeConfidence??r.confidence??r.optionsConfidence)??''):'',
   oiMood:String(r.oiMood??r.OIMood??r.oi_mood??'UNKNOWN'),
   volume:n(r.volume)??'',
   newsStatus:String(r.newsStatus??'NO_MAJOR_NEWS'),
