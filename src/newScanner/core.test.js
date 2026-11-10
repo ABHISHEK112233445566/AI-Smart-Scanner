@@ -10,7 +10,7 @@ const {rankCandidates}=require("./ranking");
 const {DASHBOARD_HEADERS,LIMITS}=require("./schema");
 
 const quote=validateQuote({ltp:2668.3,net_change:85.4});
-assert.equal(quote.previousClose,2582.9);
+assert.ok(Math.abs(quote.previousClose-2582.9)<1e-9);
 assert.equal(quote.valid,true);
 assert.equal(validateQuote({ltp:0}).valid,false);
 assert.equal(validCandle({time:"2026-11-10",open:10,high:12,low:9,close:11,volume:100}),true);
@@ -31,7 +31,7 @@ assert.equal(universe.combined.length,2);
 const tf=combineTimeframes({daily:{direction:"BULLISH"},fourHour:{direction:"BULLISH"},oneHour:{direction:"BULLISH"},fifteenMinute:{direction:"UNKNOWN"},fiveMinute:{direction:"BEARISH"}});
 assert.equal(tf.direction,"BULLISH");
 assert.equal(tf.bullishTimeframes,3);
-const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,support:95,resistance:115}});
+const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,support20:95,resistance20:115}});
 assert.equal(levels.valid,true);
 assert.equal(levels.riskReward,3);
 
