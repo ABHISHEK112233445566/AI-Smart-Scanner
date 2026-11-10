@@ -22,12 +22,25 @@ function rankCandidates(rows) {
     Number(r.optionQuote?.ltp)>0 &&
     ["TRADE","WATCH"].includes(r.decision)
   );
-  return candidates.map(r=>({...r,confidence:candidateScore(r)}))
-    .sort((a,b)=>b.confidence-a.confidence||(Number(b.optionPremiumSetup?.riskReward)||0)-(Number(a.optionPremiumSetup?.riskReward)||0))
-    .slice(0,LIMITS.SCANNER_ROWS).map((r,i)=>({...r,scannerRank:i+1}));
+  const sorted=candidates.map(r=>({...r,confidence:candidateScore(r)}))
+    .sort((a,b)=>b.confidence-a.confidence||(Number(b.optionPremiumSetup?.riskReward)||0)-(Number(a.optionPremiumSetup?.riskReward)||0));
+  const selected=sorted.slice(0,LIMITS.SCANNER_ROWS);
+  const nifty=sorted.find(r=>r.isNiftyIndex===true||String(r.symbol).toUpperCase()==="NIFTY");
+  if(nifty&&!selected.some(r=>r.symbol===nifty.symbol)){
+    if(selected.length>=LIMITS.SCANNER_ROWS)selected[selected.length-1]=nifty;
+    else selected.push(nifty);
+  }
+  return selected.map((r,i)=>({...r,scannerRank:i+1}));
 }
 function dashboardRows(rows) {
-  return [...(Array.isArray(rows)?rows:[])].filter(r=>["TRADE","WATCH"].includes(r.decision))
-    .sort((a,b)=>b.confidence-a.confidence).slice(0,LIMITS.DASHBOARD_ROWS);
+  const sorted=[...(Array.isArray(rows)?rows:[])].filter(r=>["TRADE","WATCH"].includes(r.decision))
+    .sort((a,b)=>b.confidence-a.confidence);
+  const selected=sorted.slice(0,LIMITS.DASHBOARD_ROWS);
+  const nifty=sorted.find(r=>r.isNiftyIndex===true||String(r.symbol).toUpperCase()==="NIFTY");
+  if(nifty&&!selected.some(r=>r.symbol===nifty.symbol)){
+    if(selected.length>=LIMITS.DASHBOARD_ROWS)selected[selected.length-1]=nifty;
+    else selected.push(nifty);
+  }
+  return selected;
 }
 module.exports={candidateScore,rankCandidates,dashboardRows};
