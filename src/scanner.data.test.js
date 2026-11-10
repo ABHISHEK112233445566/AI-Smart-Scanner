@@ -1,5 +1,5 @@
 const assert=require("node:assert/strict");
-const {buildStockAnalysis,getMACDValues}=require("./scanner");
+const {buildStockAnalysis,getMACDValues,quoteTimestampMs}=require("./scanner");
 
 const base={
   stockSymbol:"TEST",instrumentKey:"NSE_EQ|TEST",latestPrice:123,
@@ -19,7 +19,7 @@ assert.equal(row.entry,null,"unavailable stock entry must remain null");
 assert.equal(row.stopLoss,null,"unavailable stop must remain null");
 assert.equal(row.target1,null,"unavailable target must remain null");
 assert.deepEqual(row.indicatorDataQuality,{validCandles:180,partial:true});
-assert.deepEqual(getMACDValues({}),{macd:null,signal:null,histogram:null},
+assert.equal(quoteTimestampMs("1794312000.5"),1794312000500,\n  "decimal Unix-second timestamps must be parsed as milliseconds");\nassert.equal(quoteTimestampMs("1794312000000"),1794312000000,\n  "millisecond Unix timestamps must remain milliseconds");\nassert.deepEqual(getMACDValues({}),{macd:null,signal:null,histogram:null},
   "missing MACD values must not be fabricated as zeros");
 assert.deepEqual(getMACDValues({macd:{MACD:1.25,signal:1,histogram:0.25}}),
   {macd:1.25,signal:1,histogram:0.25});
