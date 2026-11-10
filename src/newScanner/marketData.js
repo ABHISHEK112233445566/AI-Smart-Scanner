@@ -7,10 +7,16 @@ const { normalizeCandle, validateQuote, symbol } = require("./normalize");
 function instrumentKeyMap(instruments) {
   const map = new Map();
   for (const item of Array.isArray(instruments) ? instruments : []) {
-    if (String(item?.segment ?? "").toUpperCase() !== "NSE_EQ") continue;
-    const name = symbol(item.trading_symbol ?? item.tradingSymbol ?? item.symbol);
+    const segment = String(item?.segment ?? "").toUpperCase();
     const key = String(item.instrument_key ?? item.instrumentKey ?? "").trim();
-    if (name && key && !map.has(name)) map.set(name, key);
+    if (!key) continue;
+    if (segment === "NSE_EQ") {
+      const name = symbol(item.trading_symbol ?? item.tradingSymbol ?? item.symbol);
+      if (name && !map.has(name)) map.set(name, key);
+    } else if (segment === "NSE_INDEX") {
+      const identity = [item.trading_symbol, item.tradingSymbol, item.name, key].filter(Boolean).join(" ").toUpperCase();
+      if (/NIFTY\s*50|NIFTY50/.test(identity) && !/BANK|NEXT|FINANCIAL|MIDCAP|IT|AUTO|PHARMA/.test(identity)) map.set("NIFTY", key);
+    }
   }
   return map;
 }
