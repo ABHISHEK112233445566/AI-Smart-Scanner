@@ -16,6 +16,11 @@ function marketIsOpen(now=new Date()) {
   const minute=Number(p.hour)*60+Number(p.minute);
   return ["Mon","Tue","Wed","Thu","Fri"].includes(p.weekday)&&minute>=555&&minute<930;
 }
+function tradeWindowOpen(now=new Date()) {
+  const p=new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(now).reduce((o,x)=>(o[x.type]=x.value,o),{});
+  const minute=Number(p.hour)*60+Number(p.minute);
+  return ["Mon","Tue","Wed","Thu","Fri"].includes(p.weekday)&&minute>=600&&minute<885;
+}
 function currentIstDate(now=new Date()) {
   return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(now);
 }
@@ -73,7 +78,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const [news,oi]=await Promise.all([fetchNews(stock.symbol),fetchUnderlyingOI(stock,broker)]);
     const timestamp=stock.quote.timestamp;
     const marketDataFresh=marketIsOpen()&&Number.isFinite(timestamp)&&Date.now()-timestamp<=LIMITS.MAX_QUOTE_AGE_MS;
-    const base={...stock,candles:{...stock.candles,...deep.candles},timeframeAnalysis,underlyingLevels,news,oi,marketDataFresh,scanTimestamp:new Date().toISOString()};
+    const base={...stock,candles:{...stock.candles,...deep.candles},timeframeAnalysis,underlyingLevels,news,oi,marketDataFresh,tradeWindowOpen:tradeWindowOpen(),scanTimestamp:new Date().toISOString()};
     const option=await analyzeOption(base,broker);
     const riskValidation=validateCandidate({...option,oi,news});
     const decision=riskValidation.passed?"TRADE":"WATCH";
@@ -95,7 +100,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
     watchCount:ranked.filter(r=>r.decision==="WATCH").length,
     rejected:deepRows.length-ranked.length,errors,elapsedMs:Date.now()-started,
-    lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),istDate:currentIstDate()
+    lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),tradeWindowOpen:tradeWindowOpen(),istDate:currentIstDate()
   });
   const result={scannerRows:ranked,dashboardRows:dashboard,equityRows,status};
   if(writeSheets)result.sheetWrites=await publishResults(result);
@@ -108,4 +113,4 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   return result;
 }
 if(require.main===module)runNewScanner().catch(error=>{console.error("NEW SCANNER FATAL:",error?.stack||error);process.exitCode=1;});
-module.exports={runNewScanner,marketIsOpen,currentIstDate};
+module.exports={runNewScanner,marketIsOpen,tradeWindowOpen,currentIstDate};
