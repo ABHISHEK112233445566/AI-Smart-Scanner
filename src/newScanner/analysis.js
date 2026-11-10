@@ -11,7 +11,7 @@ function lastValid(values) {
   }
   return null;
 }
-function calculateTechnicalEvidence(candles) {
+function calculateTechnicalEvidence(candles, options={}) {
   const rows = Array.isArray(candles) ? candles : [];
   const valid = rows.filter(c => c && [c.open,c.high,c.low,c.close,c.volume].every(v => number(v) !== null));
   const close = valid.map(c => c.close), high = valid.map(c => c.high), low = valid.map(c => c.low), volume = valid.map(c => c.volume);
@@ -34,7 +34,7 @@ function calculateTechnicalEvidence(candles) {
   const obvTrend = obv.length >= 6 ? (obv.at(-1) > obv.at(-6) ? "UP" : obv.at(-1) < obv.at(-6) ? "DOWN" : "FLAT") : "UNKNOWN";
   const vwap = (() => { const recent = valid.slice(-20); const pv = recent.reduce((s,c) => s + ((c.high+c.low+c.close)/3)*c.volume, 0); const v = recent.reduce((s,c)=>s+c.volume,0); return v>0?pv/v:null; })();
   const avgVol = volume.slice(-21,-1).reduce((s,v)=>s+v,0) / Math.max(1, volume.slice(-21,-1).length);
-  const latest = close.at(-1), previous = close.at(-2);
+  const latest = number(options.currentPrice)??close.at(-1), previous = close.at(-1), latestVolume = number(options.currentVolume)??volume.at(-1);
   const evidence = [];
   const add = (name, condition, weight) => { if (condition === true) evidence.push({ name, weight }); };
   add("PRICE_ABOVE_EMA20", ema(20)!==null&&latest>ema(20), 1);
@@ -45,7 +45,7 @@ function calculateTechnicalEvidence(candles) {
   add("RSI_BULLISH", rsi!==null&&rsi>=55&&rsi<=75, 1);
   add("MACD_BULLISH", Boolean(macd&&number(macd.MACD)!==null&&number(macd.signal)!==null&&macd.MACD>macd.signal), 1);
   add("ADX_TREND", Boolean(adx&&number(adx.adx)!==null&&adx.adx>=20), 1);
-  add("VOLUME_EXPANSION", avgVol>0&&volume.at(-1)>=avgVol*1.2, 1);
+  add("VOLUME_EXPANSION", avgVol>0&&latestVolume>=avgVol*1.2, 1);
   const bearish = [];
   const addBear = (name, condition, weight) => { if (condition === true) bearish.push({ name, weight }); };
   addBear("PRICE_BELOW_EMA20", ema(20)!==null&&latest<ema(20), 1);
@@ -79,7 +79,7 @@ function calculateTechnicalEvidence(candles) {
   const structure = { support: swingLow, resistance: swingHigh, support20, resistance20, latestClose: latest, previousClose: previous, structureBreak, pivot, cpr:{bc,tc}, levels:{r1:2*pivot-prior.low,s1:2*pivot-prior.high,r2:pivot+(prior.high-prior.low),s2:pivot-(prior.high-prior.low)} };
   return {
     dataStatus: "VALID", direction, bullScore, bearScore, confidence: Math.max(bullScore,bearScore),
-    indicators: { ema20:ema(20),ema50:ema(50),ema100:ema(100),ema200:ema(200),rsi,macd:macd?.MACD??null,macdSignal:macd?.signal??null,adx:adx?.adx??null,atr,bollinger,mfi,obv:obv.at(-1)??null,obvTrend,vwap,averageVolume:avgVol,latestVolume:volume.at(-1) },
+    indicators: { ema20:ema(20),ema50:ema(50),ema100:ema(100),ema200:ema(200),rsi,macd:macd?.MACD??null,macdSignal:macd?.signal??null,adx:adx?.adx??null,atr,bollinger,mfi,obv:obv.at(-1)??null,obvTrend,vwap,averageVolume:avgVol,latestVolume },
     bullishEvidence:evidence.map(x=>x.name), bearishEvidence:bearish.map(x=>x.name), chartPattern,patternDirection,patternStatus,structure
   };
 }
