@@ -86,8 +86,9 @@ let liveQuote=null;try{liveQuote=await getQuote(instrumentKey);}catch(e){console
 const liveQuoteData=liveQuote?.data?.[instrumentKey]||liveQuote;
 const liveQuotePrice=toNumber(liveQuoteData?.last_price??liveQuoteData?.lastPrice??liveQuoteData?.ltp);
 const lastTradeTimestamp=liveQuoteData?.last_trade_time??liveQuoteData?.lastTradeTime??null;
-const liveQuoteTimestamp=lastTradeTimestamp;
-const parsedLiveQuoteTimestamp=quoteTimestampMs(lastTradeTimestamp);
+// Quote snapshot time measures feed freshness; last_trade_time remains separate for trade-date/volume checks.
+const liveQuoteTimestamp=liveQuoteData?.timestamp??liveQuoteData?.timestamp_nanos??lastTradeTimestamp;
+const parsedLiveQuoteTimestamp=quoteTimestampMs(liveQuoteTimestamp);
 const liveQuoteAgeRaw=parsedLiveQuoteTimestamp===null?null:Date.now()-parsedLiveQuoteTimestamp;
 const liveQuoteAgeMs=liveQuoteAgeRaw!==null&&liveQuoteAgeRaw>=-5000?Math.max(0,liveQuoteAgeRaw):null;
 const liveQuoteStale=liveQuoteAgeMs===null||liveQuoteAgeMs>120000;
