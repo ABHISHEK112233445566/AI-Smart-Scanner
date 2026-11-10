@@ -93,8 +93,8 @@ function combineTimeframes(timeframes) {
   if (bear>=3&&bear>bull) direction="BEARISH";
   return { direction, bullishTimeframes:bull, bearishTimeframes:bear, unknownTimeframes:rows.length-valid.length, rows };
 }
-function deriveUnderlyingLevels(analysis) {
-  const s=analysis?.structure, price=number(s?.latestClose), support=number(s?.support20), resistance=number(s?.resistance20);
+function deriveUnderlyingLevels(analysis,currentPrice=null) {
+  const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose), support=number(s?.support20), resistance=number(s?.resistance20);
   if (!price||!support||!resistance) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
   if (analysis.direction==="BULLISH"&&support<price&&resistance>price) {
     const risk=price-support, reward=resistance-price;
