@@ -11,6 +11,9 @@ function validateCandidate(row) {
   if(row?.dataStatus!=="VALID") reasons.push("UNDERLYING_QUOTE_NOT_VALID");
   if(row?.quote?.previousClose===null) reasons.push("PREVIOUS_CLOSE_UNAVAILABLE");
   if(row?.marketDataFresh!==true) reasons.push("UNDERLYING_QUOTE_STALE_OR_MARKET_CLOSED");
+  const latestVolume=Number(row?.directionalAnalysis?.indicators?.latestVolume)||0;
+  const averageVolume=Number(row?.directionalAnalysis?.indicators?.averageVolume)||0;
+  if(!(latestVolume>0&&averageVolume>0&&latestVolume>=averageVolume)) reasons.push("UNDERLYING_VOLUME_NOT_CONFIRMED");
   if(row?.directionalAnalysis?.direction!=="BULLISH"&&row?.directionalAnalysis?.direction!=="BEARISH") reasons.push("DIRECTION_NOT_CONFIRMED");
   if(!(row?.underlyingLevels?.valid===true&&positive(row.underlyingLevels.riskReward)>=1.5)) reasons.push("UNDERLYING_MARKET_STRUCTURE_OR_RR_INVALID");
   if(row?.optionStatus!=="VALID") reasons.push(row?.optionReason||"OPTION_SETUP_NOT_VALID");
