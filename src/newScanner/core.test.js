@@ -2,11 +2,11 @@
 
 const assert=require("node:assert/strict");
 const {validateQuote,validCandle}=require("./normalize");
-const {buildFnoUniverse,buildUniverse,parseCsvSymbols}=require("./universe");
+const {buildFnoUniverse,buildUniverse,parseCsvSymbols,findNiftyIndex}=require("./universe");
 const {combineTimeframes,deriveUnderlyingLevels}=require("./analysis");
 const {optionPremiumLevels,selectContract}=require("./options");
 const {validateCandidate,buildDailyRiskState,validateEntryPermission}=require("./risk");
-const {rankCandidates}=require("./ranking");
+const {rankCandidates,dashboardRows}=require("./ranking");
 const {DASHBOARD_HEADERS,LIMITS}=require("./schema");
 
 const quote=validateQuote({ltp:2668.3,net_change:85.4});
@@ -23,10 +23,13 @@ const instruments=[
 const fno=buildFnoUniverse(instruments);
 assert.equal(fno.length,1);
 assert.equal(fno[0].symbol,"ABC");
-const universe=buildUniverse({symbols:["ABC","XYZ"]},fno);
+const niftyIndex=findNiftyIndex([{segment:"NSE_INDEX",trading_symbol:"Nifty 50",instrument_key:"NSE_INDEX|Nifty 50"},{segment:"NSE_INDEX",trading_symbol:"Nifty Bank",instrument_key:"NSE_INDEX|Nifty Bank"}]);
+assert.equal(niftyIndex.symbol,"NIFTY");
+const universe=buildUniverse({symbols:["ABC","XYZ"]},fno,niftyIndex);
 assert.equal(universe.nifty500.length,2);
 assert.equal(universe.fnoStocks.length,1);
-assert.equal(universe.combined.length,2);
+assert.equal(universe.combined.length,3);
+assert.equal(universe.combined.find(x=>x.symbol==="NIFTY").isNiftyIndex,true);
 
 const tf=combineTimeframes({daily:{direction:"BULLISH"},fourHour:{direction:"BULLISH"},oneHour:{direction:"BULLISH"},fifteenMinute:{direction:"UNKNOWN"},fiveMinute:{direction:"BEARISH"}});
 assert.equal(tf.direction,"BULLISH");
@@ -52,6 +55,14 @@ const candidate={directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bul
 assert.equal(rankCandidates([candidate]).length,1);
 assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false}}]).length,0);
 assert.equal(rankCandidates([{...candidate,optionContract:{valid:false}}]).length,0);
+const filler=Array.from({length:22},(_,i)=>({...candidate,symbol:"STOCK"+i,confidence:100-i,isNiftyIndex:false}));
+const niftyCandidate={...candidate,symbol:"NIFTY",isNiftyIndex:true,confidence:1};
+const forcedRank=rankCandidates([...filler,niftyCandidate]);
+assert.equal(forcedRank.length,20);
+assert.ok(forcedRank.some(x=>x.symbol==="NIFTY"));
+const forcedDashboard=dashboardRows(forcedRank);
+assert.equal(forcedDashboard.length,5);
+assert.ok(forcedDashboard.some(x=>x.symbol==="NIFTY"));
 assert.equal(LIMITS.SCANNER_ROWS,20);
 assert.deepEqual(DASHBOARD_HEADERS,["stock","stockPrice","optionType","strike","stockEntryPrice","stockStopLossPrice","stockTargetPrice","riskReward","confidence","oiMood","volume","newsStatus","newsHeadline"]);
 console.log("NEW SCANNER CORE TESTS PASSED");
