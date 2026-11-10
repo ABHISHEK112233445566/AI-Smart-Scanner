@@ -68,7 +68,15 @@ function buildFnoUniverse(instruments) {
   }
   return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
-function buildFnoMovers(quotedRows, limit=100, minimumVolume=0) {\n  const valid=(Array.isArray(quotedRows)?quotedRows:[]).filter(row=>row.fnoEligible===true&&row.quote?.valid===true&&row.quote.previousClose>0&&row.quote.volume!==null&&row.quote.volume>=minimumVolume)\n    .map(row=>({...row,changePercent:row.quote.changePercent}));\n  const gainers=[...valid].filter(row=>row.changePercent>0).sort((a,b)=>b.changePercent-a.changePercent).slice(0,Math.ceil(limit/2));\n  const losers=[...valid].filter(row=>row.changePercent<0).sort((a,b)=>a.changePercent-b.changePercent).slice(0,Math.floor(limit/2));\n  return [...new Map([...gainers,...losers].map(row=>[row.symbol,row])).values()];\n}\nfunction buildUniverse(nifty500, fnoStocks) {
+function buildFnoMovers(quotedRows, limit=100, minimumVolume=0) {
+  const valid=(Array.isArray(quotedRows)?quotedRows:[])
+    .filter(row=>row.fnoEligible===true&&row.quote?.valid===true&&row.quote.previousClose>0&&row.quote.volume!==null&&row.quote.volume>=minimumVolume)
+    .map(row=>({...row,changePercent:row.quote.changePercent}));
+  const gainers=[...valid].filter(row=>row.changePercent>0).sort((a,b)=>b.changePercent-a.changePercent).slice(0,Math.ceil(limit/2));
+  const losers=[...valid].filter(row=>row.changePercent<0).sort((a,b)=>a.changePercent-b.changePercent).slice(0,Math.floor(limit/2));
+  return [...new Map([...gainers,...losers].map(row=>[row.symbol,row])).values()];
+}
+function buildUniverse(nifty500, fnoStocks) {
   const nifty = new Set((nifty500?.symbols ?? []).map(symbol).filter(Boolean));
   const fno = new Map((fnoStocks ?? []).map(row => [symbol(row.symbol), row]));
   const nifty500Rows = [...nifty].map(s => ({ symbol: s, inNifty500: true, fnoEligible: fno.has(s), ...(fno.get(s) || {}) }));
