@@ -45,17 +45,25 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const directionalAnalysis=analyses.daily;
     const underlyingLevels=deriveUnderlyingLevels(directionalAnalysis);
     const [news,oi]=await Promise.all([fetchNews(stock.symbol),fetchUnderlyingOI(stock,broker)]);
-    const base={...withCandles,marketDataFresh:marketIsOpen()&&Boolean(stock.quote.timestamp)&&Date.now()-new Date(stock.quote.timestamp).getTime()<=LIMITS.MAX_QUOTE_AGE_MS,timeframeAnalysis,directionalAnalysis,underlyingLevels,news,oi,scanTimestamp:new Date().toISOString()};
+    const timestamp=stock.quote.timestamp?new Date(stock.quote.timestamp).getTime():NaN;
+    const base={...withCandles,marketDataFresh:marketIsOpen()&&Number.isFinite(timestamp)&&Date.now()-timestamp<=LIMITS.MAX_QUOTE_AGE_MS,timeframeAnalysis,directionalAnalysis,underlyingLevels,news,oi,scanTimestamp:new Date().toISOString()};
     const option=await analyzeOption(base,broker);
     const riskValidation=validateCandidate({...option,oi,news});
-    const decision=riskValidation.passed?"TRADE":(directionalAnalysis.direction!=="UNKNOWN"?"WATCH":"REJECT");
+    const decision=riskValidation.passed?"TRADE":(directionalAnalysis.direction==="BULLISH"||directionalAnalysis.direction==="BEARISH"?"WATCH":"REJECT");
     return{...option,riskValidation,decision,confidence:Math.max(directionalAnalysis.bullScore||0,directionalAnalysis.bearScore||0)};
   });
   const equityRows=enriched.filter(r=>r.inNifty500);
   const optionPool=enriched.filter(r=>r.fnoEligible);
   const ranked=rankCandidates(optionPool);
-  const dashboard=dashboardRows(ranked.map(r=>({...r,decision:r.decision==="TRADE"?"TRADE":"WATCH"})));
-  status.status="SUCCESS";status.universeSize=universe.combined.length;status.stocksScanned: snapshots.length;status.successfulQuotes=successfulQuotes.length;status.failedQuotes=failedQuotes.length;status.tradeCount=ranked.filter(r=>r.decision==="TRADE").length;status.watchCount=ranked.filter(r=>r.decision==="WATCH").length;status.rejected=enriched.length-ranked.length;status.errors=errors;status.elapsedMs=Date.now()-started;status.lastScanTime=new Date().toISOString();status.marketOpen=marketIsOpen();status.istDate=currentIstDate();
+  const dashboard=dashboardRows(ranked);
+  Object.assign(status,{
+    status:"SUCCESS",universeSize:universe.combined.length,stocksScanned:snapshots.length,
+    successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
+    tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
+    watchCount:ranked.filter(r=>r.decision==="WATCH").length,
+    rejected:enriched.length-ranked.length,errors,elapsedMs:Date.now()-started,
+    lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),istDate:currentIstDate()
+  });
   const result={scannerRows:ranked,dashboardRows:dashboard,equityRows,status};
   if(writeSheets)result.sheetWrites=await publishResults(result);
   console.log("NEW SCANNER RESULT "+JSON.stringify({universe:status.universeSize,quotes:status.successfulQuotes,failed:status.failedQuotes,scanner:ranked.length,dashboard:dashboard.length,trade:status.tradeCount,watch:status.watchCount,elapsedMs:status.elapsedMs}));
