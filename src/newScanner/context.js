@@ -32,12 +32,28 @@ async function fetchNews(stock,client=axios) {
 async function fetchUnderlyingOI(stock,broker) {
   try {
     const contracts=await broker.getOptionContracts(stock.instrumentKey);
-    const selected=contracts.filter(c=>{const expiry=String(c.expiry||"").slice(0,10);return expiry&&expiry>=new Date(Date.now()+7*86400000).toISOString().slice(0,10)&&Number(c.strike_price??c.strike)>0;});
-    const nearest=[...new Set(selected.map(c=>String(c.expiry).slice(0,10)))].sort()[0];
-    const chain=selected.filter(c=>String(c.expiry).slice(0,10)===nearest);
-    const sampled=chain.slice(0,Math.min(chain.length,80));
-    const rows=await Promise.all(sampled.map(async c=>{const key=c.instrument_key??c.instrumentKey;try{const q=await broker.getOptionQuote(key);return{type:String(c.instrument_type??c.option_type??"").toUpperCase(),oi:number(q.oi),previousOI:number(q.previousOI)};}catch(_){return null;}}));
-    const valid=rows.filter(x=>x&&x.oi!==null&&x.previousOI!==null),oi=valid.reduce((s,x)=>s+x.oi,0),previousOI=valid.reduce((s,x)=>s+x.previousOI,0);
+    const minExpiry=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+    const eligible=contracts.filter(c=>String(c.expiry||"").slice(0,10)>=minExpiry&&Number(c.strike_price??c.strike)>0);
+    const expiry=[...new Set(eligible.map(c=>String(c.expiry).slice(0,10)))].sort()[0];
+    const chain=eligible.filter(c=>String(c.expiry).slice(0,10)===expiry);
+    const spot=Number(stock.quote?.ltp)||0;
+    const sorted=[...chain].sort((a,b)=>Math.abs(Number(a.strike_price??a.strike)-spot)-Math.abs(Number(b.strike_price??b.strike)-spot));
+    const sampled=[];
+    for(const side of ["CE","PE"]) {
+      const sideRows=sorted.filter(c=>String(c.instrument_type??c.option_type??"").toUpperCase()===side||
+        String(c.trading_symbol??"").toUpperCase().endsWith(side));
+      sampled.push(...sideRows.slice(0,10));
+    }
+    const rows=await Promise.all(sampled.map(async c=>{
+      const key=c.instrument_key??c.instrumentKey;
+      try {
+        const q=await broker.getOptionQuote(key);
+        const type=String(c.instrument_type??c.option_type??"").toUpperCase()||String(c.trading_symbol??"").toUpperCase().slice(-2);
+        return {type,oi:number(q.oi),previousOI:number(q.previousOI)};
+      } catch(_) { return null; }
+    }));
+    const valid=rows.filter(x=>x&&x.oi!==null&&x.previousOI!==null);
+    const oi=valid.reduce((s,x)=>s+x.oi,0),previousOI=valid.reduce((s,x)=>s+x.previousOI,0);
     if(!valid.length||previousOI<=0)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_OI_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN"};
     const changePercent=(oi-previousOI)/previousOI*100,price=stock.quote?.ltp,prev=stock.quote?.previousClose;
     const pricePercent=price&&prev?(price-prev)/prev*100:null;
@@ -48,7 +64,7 @@ async function fetchUnderlyingOI(stock,broker) {
       else if(pricePercent>0&&changePercent<0){mood="SHORT COVERING";sentiment="BULLISH";}
       else {mood="LONG UNWINDING";sentiment="BEARISH";}
     }
-    return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_AGGREGATE",expiry:nearest,contractsChecked:valid.length,oi,previousOI,changePercent,priceChangePercent:pricePercent,mood,sentiment,warning:"Aggregate CE+PE OI is contextual only; do not use as sole direction signal."};
+    return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_NEAR_ATM_SAMPLE",expiry,contractsChecked:valid.length,oi,previousOI,changePercent,priceChangePercent:pricePercent,mood,sentiment,warning:"Sampled aggregate CE+PE OI is contextual only; never use as the sole direction signal."};
   } catch(error) { return{dataStatus:"UNAVAILABLE",reason:error.message,mood:"UNKNOWN",sentiment:"UNKNOWN"}; }
 }
 module.exports={fetchNews,fetchUnderlyingOI,parseXmlItems};
