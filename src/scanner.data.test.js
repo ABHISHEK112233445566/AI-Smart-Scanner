@@ -1,5 +1,5 @@
 const assert=require("node:assert/strict");
-const {buildStockAnalysis,getMACDValues,quoteTimestampMs}=require("./scanner");
+const {buildStockAnalysis,getMACDValues,quoteTimestampMs,resolveOIPriceReference}=require("./scanner");
 
 const base={
   stockSymbol:"TEST",instrumentKey:"NSE_EQ|TEST",latestPrice:123,
@@ -31,3 +31,10 @@ assert.deepEqual(getMACDValues({macd:{MACD:1.25,signal:1}}),
   {macd:1.25,signal:1,histogram:0.25},
   "histogram may be derived only when both MACD and signal are present");
 console.log("Scanner data mapping regression tests passed");
+
+assert.equal(resolveOIPriceReference({marketOpen:false,lastClose:100,priorClose:98}),98,
+  "after-hours OI must compare the last completed session close against the prior session close");
+assert.equal(resolveOIPriceReference({marketOpen:true,lastClose:100,priorClose:98}),100,
+  "during market hours OI must compare the live price against the latest completed close");
+assert.equal(resolveOIPriceReference({marketOpen:false,lastClose:100,priorClose:0}),100,
+  "when prior close is unavailable, retain last close rather than inventing a reference");
