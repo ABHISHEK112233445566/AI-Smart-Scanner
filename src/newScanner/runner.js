@@ -8,7 +8,7 @@ const {fetchNews,fetchUnderlyingOI}=require("./context");
 const {analyzeOption}=require("./options");
 const {validateCandidate}=require("./risk");
 const {rankCandidates,dashboardRows,candidateScore}=require("./ranking");
-const {publishResults}=require("./reporting");
+const {publishResults,postStatus}=require("./reporting");
 const {LIMITS}=require("./schema");
 
 function marketIsOpen(now=new Date()) {
@@ -121,5 +121,21 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   }));
   return result;
 }
-if(require.main===module)runNewScanner().catch(error=>{console.error("NEW SCANNER FATAL:",error?.stack||error);process.exitCode=1;});
+if(require.main===module)runNewScanner().catch(async error=>{
+  const message=String(error?.stack||error);
+  console.error("NEW SCANNER FATAL:",message);
+  try {
+    await postStatus({
+      status:"FAILED",
+      lastScanTime:new Date().toISOString(),
+      stocksScanned:0,successfulQuotes:0,failedQuotes:0,
+      tradeCount:0,watchCount:0,rejected:0,elapsedMs:0,
+      errors:[message.slice(0,1200)]
+    },process.env.GOOGLE_SHEET_WEBHOOK_URL);
+    console.error("NEW SCANNER FAILURE STATUS PUBLISHED");
+  } catch(statusError) {
+    console.error("NEW SCANNER FAILURE STATUS PUBLISH FAILED:",statusError?.stack||statusError);
+  }
+  process.exitCode=1;
+});
 module.exports={runNewScanner,marketIsOpen,tradeWindowOpen,currentIstDate};
