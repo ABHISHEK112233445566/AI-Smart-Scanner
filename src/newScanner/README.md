@@ -15,7 +15,7 @@ This is an independent scanner implementation. The legacy scanner is a **require
 
 ## Independent processing design
 1. Build a validated universe from official constituents and broker instrument identity.
-2. Fetch live quotes in bounded batches; persist quote provenance and freshness.
+2. Fetch live quotes in bounded concurrency; persist quote provenance and freshness.
 3. Fetch candles independently per timeframe; validate OHLCV and coverage before indicators.
 4. Produce stock-side evidence without using option premium as underlying price.
 5. Determine CE/PE direction from explicit evidence; resolve exact contracts and live quotes.
