@@ -1,6 +1,6 @@
 "use strict";
 
-const { positive, number } = require("./normalize");
+const { positive, number, parseTimestamp } = require("./normalize");
 const { LIMITS } = require("./schema");
 
 function expiryDate(value) {
@@ -62,8 +62,8 @@ async function analyzeOption(stock,broker) {
     const levels=optionPremiumLevels(candles);
     const liquidity=optionQuote.volume!==null&&optionQuote.oi!==null&&optionQuote.volume>=5000&&optionQuote.oi>=10000;
     const quoteMatches=optionQuote.ltp>0;
-    const tradeReady=levels.valid&&liquidity&&quoteMatches;
-    return {...stock,optionStatus:tradeReady?"VALID":"WATCH",optionReason:tradeReady?"OPTION_SETUP_VALID":levels.reason||(!liquidity?"OPTION_LIQUIDITY_BELOW_MINIMUM":"OPTION_DATA_INCOMPLETE"),optionContract:selected,optionQuote,optionPremiumSetup:levels,optionLiquidityConfirmed:liquidity};
+    const optionTimestamp=parseTimestamp(optionQuote.timestamp);\n    const optionQuoteAgeMs=optionTimestamp===null?null:Date.now()-optionTimestamp;\n    const optionQuoteFresh=optionQuoteAgeMs!==null&&optionQuoteAgeMs>=0&&optionQuoteAgeMs<=120000;\n    const tradeReady=levels.valid&&liquidity&&quoteMatches&&optionQuoteFresh;
+    return {...stock,optionStatus:tradeReady?"VALID":"WATCH",optionReason:tradeReady?"OPTION_SETUP_VALID":levels.reason||(!liquidity?"OPTION_LIQUIDITY_BELOW_MINIMUM":"OPTION_DATA_INCOMPLETE"),optionContract:selected,optionQuote,optionQuoteAgeMs,optionQuoteFresh,optionPremiumSetup:levels,optionLiquidityConfirmed:liquidity};
   } catch(error) {
     return {...stock,optionStatus:"FAILED",optionReason:error?.message||String(error)};
   }
