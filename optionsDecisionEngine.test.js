@@ -1,5 +1,5 @@
 const assert = require("assert");
-const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, normalizeExpiry, optionMarketData, premiumLevels } = require("./src/optionsDecisionEngine");
+const { calculateOptionsDecision, isMarketSessionOpen, stockEntry, quoteTimestampMs, stockQuoteTimestamp, normalizeExpiry, optionMarketData, premiumLevels } = require("./src/optionsDecisionEngine");
 
 async function run() {
   assert.strictEqual(stockEntry({ stockEntry: 100 }, 100, "CALL"), 100,
@@ -10,6 +10,12 @@ async function run() {
     "numeric-string broker timestamps must be parsed as epoch milliseconds");
   assert.strictEqual(quoteTimestampMs("not-a-timestamp"), null,
     "invalid quote timestamps must remain unavailable");
+  assert.strictEqual(stockQuoteTimestamp({ timestamp: "2026-11-10T13:14:16.608+05:30", last_trade_time: "2026-11-10T12:50:00+05:30" }), "2026-11-10T13:14:16.608+05:30",
+    "stock quote freshness must prefer the feed snapshot timestamp over the last trade time");
+  assert.strictEqual(stockQuoteTimestamp({ timestamp_nanos: "1794296656608000000", last_trade_time: "2026-11-10T12:50:00+05:30" }), "1794296656608000000",
+    "stock quote freshness must accept Upstox nanosecond snapshot timestamps");
+  assert.strictEqual(stockQuoteTimestamp({ last_trade_time: "2026-11-10T12:50:00+05:30" }), "2026-11-10T12:50:00+05:30",
+    "last trade time remains a fail-closed fallback when no snapshot timestamp exists");
   const quoteFreshness = optionMarketData({
     ltp: 12,
     timestamp: "2026-11-01T23:30:00+05:30",
