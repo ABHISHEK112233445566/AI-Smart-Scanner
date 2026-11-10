@@ -57,6 +57,23 @@ async function fetchStockSnapshot(stock, broker, keyMap) {
 }
 
 async function fetchSnapshots(stocks, broker, instruments, options={}) {
+  async function fetchSingleFallback(item, reason) {
+    try {
+      const response=await broker.getQuote(item.key);
+      const data=response?.data??{};
+      const raw=data[item.key]??Object.values(data)[0]??response;
+      const quote=validateQuote({
+        ...raw,raw,
+        ltp:raw?.last_price??raw?.ltp,
+        netChange:raw?.net_change??raw?.netChange,
+        previousClose:raw?.previous_close??raw?.previousClose??raw?.close??raw?.ohlc?.close
+      });
+      if(!quote.valid)throw new Error(quote.reason||"INVALID_FALLBACK_QUOTE");
+      return {...item.row,instrumentKey:item.key,quote,dataStatus:quote.previousClose?"VALID":"PARTIAL",dataReason:"SINGLE_QUOTE_FALLBACK_AFTER_"+reason};
+    } catch(error) {
+      return {...item.row,instrumentKey:item.key,dataStatus:"FAILED",dataReason:"BATCH_AND_SINGLE_QUOTE_FAILED:"+String(error?.message||error).slice(0,180)};
+    }
+  }
   const keyMap=instrumentKeyMap(instruments);
   const source=Array.isArray(stocks)?stocks:[];
   const batchSize=Math.max(1,Math.min(100,Number(options.batchSize)||100));
@@ -87,12 +104,15 @@ async function fetchSnapshots(stocks, broker, instruments, options={}) {
         const data=response?.data?.data||{};
         for(const item of keyed) {
           const raw=data[item.key]||data[encodeURIComponent(item.key)]||Object.entries(data).find(([k])=>decodeURIComponent(k)===item.key)?.[1];
-          if(!raw){output.push({...item.row,instrumentKey:item.key,dataStatus:"FAILED",dataReason:"QUOTE_NOT_RETURNED"});continue;}
-          const quote=validateQuote({...raw,raw,last_price:raw.last_price,net_change:raw.net_change,previous_close:raw.previous_close});
-          output.push({...item.row,instrumentKey:item.key,quote,dataStatus:quote.valid&&quote.previousClose?"VALID":"PARTIAL",dataReason:quote.reason});
+          if(!raw){output.push(await fetchSingleFallback(item,"QUOTE_NOT_RETURNED"));continue;}
+          const quote=validateQuote({...raw,raw,last_price:raw.last_price,net_change:raw.net_change,previous_close:raw.previous_close??raw.ohlc?.close});
+          if(!quote.valid){output.push(await fetchSingleFallback(item,"INVALID_BATCH_QUOTE"));continue;}
+          output.push({...item.row,instrumentKey:item.key,quote,dataStatus:quote.previousClose?"VALID":"PARTIAL",dataReason:quote.reason});
         }
       } catch(error) {
-        for(const item of keyed)output.push({...item.row,instrumentKey:item.key,dataStatus:"FAILED",dataReason:error?.response?.data?.errors?.[0]?.message||error.message});
+        const reason=error?.response?.data?.errors?.[0]?.message||error.message||"BATCH_QUOTE_FAILED";
+        const fallbacks=await mapLimit(keyed,8,item=>fetchSingleFallback(item,String(reason).slice(0,80)));
+        output.push(...fallbacks);
       }
     }
     return output;
