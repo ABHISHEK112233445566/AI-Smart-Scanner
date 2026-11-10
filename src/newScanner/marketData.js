@@ -85,7 +85,7 @@ async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
   const results = {};
   for (const frame of timeframes) {
     try {
-      const raw = await broker.getHistoricalData(stock.instrumentKey, frame.interval);
+      const raw = await broker.getHistoricalData(stock.instrumentKey, frame.interval, { includeLiveQuote: false });
       const candles = (Array.isArray(raw) ? raw : []).map(normalizeCandle).filter(Boolean);
       const minimum = frame.key === "daily" ? LIMITS.MIN_DAILY_CANDLES : LIMITS.MIN_INTRADAY_CANDLES;
       results[frame.key] = {
