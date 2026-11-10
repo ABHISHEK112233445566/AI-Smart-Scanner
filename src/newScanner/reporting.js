@@ -14,7 +14,7 @@ function scannerRow(r) {
   return {
     stock:r.symbol,stockPrice:q.ltp,previousClose:q.previousClose,netChange:q.netChange,changePercent:q.previousClose&&q.ltp?(q.ltp-q.previousClose)/q.previousClose*100:null,
     volume:q.volume,oiMood:oi.mood,oiSentiment:oi.sentiment,oiChangePercent:oi.changePercent,oiPriceChangePercent:oi.priceChangePercent,
-    direction:a.direction,confidence:r.confidence, bullScore:a.bullScore,bearScore:a.bearScore,
+    direction:a.direction,confidence:r.confidence, bullScore:a.bullScore,bearScore:a.bearScore,chartPattern:a.chartPattern,patternDirection:a.patternDirection,patternStatus:a.patternStatus,marketStructureBreak:a.structure?.structureBreak,cpr:a.structure?.cpr,pivotLevels:a.structure?.levels,indicators:a.indicators,
     dailyStatus:r.candles?.daily?.status,fourHourStatus:r.candles?.fourHour?.status,oneHourStatus:r.candles?.oneHour?.status,fifteenMinuteStatus:r.candles?.fifteenMinute?.status,fiveMinuteStatus:r.candles?.fiveMinute?.status,
     stockEntryPrice:s.entry,stockStopLossPrice:s.stopLoss,stockTargetPrice:s.target,riskReward:s.riskReward,
     optionType:o.side,strike:o.strike,optionExpiry:o.expiry,optionSymbol:o.tradingSymbol,optionInstrumentKey:o.instrumentKey,optionLTP:r.optionQuote?.ltp,
