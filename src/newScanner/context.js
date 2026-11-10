@@ -3,6 +3,14 @@
 const axios=require("axios");
 const {symbol,number}=require("./normalize");
 const NEWS_TTL_MS=15*60*1000,cache=new Map();
+async function fetchOptionQuotes(keys,broker) {
+  if(String(broker?.name||"").toUpperCase()==="UPSTOX"&&process.env.UPSTOX_ACCESS_TOKEN) {
+    const response=await axios.get("https://api.upstox.com/v2/market-quote/quotes",{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:"Bearer "+process.env.UPSTOX_ACCESS_TOKEN},timeout:20000});
+    const data=response?.data?.data||{};
+    return keys.map(key=>{const raw=data[key]||data[encodeURIComponent(key)]||Object.entries(data).find(([k])=>decodeURIComponent(k)===key)?.[1];return raw?{oi:number(raw.oi??raw.open_interest),previousOI:number(raw.prev_oi??raw.previous_oi)}:null;});
+  }
+  return Promise.all(keys.map(async key=>{try{const q=await broker.getOptionQuote(key);return{oi:number(q.oi),previousOI:number(q.previousOI)};}catch(_){return null;}}));
+}
 function parseXmlItems(xml) {
   const out=[],blocks=String(xml??"").match(/<item>[\s\S]*?<\/item>/gi)||[];
   for(const block of blocks){
@@ -44,14 +52,13 @@ async function fetchUnderlyingOI(stock,broker) {
         String(c.trading_symbol??"").toUpperCase().endsWith(side));
       sampled.push(...sideRows.slice(0,10));
     }
-    const rows=await Promise.all(sampled.map(async c=>{
-      const key=c.instrument_key??c.instrumentKey;
-      try {
-        const q=await broker.getOptionQuote(key);
-        const type=String(c.instrument_type??c.option_type??"").toUpperCase()||String(c.trading_symbol??"").toUpperCase().slice(-2);
-        return {type,oi:number(q.oi),previousOI:number(q.previousOI)};
-      } catch(_) { return null; }
-    }));
+    const keys=sampled.map(c=>c.instrument_key??c.instrumentKey);
+    const quotes=await fetchOptionQuotes(keys,broker);
+    const rows=sampled.map((c,index)=>{
+      const q=quotes[index];
+      const type=String(c.instrument_type??c.option_type??"").toUpperCase()||String(c.trading_symbol??"").toUpperCase().slice(-2);
+      return q?{type,oi:q.oi,previousOI:q.previousOI}:null;
+    });
     const valid=rows.filter(x=>x&&x.oi!==null&&x.previousOI!==null);
     const oi=valid.reduce((s,x)=>s+x.oi,0),previousOI=valid.reduce((s,x)=>s+x.previousOI,0);
     if(!valid.length||previousOI<=0)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_OI_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN"};
