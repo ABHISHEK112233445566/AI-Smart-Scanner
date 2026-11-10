@@ -14,7 +14,10 @@ function validateCandidate(row) {
   if(row?.directionalAnalysis?.direction!=="BULLISH"&&row?.directionalAnalysis?.direction!=="BEARISH") reasons.push("DIRECTION_NOT_CONFIRMED");
   if(!(row?.underlyingLevels?.valid===true&&positive(row.underlyingLevels.riskReward)>=1.5)) reasons.push("UNDERLYING_MARKET_STRUCTURE_OR_RR_INVALID");
   if(row?.optionStatus!=="VALID") reasons.push(row?.optionReason||"OPTION_SETUP_NOT_VALID");
-  const aligned=row?.timeframeAnalysis?.direction===row?.directionalAnalysis?.direction && Math.max(row?.timeframeAnalysis?.bullishTimeframes||0,row?.timeframeAnalysis?.bearishTimeframes||0)>=3;\n  if(!aligned) reasons.push("MTF_ALIGNMENT_NOT_CONFIRMED");\n  if(row?.optionQuoteFresh!==true) reasons.push("OPTION_QUOTE_STALE_OR_TIMESTAMP_MISSING");\n  if(row?.oi?.dataStatus!=="VALID") reasons.push("OI_DATA_UNAVAILABLE");
+  const aligned=row?.timeframeAnalysis?.direction===row?.directionalAnalysis?.direction && Math.max(row?.timeframeAnalysis?.bullishTimeframes||0,row?.timeframeAnalysis?.bearishTimeframes||0)>=3;
+  if(!aligned) reasons.push("MTF_ALIGNMENT_NOT_CONFIRMED");
+  if(row?.optionQuoteFresh!==true) reasons.push("OPTION_QUOTE_STALE_OR_TIMESTAMP_MISSING");
+  if(row?.oi?.dataStatus!=="VALID") reasons.push("OI_DATA_UNAVAILABLE");
   if(row?.news?.status==="NEWS_UNAVAILABLE") reasons.push("NEWS_DATA_UNAVAILABLE");
   return { passed:reasons.length===0,reasons };
 }
