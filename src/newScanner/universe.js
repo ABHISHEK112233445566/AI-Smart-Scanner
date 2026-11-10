@@ -76,7 +76,19 @@ function buildFnoMovers(quotedRows, limit=100, minimumVolume=0) {
   const losers=[...valid].filter(row=>row.changePercent<0).sort((a,b)=>a.changePercent-b.changePercent).slice(0,Math.floor(limit/2));
   return [...new Map([...gainers,...losers].map(row=>[row.symbol,row])).values()];
 }
-function buildUniverse(nifty500, fnoStocks) {
+function findNiftyIndex(instruments) {
+  const rows = (Array.isArray(instruments) ? instruments : []).filter(item => {
+    if (String(item?.segment ?? "").toUpperCase() !== "NSE_INDEX") return false;
+    const identity = [item.trading_symbol, item.tradingSymbol, item.name, item.instrument_key, item.instrumentKey].filter(Boolean).join(" ").toUpperCase();
+    return /NIFTY\s*50|NIFTY50/.test(identity) && !/BANK|NEXT|FINANCIAL|MIDCAP|IT|AUTO|PHARMA/.test(identity);
+  });
+  const item = rows.find(x => String(x.instrument_key ?? x.instrumentKey ?? "").trim()) || rows[0];
+  if (!item) return null;
+  const instrumentKey = String(item.instrument_key ?? item.instrumentKey ?? "").trim();
+  if (!instrumentKey) return null;
+  return { symbol: "NIFTY", instrumentKey, fnoEligible: true, isNiftyIndex: true, identitySource: "NSE_INDEX_NIFTY_50" };
+}
+function buildUniverse(nifty500, fnoStocks, niftyIndex = null) {
   const nifty = new Set((nifty500?.symbols ?? []).map(symbol).filter(Boolean));
   const fno = new Map((fnoStocks ?? []).map(row => [symbol(row.symbol), row]));
   const nifty500Rows = [...nifty].map(s => ({ symbol: s, inNifty500: true, fnoEligible: fno.has(s), ...(fno.get(s) || {}) }));
@@ -84,7 +96,7 @@ function buildUniverse(nifty500, fnoStocks) {
   return {
     nifty500: nifty500Rows,
     fnoStocks: fnoRows,
-    combined: [...new Map([...nifty500Rows, ...fnoRows].map(row => [row.symbol, row])).values()]
+    combined: [...new Map([...nifty500Rows, ...fnoRows, ...(niftyIndex ? [niftyIndex] : [])].map(row => [row.symbol, row])).values()]
   };
 }
-module.exports = { fetchNifty500, parseCsvSymbols, buildFnoUniverse, buildFnoMovers, buildUniverse, isEquity, isStockOption };
+module.exports = { fetchNifty500, parseCsvSymbols, buildFnoUniverse, buildFnoMovers, buildUniverse, findNiftyIndex, isEquity, isStockOption };
