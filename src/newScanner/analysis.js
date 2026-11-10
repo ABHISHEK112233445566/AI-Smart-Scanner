@@ -24,6 +24,14 @@ function calculateTechnicalEvidence(candles) {
   const macd = Array.isArray(macdRows) ? macdRows.at(-1) : null;
   const adxRows = close.length >= 30 ? calc(() => ti.ADX.calculate({ high, low, close, period: 14 })) : null;
   const adx = Array.isArray(adxRows) ? adxRows.at(-1) : null;
+  const atr = close.length >= 15 ? lastValid(calc(() => ti.ATR.calculate({ high, low, close, period: 14 }))) : null;
+  const bbRows = close.length >= 20 ? calc(() => ti.BollingerBands.calculate({ period: 20, stdDev: 2, values: close })) : null;
+  const bollinger = Array.isArray(bbRows) ? bbRows.at(-1) : null;
+  const mfiRows = close.length >= 15 ? calc(() => ti.MFI.calculate({ high, low, close, volume, period: 14 })) : null;
+  const mfi = Array.isArray(mfiRows) ? lastValid(mfiRows) : null;
+  const obvRows = calc(() => ti.OBV.calculate({ close, volume }));
+  const obv = Array.isArray(obvRows) ? obvRows : [];
+  const obvTrend = obv.length >= 6 ? (obv.at(-1) > obv.at(-6) ? "UP" : obv.at(-1) < obv.at(-6) ? "DOWN" : "FLAT") : "UNKNOWN";
   const vwap = (() => { const recent = valid.slice(-20); const pv = recent.reduce((s,c) => s + ((c.high+c.low+c.close)/3)*c.volume, 0); const v = recent.reduce((s,c)=>s+c.volume,0); return v>0?pv/v:null; })();
   const avgVol = volume.slice(-21,-1).reduce((s,v)=>s+v,0) / Math.max(1, volume.slice(-21,-1).length);
   const latest = close.at(-1), previous = close.at(-2);
@@ -55,11 +63,24 @@ function calculateTechnicalEvidence(candles) {
   if (bullScore>=60&&bullScore-bearScore>=15) direction="BULLISH";
   else if (bearScore>=60&&bearScore-bullScore>=15) direction="BEARISH";
   const recent = valid.slice(-30), swingHigh = Math.max(...recent.map(c=>c.high)), swingLow = Math.min(...recent.map(c=>c.low));
-  const structure = { support: swingLow, resistance: swingHigh, latestClose: latest, previousClose: previous };
+  const prior = valid.at(-2) || valid.at(-1), pivot=(prior.high+prior.low+prior.close)/3, bc=(prior.high+prior.low)/2, tc=2*pivot-bc;
+  const previous20=valid.slice(-21,-1), resistance20=previous20.length?Math.max(...previous20.map(c=>c.high)):null, support20=previous20.length?Math.min(...previous20.map(c=>c.low)):null;
+  const structureBreak=latest>resistance20?"BULLISH_BOS":latest<support20?"BEARISH_BOS":"NO_CONFIRMED_BOS";
+  const localHighs=[],localLows=[];
+  for(let i=Math.max(2,valid.length-35);i<valid.length-2;i++){
+    if(valid[i].high>valid[i-1].high&&valid[i].high>=valid[i+1].high)localHighs.push({index:i,price:valid[i].high});
+    if(valid[i].low<valid[i-1].low&&valid[i].low<=valid[i+1].low)localLows.push({index:i,price:valid[i].low});
+  }
+  let chartPattern="NONE",patternDirection="NEUTRAL",patternStatus="NOT_CONFIRMED";
+  const highs=localHighs.slice(-2),lows=localLows.slice(-2);
+  if(highs.length===2&&highs[1].index-highs[0].index>=4&&Math.abs(highs[1].price-highs[0].price)/Math.max(highs[0].price,highs[1].price)<=.012){chartPattern="DOUBLE_TOP";patternDirection="BEARISH";patternStatus=latest<Math.min(highs[0].price,highs[1].price)?"BUILDING":"CONFIRMED";}
+  else if(lows.length===2&&lows[1].index-lows[0].index>=4&&Math.abs(lows[1].price-lows[0].price)/Math.max(lows[0].price,lows[1].price)<=.012){chartPattern="DOUBLE_BOTTOM";patternDirection="BULLISH";patternStatus=latest>Math.max(lows[0].price,lows[1].price)?"CONFIRMED":"BUILDING";}
+  else if(highs.length===2&&lows.length===2){const lowerHigh=highs[1].price<highs[0].price, higherLow=lows[1].price>lows[0].price;if(lowerHigh&&higherLow){chartPattern="SYMMETRICAL_TRIANGLE";patternDirection="NEUTRAL";patternStatus="BUILDING";}}
+  const structure = { support: swingLow, resistance: swingHigh, support20, resistance20, latestClose: latest, previousClose: previous, structureBreak, pivot, cpr:{bc,tc}, levels:{r1:2*pivot-prior.low,s1:2*pivot-prior.high,r2:pivot+(prior.high-prior.low),s2:pivot-(prior.high-prior.low)} };
   return {
     dataStatus: "VALID", direction, bullScore, bearScore, confidence: Math.max(bullScore,bearScore),
-    indicators: { ema20:ema(20),ema50:ema(50),ema100:ema(100),ema200:ema(200),rsi,macd:macd?.MACD??null,macdSignal:macd?.signal??null,adx:adx?.adx??null,vwap,averageVolume:avgVol,latestVolume:volume.at(-1) },
-    bullishEvidence:evidence.map(x=>x.name), bearishEvidence:bearish.map(x=>x.name), structure
+    indicators: { ema20:ema(20),ema50:ema(50),ema100:ema(100),ema200:ema(200),rsi,macd:macd?.MACD??null,macdSignal:macd?.signal??null,adx:adx?.adx??null,atr,bollinger,mfi,obv:obv.at(-1)??null,obvTrend,vwap,averageVolume:avgVol,latestVolume:volume.at(-1) },
+    bullishEvidence:evidence.map(x=>x.name), bearishEvidence:bearish.map(x=>x.name), chartPattern,patternDirection,patternStatus,structure
   };
 }
 function combineTimeframes(timeframes) {
