@@ -1,8 +1,14 @@
 const assert=require("assert");
-const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates,mergeBySymbol}=require("./appV14");
+const {validOptionRow,sanitizeOptionRow,rankDashboard,rankOptionCandidates,mergeBySymbol,buildEquityCandidates}=require("./appV14");
 const {buildDashboardPayload}=require("./googleSheetCore");
 const {buildDashboard}=require("./dashboard");
 const {isNseMarketSessionOpen,applyIntradayVolumePace,quoteTimestampMs}=require("./scanner");
+
+// Full NIFTY-500 coverage: candidate construction must not truncate the universe to a Top-50 subset.
+const fullNifty500=Array.from({length:500},(_,i)=>({symbol:`NIFTY500_${String(i+1).padStart(3,"0")}`,volume:500-i}));
+const fullEquityCandidates=buildEquityCandidates(fullNifty500);
+assert.strictEqual(fullEquityCandidates.length,500,"the equity technical-scan input must retain all live-quoted NIFTY-500 constituents");
+assert.strictEqual(new Set(fullEquityCandidates.map(r=>r.symbol)).size,500,"full-universe equity candidates must be deduplicated by symbol");
 
 // Intraday readiness must never be confirmed outside NSE cash-market hours.
 assert.strictEqual(isNseMarketSessionOpen(new Date("2026-10-31T13:14:00.000Z")),false,
