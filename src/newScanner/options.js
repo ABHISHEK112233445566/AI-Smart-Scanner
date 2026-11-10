@@ -34,10 +34,10 @@ function selectContract(contracts, direction, spot, now=new Date()) {
   const contract=same[0];
   return { valid:true,side,strike:number(contract.strike_price??contract.strike),expiry,instrumentKey:contract.instrument_key??contract.instrumentKey,tradingSymbol:contract.trading_symbol??contract.tradingSymbol??"",contract };
 }
-function optionPremiumLevels(candles) {
+function optionPremiumLevels(candles,currentLtp=null) {
   const rows=(Array.isArray(candles)?candles:[]).filter(c=>c&&[c.open,c.high,c.low,c.close,c.volume].every(v=>number(v)!==null));
   if(rows.length<LIMITS.MIN_OPTION_CANDLES) return {valid:false,reason:"OPTION_5M_HISTORY_INSUFFICIENT",candlesUsed:rows.length};
-  const closed=rows.slice(-31,-1),entry=positive(rows.at(-1)?.close);
+  const closed=rows.slice(-31,-1),entry=positive(currentLtp)??positive(rows.at(-1)?.close);
   if(!entry||closed.length<15) return {valid:false,reason:"OPTION_5M_SWINGS_UNAVAILABLE",candlesUsed:rows.length};
   const lows=closed.slice(-20).map(c=>c.low), highs=closed.slice(-20).map(c=>c.high);
   const stop=Math.max(...lows.filter(v=>v<entry));
@@ -59,14 +59,17 @@ async function analyzeOption(stock,broker) {
     if(!optionQuote.ltp) return {...stock,optionStatus:"REJECTED",optionReason:"OPTION_LTP_UNAVAILABLE"};
     const candlesRaw=await broker.getHistoricalData(selected.instrumentKey,"FIVE_MINUTE");
     const candles=(Array.isArray(candlesRaw)?candlesRaw:[]).map(c=>({time:c.time??c.timestamp,open:number(c.open),high:number(c.high),low:number(c.low),close:number(c.close),volume:number(c.volume)})).filter(c=>c.open&&c.high&&c.low&&c.close&&c.volume!==null);
-    const levels=optionPremiumLevels(candles);
+    const levels=optionPremiumLevels(candles,optionQuote.ltp);
     const liquidity=optionQuote.volume!==null&&optionQuote.oi!==null&&optionQuote.volume>=5000&&optionQuote.oi>=10000;
     const quoteMatches=optionQuote.ltp>0;
     const optionTimestamp=parseTimestamp(optionQuote.timestamp);
     const optionQuoteAgeMs=optionTimestamp===null?null:Date.now()-optionTimestamp;
     const optionQuoteFresh=optionQuoteAgeMs!==null&&optionQuoteAgeMs>=0&&optionQuoteAgeMs<=120000;
-    const tradeReady=levels.valid&&liquidity&&quoteMatches&&optionQuoteFresh;
-    return {...stock,optionStatus:tradeReady?"VALID":"WATCH",optionReason:tradeReady?"OPTION_SETUP_VALID":levels.reason||(!liquidity?"OPTION_LIQUIDITY_BELOW_MINIMUM":"OPTION_DATA_INCOMPLETE"),optionContract:selected,optionQuote,optionQuoteAgeMs,optionQuoteFresh,optionPremiumSetup:levels,optionLiquidityConfirmed:liquidity};
+    const lastCandleTime=parseTimestamp(candles.at(-1)?.time);
+    const optionCandleAgeMs=lastCandleTime===null?null:Date.now()-lastCandleTime;
+    const optionCandlesFresh=optionCandleAgeMs!==null&&optionCandleAgeMs>=0&&optionCandleAgeMs<=10*60*1000;
+    const tradeReady=levels.valid&&liquidity&&quoteMatches&&optionQuoteFresh&&optionCandlesFresh;
+    return {...stock,optionStatus:tradeReady?"VALID":"WATCH",optionReason:tradeReady?"OPTION_SETUP_VALID":levels.reason||(!liquidity?"OPTION_LIQUIDITY_BELOW_MINIMUM":"OPTION_DATA_INCOMPLETE"),optionContract:selected,optionQuote,optionQuoteAgeMs,optionQuoteFresh,optionCandleAgeMs,optionCandlesFresh,optionPremiumSetup:levels,optionLiquidityConfirmed:liquidity};
   } catch(error) {
     return {...stock,optionStatus:"FAILED",optionReason:error?.message||String(error)};
   }
