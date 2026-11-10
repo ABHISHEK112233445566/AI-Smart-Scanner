@@ -1,7 +1,7 @@
 "use strict";
 
 const {setBroker,getActiveBroker,loadInstruments}=require("../brokers");
-const {fetchNifty500,buildFnoUniverse,buildUniverse}=require("./universe");
+const {fetchNifty500,buildFnoUniverse,buildUniverse,buildFnoMovers}=require("./universe");
 const {instrumentKeyMap,mapLimit,fetchStockSnapshot,fetchCandles}=require("./marketData");
 const {calculateTechnicalEvidence,combineTimeframes,deriveUnderlyingLevels}=require("./analysis");
 const {fetchNews,fetchUnderlyingOI}=require("./context");
@@ -33,7 +33,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const quoted=quoteResults.filter(r=>r&&!r.error);
   const successfulQuotes=quoted.filter(r=>r.quote?.valid);
   const failedQuotes=quoted.filter(r=>!r.quote?.valid);
-  const snapshots=successfulQuotes;
+  const fnoMovers=buildFnoMovers(successfulQuotes,Number(process.env.NEW_SCANNER_FNO_MOVERS_LIMIT||100),Number(process.env.NEW_SCANNER_MIN_MOVER_VOLUME||0));\n  const analysisMap=new Map();\n  for(const row of successfulQuotes.filter(r=>r.inNifty500))analysisMap.set(row.symbol,row);\n  for(const row of fnoMovers)analysisMap.set(row.symbol,row);\n  const snapshots=[...analysisMap.values()];
   const enriched=await mapLimit(snapshots,8,async stock=>{
     const withCandles=await fetchCandles(stock,broker);
     const analyses={};
@@ -53,11 +53,11 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     return{...option,riskValidation,decision,confidence:Math.max(directionalAnalysis.bullScore||0,directionalAnalysis.bearScore||0)};
   });
   const equityRows=enriched.filter(r=>r.inNifty500);
-  const optionPool=enriched.filter(r=>r.fnoEligible);
+  const moverSymbols=new Set(fnoMovers.map(r=>r.symbol));\n  const optionPool=enriched.filter(r=>r.fnoEligible&&(r.inNifty500||moverSymbols.has(r.symbol)));
   const ranked=rankCandidates(optionPool);
   const dashboard=dashboardRows(ranked);
   Object.assign(status,{
-    status:"SUCCESS",universeSize:universe.combined.length,stocksScanned:snapshots.length,
+    status:"SUCCESS",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,stocksScanned:snapshots.length,
     successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
     watchCount:ranked.filter(r=>r.decision==="WATCH").length,
