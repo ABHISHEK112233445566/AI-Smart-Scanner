@@ -1,7 +1,7 @@
 "use strict";
 
 const {setBroker,getActiveBroker,loadInstruments}=require("../brokers");
-const {fetchNifty500,buildFnoUniverse,buildUniverse,buildFnoMovers}=require("./universe");
+const {fetchNifty500,buildFnoUniverse,buildUniverse,buildFnoMovers,findNiftyIndex}=require("./universe");
 const {mapLimit,fetchSnapshots,fetchCandles}=require("./marketData");
 const {calculateTechnicalEvidence,combineTimeframes,deriveUnderlyingLevels}=require("./analysis");
 const {fetchNews,fetchUnderlyingOI}=require("./context");
@@ -34,13 +34,14 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   // Stage 1: build the two independent source universes and fetch live quotes.
   const [nifty500,instruments]=await Promise.all([fetchNifty500(),loadInstruments()]);
   const fnoStocks=buildFnoUniverse(instruments);
-  const universe=buildUniverse(nifty500,fnoStocks);
+  const niftyIndex=findNiftyIndex(instruments);
+  const universe=buildUniverse(nifty500,fnoStocks,niftyIndex);
   const quoteResults=await fetchSnapshots(universe.combined,broker,instruments,{batchSize:LIMITS.QUOTE_BATCH_SIZE});
   const successfulQuotes=quoteResults.filter(r=>r.quote?.valid);
   const failedQuotes=quoteResults.filter(r=>!r.quote?.valid);
   const fnoMovers=buildFnoMovers(successfulQuotes,Number(process.env.NEW_SCANNER_FNO_MOVERS_LIMIT||100),Number(process.env.NEW_SCANNER_MIN_MOVER_VOLUME||0));
   const analysisMap=new Map();
-  for(const row of successfulQuotes.filter(r=>r.inNifty500))analysisMap.set(row.symbol,row);
+  for(const row of successfulQuotes.filter(r=>r.inNifty500||r.isNiftyIndex))analysisMap.set(row.symbol,row);
   for(const row of fnoMovers)analysisMap.set(row.symbol,row);
   const snapshots=[...analysisMap.values()];
 
@@ -56,7 +57,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   // for the highest-quality directional F&O shortlist. Other NIFTY 500 rows
   // remain visible in EQUITY with an explicit deep-analysis status.
   const moverSymbols=new Set(fnoMovers.map(r=>r.symbol));
-  const fnoCandidates=dailyRows.filter(r=>r.fnoEligible&&(r.inNifty500||moverSymbols.has(r.symbol))&&
+  const fnoCandidates=dailyRows.filter(r=>r.fnoEligible&&(r.inNifty500||r.isNiftyIndex||moverSymbols.has(r.symbol))&&
     r.directionalAnalysis?.dataStatus==="VALID"&&["BULLISH","BEARISH"].includes(r.directionalAnalysis.direction));
   fnoCandidates.sort((a,b)=>Math.max(b.directionalAnalysis.bullScore||0,b.directionalAnalysis.bearScore||0)-Math.max(a.directionalAnalysis.bullScore||0,a.directionalAnalysis.bearScore||0));
   const deepLimit=Math.max(20,Math.min(100,Number(process.env.NEW_SCANNER_DEEP_ANALYSIS_LIMIT||60)));
@@ -95,7 +96,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const dashboard=dashboardRows(ranked);
   Object.assign(status,{
     status:"SUCCESS",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,
-    fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,
+    fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,niftyIndexIncluded:Boolean(niftyIndex),
     dailyAnalysisCount:dailyRows.length,deepAnalysisCount:deepRows.length,deepAnalysisLimit:deepLimit,
     stocksScanned:snapshots.length,successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
