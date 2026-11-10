@@ -11,6 +11,7 @@ function validateCandidate(row) {
   if(row?.dataStatus!=="VALID") reasons.push("UNDERLYING_QUOTE_NOT_VALID");
   if(row?.quote?.previousClose===null) reasons.push("PREVIOUS_CLOSE_UNAVAILABLE");
   if(row?.marketDataFresh!==true) reasons.push("UNDERLYING_QUOTE_STALE_OR_MARKET_CLOSED");
+  if(row?.tradeWindowOpen!==true) reasons.push("OUTSIDE_APPROVED_TRADE_WINDOW");
   const latestVolume=Number(row?.directionalAnalysis?.indicators?.latestVolume)||0;
   const averageVolume=Number(row?.directionalAnalysis?.indicators?.averageVolume)||0;
   if(!(latestVolume>0&&averageVolume>0&&latestVolume>=averageVolume)) reasons.push("UNDERLYING_VOLUME_NOT_CONFIRMED");
