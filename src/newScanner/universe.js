@@ -70,7 +70,7 @@ function buildFnoUniverse(instruments) {
 }
 function buildFnoMovers(quotedRows, limit=100, minimumVolume=0) {
   const valid=(Array.isArray(quotedRows)?quotedRows:[])
-    .filter(row=>row.fnoEligible===true&&row.quote?.valid===true&&row.quote.previousClose>0&&row.quote.volume!==null&&row.quote.volume>=minimumVolume)
+    .filter(row=>row.fnoEligible===true&&row.quote?.valid===true&&row.quote.previousClose>0&&row.quote.volume!==null&&row.quote.volume>0&&row.quote.volume>=minimumVolume)
     .map(row=>({...row,changePercent:row.quote.changePercent}));
   const gainers=[...valid].filter(row=>row.changePercent>0).sort((a,b)=>b.changePercent-a.changePercent).slice(0,Math.ceil(limit/2));
   const losers=[...valid].filter(row=>row.changePercent<0).sort((a,b)=>a.changePercent-b.changePercent).slice(0,Math.floor(limit/2));
