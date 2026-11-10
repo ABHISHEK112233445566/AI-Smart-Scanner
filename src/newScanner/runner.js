@@ -81,7 +81,8 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const base={...stock,candles:{...stock.candles,...deep.candles},timeframeAnalysis,underlyingLevels,news,oi,marketDataFresh,tradeWindowOpen:tradeWindowOpen(),scanTimestamp:new Date().toISOString()};
     const option=await analyzeOption(base,broker);
     const riskValidation=validateCandidate({...option,oi,news});
-    const decision=riskValidation.passed?"TRADE":"WATCH";
+    const optionSetupValid=option.optionContract?.valid===true&&option.optionPremiumSetup?.valid===true&&Number(option.optionQuote?.ltp)>0;
+    const decision=!optionSetupValid?"REJECT":riskValidation.passed?"TRADE":"WATCH";
     return {...option,riskValidation,decision,confidence:Math.max(stock.directionalAnalysis.bullScore||0,stock.directionalAnalysis.bearScore||0)};
   });
 
