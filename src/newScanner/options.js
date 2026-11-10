@@ -40,10 +40,13 @@ function optionPremiumLevels(candles,currentLtp=null) {
   const closed=rows.slice(-31,-1),entry=positive(currentLtp)??positive(rows.at(-1)?.close);
   if(!entry||closed.length<15) return {valid:false,reason:"OPTION_5M_SWINGS_UNAVAILABLE",candlesUsed:rows.length};
   const lows=closed.slice(-20).map(c=>c.low), highs=closed.slice(-20).map(c=>c.high);
-  const stop=Math.max(...lows.filter(v=>v<entry));
-  const target=Math.min(...highs.filter(v=>v>entry));
+  const validStops=lows.filter(v=>v>0&&v<entry);
+  const validTargets=highs.filter(v=>v>entry);
+  if(!validStops.length||!validTargets.length) return {valid:false,reason:"OPTION_5M_SWING_LEVELS_MISSING",entry,stopLoss:null,target:null,riskReward:null,candlesUsed:rows.length};
+  const stop=Math.max(...validStops);
+  const target=Math.min(...validTargets);
   const risk=entry-stop,reward=target-entry,rr=risk>0&&reward>0?reward/risk:null;
-  if(!(stop>0&&target>entry&&rr>=1.5)) return {valid:false,reason:"OPTION_PREMIUM_RR_BELOW_1_5_OR_LEVELS_MISSING",entry,stopLoss:stop||null,target:target||null,riskReward:rr,candlesUsed:rows.length};
+  if(!(stop>0&&target>entry&&rr>=1.5)) return {valid:false,reason:"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length};
   return {valid:true,entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource:"OPTION_5M_OHLC_SWINGS"};
 }
 async function analyzeOption(stock,broker) {
@@ -55,7 +58,7 @@ async function analyzeOption(stock,broker) {
     if(!selected.valid) return {...stock,optionStatus:"REJECTED",optionReason:selected.reason};
     const quote=await broker.getOptionQuote(selected.instrumentKey);
     const premiumQuote=quote?.raw??quote;
-    const optionQuote={ltp:positive(quote?.ltp??premiumQuote?.last_price),volume:number(quote?.volume??premiumQuote?.volume),oi:number(quote?.oi??premiumQuote?.oi),previousOI:number(quote?.previousOI??premiumQuote?.prev_oi),timestamp:quote?.timestamp??premiumQuote?.timestamp??null};
+    const optionQuote={ltp:positive(quote?.ltp??premiumQuote?.last_price),volume:number(quote?.volume??premiumQuote?.volume),oi:number(quote?.oi??premiumQuote?.oi),previousOI:number(quote?.previousOI??premiumQuote?.prev_oi),timestamp:quote?.lastTradeTime??quote?.last_trade_time??premiumQuote?.last_trade_time??quote?.timestamp??premiumQuote?.timestamp??null};
     if(!optionQuote.ltp) return {...stock,optionStatus:"REJECTED",optionReason:"OPTION_LTP_UNAVAILABLE"};
     const candlesRaw=await broker.getHistoricalData(selected.instrumentKey,"FIVE_MINUTE");
     const candles=(Array.isArray(candlesRaw)?candlesRaw:[]).map(c=>({time:c.time??c.timestamp,open:number(c.open),high:number(c.high),low:number(c.low),close:number(c.close),volume:number(c.volume)})).filter(c=>c.open&&c.high&&c.low&&c.close&&c.volume!==null);
