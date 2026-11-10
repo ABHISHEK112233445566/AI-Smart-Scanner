@@ -20,6 +20,7 @@ function validateCandidate(row) {
   const aligned=row?.timeframeAnalysis?.direction===row?.directionalAnalysis?.direction && Math.max(row?.timeframeAnalysis?.bullishTimeframes||0,row?.timeframeAnalysis?.bearishTimeframes||0)>=3;
   if(!aligned) reasons.push("MTF_ALIGNMENT_NOT_CONFIRMED");
   if(row?.optionQuoteFresh!==true) reasons.push("OPTION_QUOTE_STALE_OR_TIMESTAMP_MISSING");
+  if(row?.optionCandlesFresh!==true) reasons.push("OPTION_5M_CANDLES_STALE_OR_MISSING");
   if(row?.oi?.dataStatus!=="VALID") reasons.push("OI_DATA_UNAVAILABLE");
   if(row?.news?.status==="NEWS_UNAVAILABLE") reasons.push("NEWS_DATA_UNAVAILABLE");
   return { passed:reasons.length===0,reasons };
