@@ -16,7 +16,11 @@ function candidateScore(row) {
 function rankCandidates(rows) {
   const candidates=(Array.isArray(rows)?rows:[]).filter(r=>
     ["BULLISH","BEARISH"].includes(r.directionalAnalysis?.direction) &&
-    r.directionalAnalysis?.dataStatus==="VALID"
+    r.directionalAnalysis?.dataStatus==="VALID" &&
+    r.optionContract?.valid===true &&
+    r.optionPremiumSetup?.valid===true &&
+    Number(r.optionQuote?.ltp)>0 &&
+    ["TRADE","WATCH"].includes(r.decision)
   );
   return candidates.map(r=>({...r,confidence:candidateScore(r)}))
     .sort((a,b)=>b.confidence-a.confidence||(Number(b.optionPremiumSetup?.riskReward)||0)-(Number(a.optionPremiumSetup?.riskReward)||0))
