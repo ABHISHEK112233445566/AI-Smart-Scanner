@@ -8,6 +8,7 @@ function pct(a,b){return b>0?((a-b)/b)*100:0;}
 function priceDir(v){return v>=0.10?'UP':v<=-0.10?'DOWN':'FLAT';}
 function oiDir(v){return v>=1?'UP':v<=-1?'DOWN':'FLAT';}
 function classify(pc,oc){const p=priceDir(pc),o=oiDir(oc);if(p==='UP'&&o==='UP')return['LONG BUILDUP','BULLISH'];if(p==='DOWN'&&o==='UP')return['SHORT BUILDUP','BEARISH'];if(p==='UP'&&o==='DOWN')return['SHORT COVERING','BULLISH'];if(p==='DOWN'&&o==='DOWN')return['LONG UNWINDING','BEARISH'];return['NEUTRAL','NEUTRAL'];}
+function classificationReason(pc,oc){const p=priceDir(pc),o=oiDir(oc);if(p==='FLAT'&&o==='UP')return'PRICE_FLAT_OI_INCREASE_NO_DIRECTION';if(p==='FLAT'&&o==='DOWN')return'PRICE_FLAT_OI_DECREASE_NO_DIRECTION';if(p==='FLAT')return'PRICE_CHANGE_BELOW_0_10_PERCENT';if(o==='FLAT')return'OI_CHANGE_BELOW_1_PERCENT';return'PRICE_AND_OI_CONFIRM_DIRECTION';}
 function normalizeExpiry(v){const s=String(v??'').trim();if(!s)return null;if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;const d=new Date(s);return Number.isNaN(d.getTime())?null:d.toISOString().slice(0,10);}
 function expiryFromContracts(contracts){const today=new Date();today.setHours(0,0,0,0);return[...new Set((contracts||[]).map(c=>normalizeExpiry(c?.expiry??c?.expiry_date)).filter(Boolean))].map(x=>({x,d:new Date(x+'T00:00:00')})).filter(x=>!Number.isNaN(x.d.getTime())&&x.d>=today).sort((a,b)=>a.d-b.d)[0]?.x||null;}
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
@@ -37,7 +38,7 @@ async function getUnderlyingOIMood({instrumentKey,currentPrice,previousPrice}={}
    const value={mood:'UNKNOWN',sentiment:'UNKNOWN',dataAvailable:false,reason:'INCOMPLETE_OI_OR_PRICE',oi,previousOI,oiChange,oiChangePercent,callOI,putOI,prevCallOI,prevPutOI,expiry,source:`UPSTOX_OPTION_CHAIN_${expiry}`};
    cache.set(key,{at:Date.now(),value});return value;
   }
-  const priceChange=price-prevPrice,priceChangePercent=pct(price,prevPrice),[mood,sentiment]=classify(priceChangePercent,oiChangePercent),value={mood,sentiment,dataAvailable:true,priceChange,priceChangePercent,oiChange,oiChangePercent,oi,previousOI,callOI,putOI,prevCallOI,prevPutOI,expiry,source:'UPSTOX_OPTION_CHAIN',reason:'OK'};
+  const priceChange=price-prevPrice,priceChangePercent=pct(price,prevPrice),[mood,sentiment]=classify(priceChangePercent,oiChangePercent),value={mood,sentiment,dataAvailable:true,priceChange,priceChangePercent,priceChangeDirection:priceDir(priceChangePercent),oiChangeDirection:oiDir(oiChangePercent),classificationReason:classificationReason(priceChangePercent,oiChangePercent),oiChange,oiChangePercent,oi,previousOI,callOI,putOI,prevCallOI,prevPutOI,expiry,source:'UPSTOX_OPTION_CHAIN',reason:'OK'};
   cache.set(key,{at:Date.now(),value});return value;
  }catch(e){
   const status=e?.response?.status;
