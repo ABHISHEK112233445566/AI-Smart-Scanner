@@ -1,0 +1,67 @@
+"use strict";
+
+const { TIMEFRAMES, LIMITS } = require("./schema");
+const { normalizeCandle, validateQuote, symbol } = require("./normalize");
+
+function instrumentKeyMap(instruments) {
+  const map = new Map();
+  for (const item of Array.isArray(instruments) ? instruments : []) {
+    if (String(item?.segment ?? "").toUpperCase() !== "NSE_EQ") continue;
+    const name = symbol(item.trading_symbol ?? item.tradingSymbol ?? item.symbol);
+    const key = String(item.instrument_key ?? item.instrumentKey ?? "").trim();
+    if (name && key && !map.has(name)) map.set(name, key);
+  }
+  return map;
+}
+async function mapLimit(items, limit, worker) {
+  const source = Array.isArray(items) ? items : [], output = new Array(source.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, source.length) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= source.length) return;
+      try { output[index] = await worker(source[index], index); }
+      catch (error) { output[index] = { error: error?.message || String(error) }; }
+    }
+  });
+  await Promise.all(runners);
+  return output;
+}
+async function fetchStockSnapshot(stock, broker, keyMap) {
+  const instrumentKey = keyMap.get(symbol(stock.symbol));
+  if (!instrumentKey) return { ...stock, dataStatus: "REJECTED", dataReason: "NSE_EQ_INSTRUMENT_KEY_NOT_FOUND" };
+  try {
+    const raw = await broker.getQuote(instrumentKey);
+    const data = raw?.data ?? {};
+    const quote = data[instrumentKey] ?? Object.values(data)[0] ?? raw;
+    const normalized = validateQuote({
+      ...quote,
+      raw: quote,
+      ltp: quote?.last_price ?? quote?.ltp,
+      netChange: quote?.net_change ?? quote?.netChange,
+      previousClose: quote?.previous_close ?? quote?.previousClose
+    });
+    return { ...stock, instrumentKey, quote: normalized, dataStatus: normalized.valid && normalized.previousClose ? "VALID" : "PARTIAL", dataReason: normalized.reason };
+  } catch (error) {
+    return { ...stock, instrumentKey, dataStatus: "FAILED", dataReason: error?.message || String(error) };
+  }
+}
+async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
+  const results = {};
+  for (const frame of timeframes) {
+    try {
+      const raw = await broker.getHistoricalData(stock.instrumentKey, frame.interval);
+      const candles = (Array.isArray(raw) ? raw : []).map(normalizeCandle).filter(Boolean);
+      const minimum = frame.key === "daily" ? LIMITS.MIN_DAILY_CANDLES : LIMITS.MIN_INTRADAY_CANDLES;
+      results[frame.key] = {
+        interval: frame.interval, candles, count: candles.length,
+        status: candles.length >= minimum ? "VALID" : "INSUFFICIENT_HISTORY",
+        required: minimum
+      };
+    } catch (error) {
+      results[frame.key] = { interval: frame.interval, candles: [], count: 0, status: "FAILED", required: frame.key === "daily" ? LIMITS.MIN_DAILY_CANDLES : LIMITS.MIN_INTRADAY_CANDLES, error: error?.message || String(error) };
+    }
+  }
+  return { ...stock, candles: results };
+}
+module.exports = { instrumentKeyMap, mapLimit, fetchStockSnapshot, fetchCandles };
