@@ -48,8 +48,10 @@ const risk=buildDailyRiskState({date:"2026-11-10",tradeCount:1,realizedPnl:-100}
 assert.equal(validateEntryPermission(risk).allowed,false);
 assert.equal(validateCandidate({dataStatus:"VALID",quote:{previousClose:10},marketDataFresh:false,directionalAnalysis:{direction:"BULLISH"},underlyingLevels:{valid:true,riskReward:2},optionStatus:"VALID",oi:{dataStatus:"VALID"},news:{status:"NO_MAJOR_NEWS"}}).passed,false);
 
-const candidate={directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},riskValidation:{passed:false},decision:"WATCH"};
+const candidate={directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},optionContract:{valid:true},optionPremiumSetup:{valid:true,riskReward:2},optionQuote:{ltp:10},riskValidation:{passed:false},decision:"WATCH"};
 assert.equal(rankCandidates([candidate]).length,1);
+assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false}}]).length,0);
+assert.equal(rankCandidates([{...candidate,optionContract:{valid:false}}]).length,0);
 assert.equal(LIMITS.SCANNER_ROWS,20);
 assert.deepEqual(DASHBOARD_HEADERS,["stock","stockPrice","optionType","strike","stockEntryPrice","stockStopLossPrice","stockTargetPrice","riskReward","confidence","oiMood","volume","newsStatus","newsHeadline"]);
 console.log("NEW SCANNER CORE TESTS PASSED");
