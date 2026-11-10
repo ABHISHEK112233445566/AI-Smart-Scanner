@@ -1,7 +1,11 @@
-name: AI Scanner
+name: AI Smart Scanner (New Options Engine)
 
 on:
   workflow_dispatch:
+
+  push:
+    branches:
+      - master
 
   schedule:
     # 09:10 IST = 03:40 UTC
@@ -15,17 +19,16 @@ concurrency:
 
 jobs:
   scanner:
-    name: Run AI Smart Scanner
+    name: Run New AI Smart Scanner
     runs-on: ubuntu-latest
 
     # GitHub Actions performs ONE complete scan and then exits.
     # The 30-minute scheduler is not used inside GitHub Actions.
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     env:
       UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
       GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
-      SCANNER_SCHEDULER_ENABLED: 'false'
 
     steps:
       - name: Checkout scanner
@@ -40,8 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run syntax and regression tests
-        run: npm test
+      - name: Run new scanner syntax and regression tests
+        run: npm run test:new-scanner
 
       - name: Verify required secrets
         shell: bash
@@ -64,25 +67,25 @@ jobs:
           echo "Configuration verified."
           echo "========================================"
 
-      - name: Run AI Smart Scanner once
+      - name: Run new options scanner once
         id: scanner
-        run: npm run scan-once
+        run: npm run new-scan-once
 
       - name: Scanner result
         if: always()
         shell: bash
         run: |
           echo "========================================"
-          echo "       AI SMART SCANNER RESULT"
+          echo "       NEW OPTIONS SCANNER RESULT"
           echo "========================================"
           if [ "${{ steps.scanner.outcome }}" = "success" ]; then
-            echo "Scanner completed successfully."
+            echo "New scanner completed and confirmed its Google Sheets writes."
           else
-            echo "::error::Scanner failed."
+            echo "::error::New scanner failed. Old scanner is no longer invoked by this production workflow."
             echo "Check the scanner logs above."
           fi
           echo "========================================"
 
       - name: Complete workflow
         if: always()
-        run: echo "AI Scanner workflow finished."
+        run: echo "New AI Smart Scanner workflow finished."
