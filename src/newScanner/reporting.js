@@ -80,6 +80,12 @@ async function publishResults(result,{url=process.env.GOOGLE_SHEET_WEBHOOK_URL,c
   // Always replace all three data tabs, including with zero rows. This prevents
   // yesterday's/old-scanner signals surviving when today's new scan is empty.
   const writes=[];
+  // Preserve the last known-good output when the upstream quote/universe feed is empty.
+  if(!result.status?.stocksScanned||!equityRows.length){
+    result.status={...result.status,status:"NO_DATA",errors:[...(result.status?.errors||[]),"NO_VALID_EQUITY_ROWS_SHEETS_PRESERVED"]};
+    writes.push(await postStatus(result.status,url,client));
+    return writes;
+  }
   writes.push(await postSheet(SHEETS.SCANNER,SCANNER_HEADERS,scanRows.map(r=>SCANNER_HEADERS.map(h=>clean(r[h]))),url,client));
   writes.push(await postSheet(SHEETS.EQUITY,SCANNER_HEADERS,equityRows.map(r=>SCANNER_HEADERS.map(h=>clean(r[h]))),url,client));
   writes.push(await postSheet(SHEETS.DASHBOARD,DASHBOARD_HEADERS,dashboardRows,url,client));
