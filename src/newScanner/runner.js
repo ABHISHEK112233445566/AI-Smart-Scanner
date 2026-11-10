@@ -48,7 +48,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const dailyRows=await mapLimit(snapshots,8,async stock=>{
     const data=await fetchCandles(stock,broker,[{key:"daily",interval:"ONE_DAY"}]);
     const daily=data.candles?.daily;
-    const analysis=daily?.status==="VALID"?calculateTechnicalEvidence(daily.candles):{direction:"UNKNOWN",dataStatus:daily?.status||"MISSING"};
+    const analysis=daily?.status==="VALID"?calculateTechnicalEvidence(daily.candles,{currentPrice:stock.quote?.ltp,currentVolume:stock.quote?.volume}):{direction:"UNKNOWN",dataStatus:daily?.status||"MISSING"};
     return {...data,directionalAnalysis:analysis,timeframeAnalysis:{direction:"NOT_ANALYSED",unknownTimeframes:4},scanTimestamp:new Date().toISOString()};
   });
 
@@ -71,7 +71,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const analyses={daily:stock.directionalAnalysis};
     for(const frame of ["fourHour","oneHour","fifteenMinute","fiveMinute"]){
       const item=deep.candles?.[frame];
-      analyses[frame]=item?.status==="VALID"?calculateTechnicalEvidence(item.candles):{direction:"UNKNOWN",dataStatus:item?.status||"MISSING"};
+      analyses[frame]=item?.status==="VALID"?calculateTechnicalEvidence(item.candles,{currentPrice:stock.quote?.ltp}):{direction:"UNKNOWN",dataStatus:item?.status||"MISSING"};
     }
     const timeframeAnalysis=combineTimeframes(analyses);
     const underlyingLevels=deriveUnderlyingLevels(stock.directionalAnalysis,stock.quote?.ltp);
