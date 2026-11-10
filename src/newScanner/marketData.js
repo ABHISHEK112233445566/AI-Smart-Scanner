@@ -1,6 +1,7 @@
 "use strict";
 
 const { TIMEFRAMES, LIMITS } = require("./schema");
+const axios=require("axios");
 const { normalizeCandle, validateQuote, symbol } = require("./normalize");
 
 function instrumentKeyMap(instruments) {
@@ -46,6 +47,40 @@ async function fetchStockSnapshot(stock, broker, keyMap) {
     return { ...stock, instrumentKey, dataStatus: "FAILED", dataReason: error?.message || String(error) };
   }
 }
+
+async function fetchSnapshots(stocks, broker, instruments, options={}) {
+  const keyMap=instrumentKeyMap(instruments);
+  const source=Array.isArray(stocks)?stocks:[];
+  const batchSize=Math.max(1,Math.min(100,Number(options.batchSize)||100));
+  if(String(broker?.name||"").toUpperCase()==="UPSTOX"&&process.env.UPSTOX_ACCESS_TOKEN) {
+    const output=[];
+    for(let i=0;i<source.length;i+=batchSize) {
+      const batch=source.slice(i,i+batchSize);
+      const keyed=batch.map(row=>({row,key:keyMap.get(symbol(row.symbol))})).filter(x=>x.key);
+      const missing=batch.filter(row=>!keyMap.has(symbol(row.symbol))).map(row=>({...row,dataStatus:"REJECTED",dataReason:"NSE_EQ_INSTRUMENT_KEY_NOT_FOUND"}));
+      output.push(...missing);
+      if(!keyed.length)continue;
+      try {
+        const response=await axios.get("https://api.upstox.com/v2/market-quote/quotes",{
+          params:{instrument_key:keyed.map(x=>x.key).join(",")},
+          headers:{Accept:"application/json",Authorization:"Bearer "+process.env.UPSTOX_ACCESS_TOKEN},
+          timeout:20000
+        });
+        const data=response?.data?.data||{};
+        for(const item of keyed) {
+          const raw=data[item.key]||data[encodeURIComponent(item.key)]||Object.entries(data).find(([k])=>decodeURIComponent(k)===item.key)?.[1];
+          if(!raw){output.push({...item.row,instrumentKey:item.key,dataStatus:"FAILED",dataReason:"QUOTE_NOT_RETURNED"});continue;}
+          const quote=validateQuote({...raw,raw,last_price:raw.last_price,net_change:raw.net_change,previous_close:raw.previous_close});
+          output.push({...item.row,instrumentKey:item.key,quote,dataStatus:quote.valid&&quote.previousClose?"VALID":"PARTIAL",dataReason:quote.reason});
+        }
+      } catch(error) {
+        for(const item of keyed)output.push({...item.row,instrumentKey:item.key,dataStatus:"FAILED",dataReason:error?.response?.data?.errors?.[0]?.message||error.message});
+      }
+    }
+    return output;
+  }
+  return mapLimit(source,Math.min(8,batchSize),row=>fetchStockSnapshot(row,broker,keyMap));
+}
 async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
   const results = {};
   for (const frame of timeframes) {
@@ -64,4 +99,4 @@ async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
   }
   return { ...stock, candles: results };
 }
-module.exports = { instrumentKeyMap, mapLimit, fetchStockSnapshot, fetchCandles };
+module.exports = { instrumentKeyMap, mapLimit, fetchStockSnapshot, fetchSnapshots, fetchCandles };
