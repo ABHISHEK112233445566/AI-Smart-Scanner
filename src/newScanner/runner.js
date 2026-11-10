@@ -33,7 +33,11 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const quoted=quoteResults.filter(r=>r&&!r.error);
   const successfulQuotes=quoted.filter(r=>r.quote?.valid);
   const failedQuotes=quoted.filter(r=>!r.quote?.valid);
-  const fnoMovers=buildFnoMovers(successfulQuotes,Number(process.env.NEW_SCANNER_FNO_MOVERS_LIMIT||100),Number(process.env.NEW_SCANNER_MIN_MOVER_VOLUME||0));\n  const analysisMap=new Map();\n  for(const row of successfulQuotes.filter(r=>r.inNifty500))analysisMap.set(row.symbol,row);\n  for(const row of fnoMovers)analysisMap.set(row.symbol,row);\n  const snapshots=[...analysisMap.values()];
+  const fnoMovers=buildFnoMovers(successfulQuotes,Number(process.env.NEW_SCANNER_FNO_MOVERS_LIMIT||100),Number(process.env.NEW_SCANNER_MIN_MOVER_VOLUME||0));
+  const analysisMap=new Map();
+  for(const row of successfulQuotes.filter(r=>r.inNifty500))analysisMap.set(row.symbol,row);
+  for(const row of fnoMovers)analysisMap.set(row.symbol,row);
+  const snapshots=[...analysisMap.values()];
   const enriched=await mapLimit(snapshots,8,async stock=>{
     const withCandles=await fetchCandles(stock,broker);
     const analyses={};
