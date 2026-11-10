@@ -39,6 +39,12 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const quoteResults=await fetchSnapshots(universe.combined,broker,instruments,{batchSize:LIMITS.QUOTE_BATCH_SIZE});
   const successfulQuotes=quoteResults.filter(r=>r.quote?.valid);
   const failedQuotes=quoteResults.filter(r=>!r.quote?.valid);
+  console.log("NEW SCANNER QUOTE STAGE "+JSON.stringify({
+    universeRows:universe.combined.length,masterRows:instruments.length,
+    instrumentKeysFound:quoteResults.filter(r=>r.instrumentKey).length,
+    successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
+    failureReasons:[...new Set(failedQuotes.map(r=>r.dataReason||r.error||"UNKNOWN"))].slice(0,20)
+  }));
   const fnoMovers=buildFnoMovers(successfulQuotes,Number(process.env.NEW_SCANNER_FNO_MOVERS_LIMIT||100),Number(process.env.NEW_SCANNER_MIN_MOVER_VOLUME||0));
   const analysisMap=new Map();
   for(const row of successfulQuotes.filter(r=>r.inNifty500||r.isNiftyIndex))analysisMap.set(row.symbol,row);
@@ -95,14 +101,15 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const ranked=rankCandidates(deepRows);
   const dashboard=dashboardRows(ranked);
   Object.assign(status,{
-    status:"SUCCESS",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,
+    status:successfulQuotes.length&&equityRows.length?"SUCCESS":"NO_DATA",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,
     fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,niftyIndexIncluded:Boolean(niftyIndex),
     dailyAnalysisCount:dailyRows.length,deepAnalysisCount:deepRows.length,deepAnalysisLimit:deepLimit,
     stocksScanned:snapshots.length,successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
     watchCount:ranked.filter(r=>r.decision==="WATCH").length,
     rejected:deepRows.length-ranked.length,errors,elapsedMs:Date.now()-started,
-    lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),tradeWindowOpen:tradeWindowOpen(),istDate:currentIstDate()
+    lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),tradeWindowOpen:tradeWindowOpen(),istDate:currentIstDate(),
+    errors:successfulQuotes.length&&equityRows.length?errors:[...errors,"NO_VALID_EQUITY_ROWS_FROM_UPSTREAM_QUOTES"]
   });
   const result={scannerRows:ranked,dashboardRows:dashboard,equityRows,status};
   if(writeSheets)result.sheetWrites=await publishResults(result);
