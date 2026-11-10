@@ -8,9 +8,11 @@ function instrumentKeyMap(instruments) {
   const map = new Map();
   for (const item of Array.isArray(instruments) ? instruments : []) {
     const segment = String(item?.segment ?? "").toUpperCase();
+    const exchange = String(item?.exchange ?? "").toUpperCase();
+    const type = String(item?.instrument_type ?? "").toUpperCase();
     const key = String(item.instrument_key ?? item.instrumentKey ?? "").trim();
     if (!key) continue;
-    if (segment === "NSE_EQ") {
+    if (segment === "NSE_EQ" || (exchange === "NSE" && type === "EQ")) {
       const name = symbol(item.trading_symbol ?? item.tradingSymbol ?? item.symbol);
       if (name && !map.has(name)) map.set(name, key);
     } else if (segment === "NSE_INDEX") {
@@ -58,12 +60,22 @@ async function fetchSnapshots(stocks, broker, instruments, options={}) {
   const keyMap=instrumentKeyMap(instruments);
   const source=Array.isArray(stocks)?stocks:[];
   const batchSize=Math.max(1,Math.min(100,Number(options.batchSize)||100));
+  const resolvedKeys=new Map(keyMap);
+  await mapLimit(source,8,async row=>{
+    const name=symbol(row.symbol);
+    if(resolvedKeys.has(name))return;
+    try {
+      const resolved=await broker.getInstrumentKey(row.symbol);
+      const key=typeof resolved==="string"?resolved:(resolved?.instrument_key??resolved?.instrumentKey??"");
+      if(key)resolvedKeys.set(name,String(key));
+    } catch (_) {}
+  });
   if(String(broker?.name||"").toUpperCase()==="UPSTOX"&&process.env.UPSTOX_ACCESS_TOKEN) {
     const output=[];
     for(let i=0;i<source.length;i+=batchSize) {
       const batch=source.slice(i,i+batchSize);
-      const keyed=batch.map(row=>({row,key:keyMap.get(symbol(row.symbol))})).filter(x=>x.key);
-      const missing=batch.filter(row=>!keyMap.has(symbol(row.symbol))).map(row=>({...row,dataStatus:"REJECTED",dataReason:"NSE_EQ_INSTRUMENT_KEY_NOT_FOUND"}));
+      const keyed=batch.map(row=>({row,key:resolvedKeys.get(symbol(row.symbol))})).filter(x=>x.key);
+      const missing=batch.filter(row=>!resolvedKeys.has(symbol(row.symbol))).map(row=>({...row,dataStatus:"REJECTED",dataReason:"NSE_EQ_INSTRUMENT_KEY_NOT_FOUND"}));
       output.push(...missing);
       if(!keyed.length)continue;
       try {
@@ -85,7 +97,7 @@ async function fetchSnapshots(stocks, broker, instruments, options={}) {
     }
     return output;
   }
-  return mapLimit(source,Math.min(8,batchSize),row=>fetchStockSnapshot(row,broker,keyMap));
+  return mapLimit(source,Math.min(8,batchSize),row=>fetchStockSnapshot(row,broker,resolvedKeys));
 }
 async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
   const results = {};
