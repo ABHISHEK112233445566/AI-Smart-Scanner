@@ -74,7 +74,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
       analyses[frame]=item?.status==="VALID"?calculateTechnicalEvidence(item.candles):{direction:"UNKNOWN",dataStatus:item?.status||"MISSING"};
     }
     const timeframeAnalysis=combineTimeframes(analyses);
-    const underlyingLevels=deriveUnderlyingLevels(stock.directionalAnalysis);
+    const underlyingLevels=deriveUnderlyingLevels(stock.directionalAnalysis,stock.quote?.ltp);
     const [news,oi]=await Promise.all([fetchNews(stock.symbol),fetchUnderlyingOI(stock,broker)]);
     const timestamp=stock.quote.timestamp;
     const marketDataFresh=marketIsOpen()&&Number.isFinite(timestamp)&&Date.now()-timestamp<=LIMITS.MAX_QUOTE_AGE_MS;
