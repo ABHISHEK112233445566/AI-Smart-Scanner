@@ -61,7 +61,7 @@ async function postStatus(status,url,client=axios) {
   if(!url)throw new Error("GOOGLE_SHEET_WEBHOOK_URL_MISSING");
   const ist=new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"medium"}).format(new Date());
   const scannerStatus={
-    status:status.status,lastScanTime:status.lastScanTime,lastScanTimeIST:ist,lastScanSource:"NEW_SCANNER",
+    status:status.status,lastScanTime:status.lastScanTime,lastScanTimeIST:ist,lastScanSource:"NEW_SCANNER"+(Array.isArray(status.errors)&&status.errors.length?" | "+status.errors.join("; ").slice(0,300):""),
     broker:process.env.BROKER||"UPSTOX",universe:"NIFTY_500 + FNO_MOVERS",
     stocksScanned:status.stocksScanned,successfulScans:status.successfulQuotes,failedScans:status.failedQuotes,
     callCandidates:status.callCandidates||0,putCandidates:status.putCandidates||0,
