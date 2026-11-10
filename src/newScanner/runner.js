@@ -2,7 +2,7 @@
 
 const {setBroker,getActiveBroker,loadInstruments}=require("../brokers");
 const {fetchNifty500,buildFnoUniverse,buildUniverse,buildFnoMovers}=require("./universe");
-const {instrumentKeyMap,mapLimit,fetchStockSnapshot,fetchCandles}=require("./marketData");
+const {mapLimit,fetchSnapshots,fetchCandles}=require("./marketData");
 const {calculateTechnicalEvidence,combineTimeframes,deriveUnderlyingLevels}=require("./analysis");
 const {fetchNews,fetchUnderlyingOI}=require("./context");
 const {analyzeOption}=require("./options");
@@ -28,8 +28,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const [nifty500,instruments]=await Promise.all([fetchNifty500(),loadInstruments()]);
   const fnoStocks=buildFnoUniverse(instruments);
   const universe=buildUniverse(nifty500,fnoStocks);
-  const keyMap=instrumentKeyMap(instruments);
-  const quoteResults=await mapLimit(universe.combined,LIMITS.QUOTE_BATCH_SIZE,stock=>fetchStockSnapshot(stock,broker,keyMap));
+  const quoteResults=await fetchSnapshots(universe.combined,broker,instruments,{batchSize:LIMITS.QUOTE_BATCH_SIZE});
   const quoted=quoteResults.filter(r=>r&&!r.error);
   const successfulQuotes=quoted.filter(r=>r.quote?.valid);
   const failedQuotes=quoted.filter(r=>!r.quote?.valid);
