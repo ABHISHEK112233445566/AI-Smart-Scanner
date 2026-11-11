@@ -18,7 +18,6 @@ function rankCandidates(rows) {
     ["BULLISH","BEARISH"].includes(r.directionalAnalysis?.direction) &&
     r.directionalAnalysis?.dataStatus==="VALID" &&
     r.optionContract?.valid===true &&
-    r.optionPremiumSetup?.valid===true &&
     Number(r.optionQuote?.ltp)>0 &&
     ["TRADE","WATCH"].includes(r.decision)
   );
