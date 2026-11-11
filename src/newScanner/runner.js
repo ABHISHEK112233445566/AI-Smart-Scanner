@@ -62,7 +62,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   fnoCandidates.sort((a,b)=>Math.max(b.directionalAnalysis.bullScore||0,b.directionalAnalysis.bearScore||0)-Math.max(a.directionalAnalysis.bullScore||0,a.directionalAnalysis.bearScore||0));
   const deepLimit=Math.max(20,Math.min(100,Number(process.env.NEW_SCANNER_DEEP_ANALYSIS_LIMIT||60)));
   const deepCandidates=fnoCandidates.slice(0,deepLimit);
-  const deepRows=await mapLimit(deepCandidates,6,async stock=>{
+  const deepResults=await mapLimit(deepCandidates,6,async stock=>{
     const deep=await fetchCandles(stock,broker,[
       {key:"fourHour",interval:"FOUR_HOUR"},
       {key:"oneHour",interval:"ONE_HOUR"},
@@ -87,6 +87,41 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     return {...option,riskValidation,decision,confidence:Math.max(stock.directionalAnalysis.bullScore||0,stock.directionalAnalysis.bearScore||0)};
   });
 
+  // mapLimit deliberately captures per-stock exceptions. Recover those rows
+  // as WATCH candidates using their already validated daily analysis instead
+  // of silently dropping them from SCANNER/Dashboard. Never promote a
+  // recovered row to TRADE; retain the underlying failure for diagnosis.
+  const deepFailureDetails=[];
+  const deepRows=deepResults.map((row,index)=>{
+    if(!row?.error)return row;
+    const stock=deepCandidates[index];
+    const message=String(row.error);
+    deepFailureDetails.push({symbol:stock?.symbol||"UNKNOWN",error:message});
+    const confidence=Math.max(stock?.directionalAnalysis?.bullScore||0,stock?.directionalAnalysis?.bearScore||0);
+    return {
+      ...stock,
+      timeframeAnalysis:{direction:"UNKNOWN",bullishTimeframes:0,bearishTimeframes:0,unknownTimeframes:4,rows:[]},
+      underlyingLevels:deriveUnderlyingLevels(stock?.directionalAnalysis,stock?.quote?.ltp),
+      news:{status:"NEWS_UNAVAILABLE",direction:"UNKNOWN",headline:""},
+      oi:{dataStatus:"UNAVAILABLE",reason:"DEEP_ANALYSIS_FAILED"},
+      optionStatus:"FAILED",
+      optionReason:"DEEP_ANALYSIS_FAILED",
+      riskValidation:{passed:false,reasons:["DEEP_ANALYSIS_FAILED",message]},
+      decision:"WATCH",
+      confidence,
+      deepAnalysisStatus:"RECOVERED_AS_WATCH",
+      deepAnalysisError:message,
+      scanTimestamp:new Date().toISOString()
+    };
+  });
+  if(deepFailureDetails.length){
+    errors.push(...deepFailureDetails.map(x=>"DEEP_ANALYSIS_FAILED:"+x.symbol+":"+x.error));
+    console.error("NEW SCANNER DEEP ANALYSIS FAILURES "+JSON.stringify({
+      count:deepFailureDetails.length,
+      samples:deepFailureDetails.slice(0,10)
+    }));
+  }
+
   const deepBySymbol=new Map(deepRows.map(r=>[r.symbol,r]));
   const equityRows=dailyRows.filter(r=>r.inNifty500).map(r=>deepBySymbol.get(r.symbol)||{
     ...r,decision:"WATCH",confidence:Math.max(r.directionalAnalysis?.bullScore||0,r.directionalAnalysis?.bearScore||0),
@@ -98,6 +133,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     status:"SUCCESS",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,
     fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,niftyIndexIncluded:Boolean(niftyIndex),
     dailyAnalysisCount:dailyRows.length,deepAnalysisCount:deepRows.length,deepAnalysisLimit:deepLimit,
+    deepAnalysisFailed:deepFailureDetails.length,deepAnalysisErrors:deepFailureDetails.slice(0,10),
     stocksScanned:snapshots.length,successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
     watchCount:ranked.filter(r=>r.decision==="WATCH").length,
@@ -110,7 +146,8 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     nifty500:status.nifty500Size,fnoUniverse:status.fnoUniverseSize,fnoMovers:status.fnoMoversSelected,
     dailyAnalysed:status.dailyAnalysisCount,deepAnalysed:status.deepAnalysisCount,
     quotes:status.successfulQuotes,failed:status.failedQuotes,scanner:ranked.length,
-    dashboard:dashboard.length,trade:status.tradeCount,watch:status.watchCount,elapsedMs:status.elapsedMs
+    dashboard:dashboard.length,trade:status.tradeCount,watch:status.watchCount,
+    deepFailed:status.deepAnalysisFailed,deepErrorSamples:status.deepAnalysisErrors,elapsedMs:status.elapsedMs
   }));
   return result;
 }
