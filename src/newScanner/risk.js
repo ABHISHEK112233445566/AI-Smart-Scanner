@@ -20,6 +20,9 @@ function validateCandidate(row) {
   if(row?.optionStatus!=="VALID") reasons.push(row?.optionReason||"OPTION_SETUP_NOT_VALID");
   const aligned=row?.timeframeAnalysis?.direction===row?.directionalAnalysis?.direction && Math.max(row?.timeframeAnalysis?.bullishTimeframes||0,row?.timeframeAnalysis?.bearishTimeframes||0)>=3;
   if(!aligned) reasons.push("MTF_ALIGNMENT_NOT_CONFIRMED");
+  const oppositePattern=row?.directionalAnalysis?.direction==="BULLISH"?"BEARISH":"BULLISH";
+  const confirmedOpposingPatterns=(row?.timeframeAnalysis?.rows||[]).filter(x=>x.patternStatus==="CONFIRMED"&&x.patternDirection===oppositePattern).length;
+  if(confirmedOpposingPatterns>=2) reasons.push("CONFIRMED_PATTERN_CONFLICT_ACROSS_TIMEFRAMES");
   if(row?.optionQuoteFresh!==true) reasons.push("OPTION_QUOTE_STALE_OR_TIMESTAMP_MISSING");
   if(row?.optionCandlesFresh!==true) reasons.push("OPTION_5M_CANDLES_STALE_OR_MISSING");
   if(row?.oi?.dataStatus!=="VALID") reasons.push("OI_DATA_UNAVAILABLE");
