@@ -83,7 +83,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const option=await analyzeOption(base,broker);
     const riskValidation=validateCandidate({...option,oi,news});
     const optionSetupValid=option.optionContract?.valid===true&&option.optionPremiumSetup?.valid===true&&Number(option.optionQuote?.ltp)>0;
-    const decision=!optionSetupValid?"REJECT":riskValidation.passed?"TRADE":"WATCH";
+    // A missing/weak option-premium swing setup must downgrade the stock to WATCH, not erase it.\n    // Only a fully validated option setup plus every risk gate may become TRADE.\n    const decision=optionSetupValid&&riskValidation.passed?"TRADE":"WATCH";
     return {...option,riskValidation,decision,confidence:Math.max(stock.directionalAnalysis.bullScore||0,stock.directionalAnalysis.bearScore||0)};
   });
 
