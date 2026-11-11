@@ -42,7 +42,7 @@ function scannerRow(r) {
 }
 function dashboardRow(r) {
   const q=r.quote||{},s=r.underlyingLevels||{},o=r.optionContract||{},n=r.news||{};
-  const row={stock:r.symbol,stockPrice:q.ltp,optionType:o.side,strike:o.strike,stockEntryPrice:s.entry,stockStopLossPrice:s.stopLoss,stockTargetPrice:s.target,riskReward:s.riskReward,confidence:r.confidence,oiMood:r.oi?.mood,volume:q.volume,newsStatus:n.status,newsHeadline:n.headline};
+  const row={stock:r.symbol,stockPrice:q.ltp,optionType:o.side||(r.directionalAnalysis?.direction==="BULLISH"?"CE":r.directionalAnalysis?.direction==="BEARISH"?"PE":""),strike:o.strike,stockEntryPrice:s.entry,stockStopLossPrice:s.stopLoss,stockTargetPrice:s.target,riskReward:s.riskReward,confidence:r.confidence,oiMood:r.oi?.mood,volume:q.volume,newsStatus:n.status,newsHeadline:n.headline};
   return DASHBOARD_HEADERS.map(h=>clean(row[h]));
 }
 async function parseSuccess(response,action) {
