@@ -66,7 +66,7 @@ async function fetchSnapshots(stocks, broker, instruments, options={}) {
         ...raw,raw,
         ltp:raw?.last_price??raw?.ltp,
         netChange:raw?.net_change??raw?.netChange,
-        previousClose:raw?.previous_close??raw?.previousClose??raw?.close??raw?.ohlc?.close
+        previousClose:raw?.previous_close??raw?.previousClose??raw?.prev_close??raw?.ohlc?.close
       });
       if(!quote.valid)throw new Error(quote.reason||"INVALID_FALLBACK_QUOTE");
       return {...item.row,instrumentKey:item.key,quote,dataStatus:quote.previousClose?"VALID":"PARTIAL",dataReason:"SINGLE_QUOTE_FALLBACK_AFTER_"+reason};
@@ -124,7 +124,7 @@ async function fetchCandles(stock, broker, timeframes = TIMEFRAMES) {
   for (const frame of timeframes) {
     try {
       const raw = await broker.getHistoricalData(stock.instrumentKey, frame.interval, { includeLiveQuote: false });
-      const candles = (Array.isArray(raw) ? raw : []).map(normalizeCandle).filter(Boolean);
+      const candles = (Array.isArray(raw) ? raw : []).map(normalizeCandle).filter(Boolean).sort((a,b)=>new Date(a.time)-new Date(b.time));
       const minimum = frame.key === "daily" ? LIMITS.MIN_DAILY_CANDLES : LIMITS.MIN_INTRADAY_CANDLES;
       results[frame.key] = {
         interval: frame.interval, candles, count: candles.length,
