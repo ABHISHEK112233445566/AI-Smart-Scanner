@@ -57,8 +57,12 @@ function calculateTechnicalEvidence(candles, options={}) {
   addBear("MACD_BEARISH", Boolean(macd&&number(macd.MACD)!==null&&number(macd.signal)!==null&&macd.MACD<macd.signal), 1);
   addBear("ADX_TREND", Boolean(adx&&number(adx.adx)!==null&&adx.adx>=20), 1);
   addBear("VOLUME_EXPANSION", avgVol>0&&volume.at(-1)>=avgVol*1.2, 1);
-  const bullScore = Math.round(evidence.reduce((s,x)=>s+x.weight,0)/9*100);
-  const bearScore = Math.round(bearish.reduce((s,x)=>s+x.weight,0)/9*100);
+  // ADX and volume expansion confirm participation/strength, not direction.
+  // Keep them in the evidence list but exclude them from directional scoring.
+  const directionalBull=evidence.filter(x=>!["ADX_TREND","VOLUME_EXPANSION"].includes(x.name));
+  const directionalBear=bearish.filter(x=>!["ADX_TREND","VOLUME_EXPANSION"].includes(x.name));
+  const bullScore = Math.round(directionalBull.reduce((s,x)=>s+x.weight,0)/7*100);
+  const bearScore = Math.round(directionalBear.reduce((s,x)=>s+x.weight,0)/7*100);
   let direction = "NEUTRAL";
   if (bullScore>=60&&bullScore-bearScore>=15) direction="BULLISH";
   else if (bearScore>=60&&bearScore-bullScore>=15) direction="BEARISH";
@@ -73,8 +77,17 @@ function calculateTechnicalEvidence(candles, options={}) {
   }
   let chartPattern="NONE",patternDirection="NEUTRAL",patternStatus="NOT_CONFIRMED";
   const highs=localHighs.slice(-2),lows=localLows.slice(-2);
-  if(highs.length===2&&highs[1].index-highs[0].index>=4&&Math.abs(highs[1].price-highs[0].price)/Math.max(highs[0].price,highs[1].price)<=.012){chartPattern="DOUBLE_TOP";patternDirection="BEARISH";patternStatus=latest<Math.min(highs[0].price,highs[1].price)?"BUILDING":"CONFIRMED";}
-  else if(lows.length===2&&lows[1].index-lows[0].index>=4&&Math.abs(lows[1].price-lows[0].price)/Math.max(lows[0].price,lows[1].price)<=.012){chartPattern="DOUBLE_BOTTOM";patternDirection="BULLISH";patternStatus=latest>Math.max(lows[0].price,lows[1].price)?"CONFIRMED":"BUILDING";}
+  if(highs.length===2&&highs[1].index-highs[0].index>=4&&Math.abs(highs[1].price-highs[0].price)/Math.max(highs[0].price,highs[1].price)<=.012){
+    chartPattern="DOUBLE_TOP";patternDirection="BEARISH";
+    const necklineCandles=valid.slice(highs[0].index+1,highs[1].index);
+    const neckline=necklineCandles.length?Math.min(...necklineCandles.map(c=>c.low)):null;
+    patternStatus=neckline!==null&&latest<neckline?"CONFIRMED":"BUILDING";
+  } else if(lows.length===2&&lows[1].index-lows[0].index>=4&&Math.abs(lows[1].price-lows[0].price)/Math.max(lows[0].price,lows[1].price)<=.012){
+    chartPattern="DOUBLE_BOTTOM";patternDirection="BULLISH";
+    const necklineCandles=valid.slice(lows[0].index+1,lows[1].index);
+    const neckline=necklineCandles.length?Math.max(...necklineCandles.map(c=>c.high)):null;
+    patternStatus=neckline!==null&&latest>neckline?"CONFIRMED":"BUILDING";
+  }
   else if(highs.length===2&&lows.length===2){const lowerHigh=highs[1].price<highs[0].price, higherLow=lows[1].price>lows[0].price;if(lowerHigh&&higherLow){chartPattern="SYMMETRICAL_TRIANGLE";patternDirection="NEUTRAL";patternStatus="BUILDING";}}
   const structure = { support: swingLow, resistance: swingHigh, support20, resistance20, latestClose: latest, previousClose: previous, structureBreak, pivot, cpr:{bc,tc}, levels:{r1:2*pivot-prior.low,s1:2*pivot-prior.high,r2:pivot+(prior.high-prior.low),s2:pivot-(prior.high-prior.low)} };
   return {
