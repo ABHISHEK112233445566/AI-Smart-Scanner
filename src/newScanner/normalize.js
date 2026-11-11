@@ -37,12 +37,12 @@ function normalizeCandle(candle) {
 function validateQuote(quote) {
   const ltp=positive(quote?.ltp??quote?.last_price??quote?.price);
   const timestamp=parseTimestamp(quote?.last_trade_time??quote?.lastTradeTime??quote?.timestamp);
-  const netChange=number(quote?.netChange??quote?.net_change);
-  // Prefer the broker's absolute net change when it is present. This avoids
-  // treating a stale/current candle close as the previous session close.
-  const derivedPrevious=ltp!==null&&netChange!==null&&ltp-netChange>0?ltp-netChange:null;
-  const explicitPrevious=positive(quote?.previousClose??quote?.previous_close);
+  const reportedNetChange=number(quote?.netChange??quote?.net_change);
+  const derivedPrevious=ltp!==null&&reportedNetChange!==null&&ltp-reportedNetChange>0?ltp-reportedNetChange:null;
+  const explicitPrevious=positive(quote?.previousClose??quote?.previous_close??quote?.prev_close);
   const previousClose=derivedPrevious??explicitPrevious;
+  // Never substitute a generic "close" field: it may be the current candle close.
+  const netChange=reportedNetChange??(ltp!==null&&previousClose!==null?ltp-previousClose:null);
   return {
     valid:ltp!==null,ltp,previousClose,netChange,
     changePercent:ltp!==null&&previousClose!==null?(ltp-previousClose)/previousClose*100:null,
