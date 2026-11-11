@@ -40,8 +40,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run syntax and regression tests
+      - name: Run legacy syntax and regression tests
         run: npm test
+
+      - name: Run new scanner syntax and regression tests
+        run: npm run test:new-scanner
 
       - name: Verify required secrets
         shell: bash
@@ -66,7 +69,7 @@ jobs:
 
       - name: Run AI Smart Scanner once
         id: scanner
-        run: npm run scan-once
+        run: npm run new-scan-once
 
       - name: Scanner result
         if: always()
