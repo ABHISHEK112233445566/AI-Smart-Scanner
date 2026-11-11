@@ -46,7 +46,9 @@ function optionPremiumLevels(candles,currentLtp=null) {
   const stop=Math.max(...validStops);
   const target=Math.min(...validTargets);
   const risk=entry-stop,reward=target-entry,rr=risk>0&&reward>0?reward/risk:null;
-  if(!(stop>0&&target>entry&&rr>=1.5)) return {valid:false,reason:"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length};
+  const minimumRisk=Math.max(0.05,entry*0.01);
+  if(!(stop>0&&target>entry&&risk>=minimumRisk&&rr>=1.5))
+    return {valid:false,reason:risk<minimumRisk?"OPTION_STOP_DISTANCE_TOO_TIGHT":"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length};
   return {valid:true,entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource:"OPTION_5M_OHLC_SWINGS"};
 }
 async function analyzeOption(stock,broker) {
