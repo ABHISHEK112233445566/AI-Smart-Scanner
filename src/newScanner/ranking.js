@@ -31,9 +31,7 @@ function rankCandidates(rows) {
 }
 function dashboardRows(rows) {
   const sorted=[...(Array.isArray(rows)?rows:[])].filter(r=>
-    ["TRADE","WATCH"].includes(r.decision) &&
-    r.optionContract?.valid===true &&
-    Number(r.optionQuote?.ltp)>0
+    ["TRADE","WATCH"].includes(r.decision)
   ).sort((a,b)=>b.confidence-a.confidence);
   const selected=sorted.slice(0,LIMITS.DASHBOARD_ROWS);
   const nifty=sorted.find(r=>r.isNiftyIndex===true||String(r.symbol).toUpperCase()==="NIFTY");
