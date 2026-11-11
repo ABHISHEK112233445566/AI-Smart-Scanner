@@ -88,8 +88,11 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     const base={...stock,candles:{...stock.candles,...deep.candles},timeframeAnalysis,underlyingLevels,news,oi,marketDataFresh,tradeWindowOpen:tradeWindowOpen(),scanTimestamp:new Date().toISOString()};
     const option=await analyzeOption(base,broker);
     const riskValidation=validateCandidate({...option,oi,news});
-    const optionSetupValid=option.optionContract?.valid===true&&option.optionPremiumSetup?.valid===true&&Number(option.optionQuote?.ltp)>0;
-    const decision=!optionSetupValid?"REJECT":riskValidation.passed?"TRADE":"WATCH";
+    const optionContractUsable=option.optionContract?.valid===true&&Number(option.optionQuote?.ltp)>0;
+    const optionSetupValid=optionContractUsable&&option.optionPremiumSetup?.valid===true&&option.optionQuoteFresh===true&&option.optionCandlesFresh===true;
+    // Keep directional F&O candidates visible as WATCH when the option contract,
+    // quote, candle or risk gate is incomplete. Only a fully validated setup is TRADE.
+    const decision=riskValidation.passed&&optionSetupValid?"TRADE":"WATCH";
     return {...option,riskValidation,decision,confidence:Math.max(stock.directionalAnalysis.bullScore||0,stock.directionalAnalysis.bearScore||0)};
   });
 
@@ -107,7 +110,12 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     stocksScanned:snapshots.length,successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
     watchCount:ranked.filter(r=>r.decision==="WATCH").length,
-    rejected:deepRows.length-ranked.length,errors,elapsedMs:Date.now()-started,
+    rejected:deepRows.length-ranked.length,
+    optionContractCount:deepRows.filter(r=>r.optionContract?.valid===true).length,
+    optionQuoteCount:deepRows.filter(r=>Number(r.optionQuote?.ltp)>0).length,
+    optionSetupCount:deepRows.filter(r=>r.optionPremiumSetup?.valid===true).length,
+    optionRejectReasons:Object.entries(deepRows.reduce((m,r)=>{const k=r.optionReason||r.optionPremiumSetup?.reason||"UNKNOWN";m[k]=(m[k]||0)+1;return m;},{})).sort((a,b)=>b[1]-a[1]).slice(0,10),
+    errors,elapsedMs:Date.now()-started,
     lastScanTime:new Date().toISOString(),marketOpen:marketIsOpen(),tradeWindowOpen:tradeWindowOpen(),istDate:currentIstDate(),
     errors:successfulQuotes.length&&equityRows.length?errors:[...errors,"NO_VALID_EQUITY_ROWS_FROM_UPSTREAM_QUOTES"]
   });
@@ -117,7 +125,9 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     nifty500:status.nifty500Size,fnoUniverse:status.fnoUniverseSize,fnoMovers:status.fnoMoversSelected,
     dailyAnalysed:status.dailyAnalysisCount,deepAnalysed:status.deepAnalysisCount,
     quotes:status.successfulQuotes,failed:status.failedQuotes,scanner:ranked.length,
-    dashboard:dashboard.length,trade:status.tradeCount,watch:status.watchCount,elapsedMs:status.elapsedMs
+    dashboard:dashboard.length,trade:status.tradeCount,watch:status.watchCount,
+    optionContracts:status.optionContractCount,optionQuotes:status.optionQuoteCount,optionSetups:status.optionSetupCount,
+    optionRejectReasons:status.optionRejectReasons,elapsedMs:status.elapsedMs
   }));
   return result;
 }
