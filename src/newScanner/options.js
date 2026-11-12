@@ -46,10 +46,13 @@ function optionPremiumLevels(candles,currentLtp=null) {
   const stop=Math.max(...validStops);
   const target=Math.min(...validTargets);
   const risk=entry-stop,reward=target-entry,rr=risk>0&&reward>0?reward/risk:null;
+  const levelSource="OPTION_5M_OHLC_SWINGS";
   const minimumRisk=Math.max(0.05,entry*0.01);
+  // Preserve provenance whenever candle swings produced concrete levels,
+  // including WATCH/rejected setups, so the sheet explains where levels came from.
   if(!(stop>0&&target>entry&&risk>=minimumRisk&&rr>=1.5))
-    return {valid:false,reason:risk<minimumRisk?"OPTION_STOP_DISTANCE_TOO_TIGHT":"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length};
-  return {valid:true,entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource:"OPTION_5M_OHLC_SWINGS"};
+    return {valid:false,reason:risk<minimumRisk?"OPTION_STOP_DISTANCE_TOO_TIGHT":"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource};
+  return {valid:true,entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource};
 }
 async function analyzeOption(stock,broker) {
   const direction=stock.directionalAnalysis?.direction??stock.direction;
