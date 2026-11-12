@@ -60,8 +60,8 @@ assert.equal(validateCandidate({dataStatus:"VALID",quote:{previousClose:10},mark
 
 const candidate={directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},optionContract:{valid:true},optionPremiumSetup:{valid:true,riskReward:2},optionQuote:{ltp:10},riskValidation:{passed:false},decision:"WATCH"};
 assert.equal(rankCandidates([candidate]).length,1);
-assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false}}]).length,0);
-assert.equal(rankCandidates([{...candidate,optionContract:{valid:false}}]).length,0);
+assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false},symbol:"NO_PREMIUM"}]).length,1);
+assert.equal(rankCandidates([{...candidate,optionContract:{valid:false},symbol:"NO_CONTRACT"}]).length,1);
 const filler=Array.from({length:22},(_,i)=>({...candidate,symbol:"STOCK"+i,confidence:100-i,isNiftyIndex:false}));
 const niftyCandidate={...candidate,symbol:"NIFTY",isNiftyIndex:true,confidence:1};
 const forcedRank=rankCandidates([...filler,niftyCandidate]);
