@@ -37,6 +37,18 @@ assert.equal(universe.combined.find(x=>x.symbol==="NIFTY").isNiftyIndex,true);
 const tf=combineTimeframes({daily:{direction:"BULLISH"},fourHour:{direction:"BULLISH"},oneHour:{direction:"BULLISH"},fifteenMinute:{direction:"UNKNOWN"},fiveMinute:{direction:"BEARISH"}});
 assert.equal(tf.direction,"BULLISH");
 assert.equal(tf.bullishTimeframes,3);
+assert.equal(tf.chartPattern,"NONE");
+const patternSummary=combineTimeframes({
+  daily:{direction:"BULLISH",chartPattern:"NONE",patternDirection:"NEUTRAL",patternStatus:"NOT_CONFIRMED"},
+  fourHour:{direction:"BULLISH",chartPattern:"NONE",patternDirection:"NEUTRAL",patternStatus:"NOT_CONFIRMED"},
+  oneHour:{direction:"BULLISH",chartPattern:"DOUBLE_TOP",patternDirection:"BEARISH",patternStatus:"BUILDING"},
+  fifteenMinute:{direction:"BULLISH",chartPattern:"DOUBLE_BOTTOM",patternDirection:"BULLISH",patternStatus:"CONFIRMED"},
+  fiveMinute:{direction:"BULLISH",chartPattern:"DOUBLE_TOP",patternDirection:"BEARISH",patternStatus:"BUILDING"}
+});
+assert.equal(patternSummary.chartPattern,"DOUBLE_BOTTOM");
+assert.equal(patternSummary.patternDirection,"BULLISH");
+assert.equal(patternSummary.patternStatus,"CONFIRMED");
+assert.equal(patternSummary.patternTimeframe,"fifteenMinute");
 const conflict=validateCandidate({dataStatus:"VALID",quote:{previousClose:10},marketDataFresh:true,tradeWindowOpen:true,directionalAnalysis:{direction:"BULLISH",indicators:{latestVolume:100,averageVolume:100},rows:[]},underlyingLevels:{valid:true,riskReward:2},optionStatus:"VALID",timeframeAnalysis:{direction:"BULLISH",bullishTimeframes:4,bearishTimeframes:1,rows:[{patternStatus:"CONFIRMED",patternDirection:"BEARISH"},{patternStatus:"CONFIRMED",patternDirection:"BEARISH"}]},optionQuoteFresh:true,optionCandlesFresh:true,oi:{dataStatus:"VALID"},news:{status:"NO_MAJOR_NEWS"}});
 assert.ok(conflict.reasons.includes("CONFIRMED_PATTERN_CONFLICT_ACROSS_TIMEFRAMES"));
 const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,support20:95,resistance20:115}});

@@ -57,17 +57,32 @@ async function fetchUnderlyingOI(stock,broker) {
     const rows=sampled.map((c,index)=>{
       const q=quotes[index];
       const type=String(c.instrument_type??c.option_type??"").toUpperCase()||String(c.trading_symbol??"").toUpperCase().slice(-2);
-      return q?{type,oi:q.oi,previousOI:q.previousOI}:null;
+      return q&&q.oi!==null?{type,oi:q.oi,previousOI:q.previousOI}:null;
     });
-    const valid=rows.filter(x=>x&&x.oi!==null&&x.previousOI!==null);
-    const oi=valid.reduce((s,x)=>s+x.oi,0),previousOI=valid.reduce((s,x)=>s+x.previousOI,0);
-    if(!valid.length||previousOI<=0)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_OI_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN"};
-    const changePercent=(oi-previousOI)/previousOI*100,price=stock.quote?.ltp,prev=stock.quote?.previousClose;
+    const currentRows=rows.filter(x=>x&&x.oi!==null);
+    const comparableRows=currentRows.filter(x=>x.previousOI!==null);
+    if(!currentRows.length)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_CURRENT_OI_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN"};
+    const oi=currentRows.reduce((s,x)=>s+x.oi,0);
+    const callOI=currentRows.filter(x=>x.type==="CE").reduce((s,x)=>s+x.oi,0);
+    const putOI=currentRows.filter(x=>x.type==="PE").reduce((s,x)=>s+x.oi,0);
+    const pcr=callOI>0?putOI/callOI:null;
+    const hasCompletePreviousOI=comparableRows.length===currentRows.length;
+    const previousOI=hasCompletePreviousOI?comparableRows.reduce((s,x)=>s+x.previousOI,0):null;
+    const changePercent=previousOI>0?(oi-previousOI)/previousOI*100:null;
+    const price=stock.quote?.ltp,prev=stock.quote?.previousClose;
     const pricePercent=price&&prev?(price-prev)/prev*100:null;
-    // Combined CE+PE OI cannot identify long/short buildup reliably.
-    // Keep it as context only; never label it bullish or bearish.
-    const mood=changePercent>=1?"AGGREGATE_OI_RISING":changePercent<=-1?"AGGREGATE_OI_FALLING":"AGGREGATE_OI_FLAT";
-    return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_NEAR_ATM_SAMPLE",expiry,contractsChecked:valid.length,oi,previousOI,changePercent,priceChangePercent:pricePercent,mood,sentiment:"UNKNOWN",directionalUse:"NOT_PERMITTED",warning:"Combined CE+PE OI is contextual only; side-specific OI/PCR is required for directional classification."};
+    // Combined CE+PE OI/PCR is contextual only; it cannot identify futures
+    // long/short buildup. Do not fabricate a directional sentiment.
+    const mood=changePercent===null?"UNKNOWN":changePercent>=1?"AGGREGATE_OI_RISING":changePercent<=-1?"AGGREGATE_OI_FALLING":"AGGREGATE_OI_FLAT";
+    return{
+      dataStatus:hasCompletePreviousOI&&previousOI>0?"VALID":"PARTIAL",
+      reason:hasCompletePreviousOI?"":"PREVIOUS_OI_NOT_RETURNED_BY_QUOTE",
+      source:"UPSTOX_OPTION_CHAIN_NEAR_ATM_SAMPLE",expiry,
+      contractsChecked:currentRows.length,contractsWithPreviousOI:comparableRows.length,
+      oi,callOI,putOI,pcr,previousOI,changePercent,priceChangePercent:pricePercent,
+      mood,sentiment:"UNKNOWN",directionalUse:"NOT_PERMITTED",
+      warning:"Combined CE+PE OI/PCR is contextual only; directional buildup requires underlying futures OI with its own price change."
+    };
   } catch(error) { return{dataStatus:"UNAVAILABLE",reason:error.message,mood:"UNKNOWN",sentiment:"UNKNOWN"}; }
 }
 module.exports={fetchNews,fetchUnderlyingOI,parseXmlItems};
