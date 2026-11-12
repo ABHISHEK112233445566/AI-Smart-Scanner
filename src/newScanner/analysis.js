@@ -104,7 +104,26 @@ function combineTimeframes(timeframes) {
   let direction="NEUTRAL";
   if (bull>=3&&bull>bear) direction="BULLISH";
   if (bear>=3&&bear>bull) direction="BEARISH";
-  return { direction, bullishTimeframes:bull, bearishTimeframes:bear, unknownTimeframes:rows.length-valid.length, rows };
+
+  // Promote a detected pattern from any timeframe into the top-level summary.
+  // Confirmed patterns outrank building patterns; ties prefer higher timeframes
+  // to avoid allowing a noisy 5-minute pattern to hide a stronger 1-hour setup.
+  const timeframePriority={daily:5,fourHour:4,oneHour:3,fifteenMinute:2,fiveMinute:1};
+  const patterns=rows.filter(x=>x.chartPattern&&x.chartPattern!=="NONE"&&
+    ["CONFIRMED","BUILDING"].includes(x.patternStatus)&&
+    ["BULLISH","BEARISH","NEUTRAL"].includes(x.patternDirection));
+  patterns.sort((a,b)=>
+    (b.patternStatus==="CONFIRMED"?1:0)-(a.patternStatus==="CONFIRMED"?1:0)||
+    (timeframePriority[b.timeframe]||0)-(timeframePriority[a.timeframe]||0));
+  const selected=patterns[0]||null;
+  return {
+    direction,bullishTimeframes:bull,bearishTimeframes:bear,
+    unknownTimeframes:rows.length-valid.length,rows,
+    chartPattern:selected?.chartPattern||"NONE",
+    patternDirection:selected?.patternDirection||"NEUTRAL",
+    patternStatus:selected?.patternStatus||"NOT_CONFIRMED",
+    patternTimeframe:selected?.timeframe||""
+  };
 }
 function deriveUnderlyingLevels(analysis,currentPrice=null) {
   const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose);
