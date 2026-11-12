@@ -89,7 +89,9 @@ function calculateTechnicalEvidence(candles, options={}) {
     patternStatus=neckline!==null&&latest>neckline?"CONFIRMED":"BUILDING";
   }
   else if(highs.length===2&&lows.length===2){const lowerHigh=highs[1].price<highs[0].price, higherLow=lows[1].price>lows[0].price;if(lowerHigh&&higherLow){chartPattern="SYMMETRICAL_TRIANGLE";patternDirection="NEUTRAL";patternStatus="BUILDING";}}
-  const structure = { support: swingLow, resistance: swingHigh, support20, resistance20, latestClose: latest, previousClose: previous, structureBreak, pivot, cpr:{bc,tc}, levels:{r1:2*pivot-prior.low,s1:2*pivot-prior.high,r2:pivot+(prior.high-prior.low),s2:pivot-(prior.high-prior.low)} };
+  const nearestSupport=localLows.map(x=>x.price).filter(x=>x>0&&x<latest).sort((a,b)=>b-a)[0]??null;
+  const nearestResistance=localHighs.map(x=>x.price).filter(x=>x>latest).sort((a,b)=>a-b)[0]??null;
+  const structure = { support: swingLow, resistance: swingHigh, support20, resistance20, nearestSupport, nearestResistance, latestClose: latest, previousClose: previous, structureBreak, pivot, cpr:{bc,tc}, levels:{r1:2*pivot-prior.low,s1:2*pivot-prior.high,r2:pivot+(prior.high-prior.low),s2:pivot-(prior.high-prior.low)} };
   return {
     dataStatus: "VALID", direction, bullScore, bearScore, confidence: Math.max(bullScore,bearScore),
     indicators: { ema20:ema(20),ema50:ema(50),ema100:ema(100),ema200:ema(200),rsi,macd:macd?.MACD??null,macdSignal:macd?.signal??null,adx:adx?.adx??null,atr,bollinger,mfi,obv:obv.at(-1)??null,obvTrend,vwap,averageVolume:avgVol,latestVolume },
@@ -110,24 +112,40 @@ function deriveUnderlyingLevels(analysis,currentPrice=null) {
   const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose);
   if (!price) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
 
-  // Prefer the nearest valid structural levels around price. A fresh breakout
-  // can put price beyond support20/resistance20; in that case use the wider
-  // 30-candle swing levels instead of discarding an otherwise usable setup.
-  const supports=[number(s?.support20),number(s?.support)]
-    .filter(level=>level!==null&&level>0&&level<price);
-  const resistances=[number(s?.resistance20),number(s?.resistance)]
-    .filter(level=>level!==null&&level>price);
+  // Use the closest confirmed pivot levels first. The 20/30-candle extremes
+  // are fallbacks only; using those extremes by default creates oversized stops.
+  const supports=[number(s?.nearestSupport),number(s?.support20),number(s?.support)]
+    .filter(level=>level!==null&&level>0&&level<price)
+    .sort((a,b)=>b-a);
+  const resistances=[number(s?.nearestResistance),number(s?.resistance20),number(s?.resistance)]
+    .filter(level=>level!==null&&level>price)
+    .sort((a,b)=>a-b);
 
-  if (analysis.direction==="BULLISH"&&supports.length&&resistances.length) {
-    const support=Math.max(...supports), resistance=Math.min(...resistances);
-    const risk=price-support, reward=resistance-price;
-    return { valid:risk>0&&reward>0, entry:price, stopLoss:support, target:resistance, riskReward:risk>0?reward/risk:null, source:support===number(s?.support20)&&resistance===number(s?.resistance20)?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK" };
+  if (!supports.length||!resistances.length)
+    return { valid:false, entry:price, stopLoss:null, target:null, riskReward:null, reason:"NEAREST_STRUCTURAL_LEVELS_UNAVAILABLE" };
+
+  const support=supports[0], resistance=resistances[0];
+  let stopLoss,target,risk,reward;
+  if (analysis.direction==="BULLISH") {
+    stopLoss=support; target=resistance; risk=price-stopLoss; reward=target-price;
+  } else if (analysis.direction==="BEARISH") {
+    stopLoss=resistance; target=support; risk=stopLoss-price; reward=price-target;
+  } else {
+    return { valid:false, entry:price, stopLoss:null, target:null, riskReward:null, reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
   }
-  if (analysis.direction==="BEARISH"&&supports.length&&resistances.length) {
-    const support=Math.max(...supports), resistance=Math.min(...resistances);
-    const risk=resistance-price, reward=price-support;
-    return { valid:risk>0&&reward>0, entry:price, stopLoss:resistance, target:support, riskReward:risk>0?reward/risk:null, source:support===number(s?.support20)&&resistance===number(s?.resistance20)?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK" };
-  }
-  return { valid:false, reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
+
+  const riskReward=risk>0&&reward>0?reward/risk:null;
+  const levelSource=support===number(s?.nearestSupport)||resistance===number(s?.nearestResistance)
+    ?"NEAREST_CONFIRMED_SWING_PIVOTS"
+    :support===number(s?.support20)&&resistance===number(s?.resistance20)
+      ?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK";
+  // Never label an unbalanced setup as valid. Keep the real levels and RR
+  // visible for WATCH diagnostics; do not widen targets or tighten stops
+  // artificially to manufacture a passing ratio.
+  if (!(risk>0&&reward>0&&riskReward!==null))
+    return { valid:false,entry:price,stopLoss,target,riskReward,reason:"INVALID_STRUCTURAL_RISK_OR_REWARD",levelSource };
+  if (riskReward<1.5)
+    return { valid:false,entry:price,stopLoss,target,riskReward,reason:"STRUCTURAL_REWARD_BELOW_1_5_RR",levelSource };
+  return { valid:true,entry:price,stopLoss,target,riskReward,levelSource };
 }
 module.exports = { calculateTechnicalEvidence, combineTimeframes, deriveUnderlyingLevels };
