@@ -42,6 +42,18 @@ assert.ok(conflict.reasons.includes("CONFIRMED_PATTERN_CONFLICT_ACROSS_TIMEFRAME
 const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,support20:95,resistance20:115}});
 assert.equal(levels.valid,true);
 assert.equal(levels.riskReward,3);
+// Breakout: current price is already above the prior 20-candle resistance.
+// The wider swing resistance must be used rather than blanking the setup.
+const breakoutLevels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:120,support20:95,resistance20:115,support:90,resistance:130}},120);
+assert.equal(breakoutLevels.valid,true);
+assert.equal(breakoutLevels.stopLoss,95);
+assert.equal(breakoutLevels.target,130);
+assert.equal(breakoutLevels.riskReward,2);
+const breakdownLevels=deriveUnderlyingLevels({direction:"BEARISH",structure:{latestClose:80,support20:85,resistance20:105,support:70,resistance:110}},80);
+assert.equal(breakdownLevels.valid,true);
+assert.equal(breakdownLevels.stopLoss,105);
+assert.equal(breakdownLevels.target,70);
+assert.equal(breakdownLevels.riskReward,2);
 
 const contracts=[
  {instrument_type:"CE",strike_price:100,expiry:"2026-12-31",instrument_key:"CE100"},
