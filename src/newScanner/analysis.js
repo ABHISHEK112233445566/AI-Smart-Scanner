@@ -107,15 +107,26 @@ function combineTimeframes(timeframes) {
   return { direction, bullishTimeframes:bull, bearishTimeframes:bear, unknownTimeframes:rows.length-valid.length, rows };
 }
 function deriveUnderlyingLevels(analysis,currentPrice=null) {
-  const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose), support=number(s?.support20), resistance=number(s?.resistance20);
-  if (!price||!support||!resistance) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
-  if (analysis.direction==="BULLISH"&&support<price&&resistance>price) {
+  const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose);
+  if (!price) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
+
+  // Prefer the nearest valid structural levels around price. A fresh breakout
+  // can put price beyond support20/resistance20; in that case use the wider
+  // 30-candle swing levels instead of discarding an otherwise usable setup.
+  const supports=[number(s?.support20),number(s?.support)]
+    .filter(level=>level!==null&&level>0&&level<price);
+  const resistances=[number(s?.resistance20),number(s?.resistance)]
+    .filter(level=>level!==null&&level>price);
+
+  if (analysis.direction==="BULLISH"&&supports.length&&resistances.length) {
+    const support=Math.max(...supports), resistance=Math.min(...resistances);
     const risk=price-support, reward=resistance-price;
-    return { valid:risk>0&&reward>0, entry:price, stopLoss:support, target:resistance, riskReward:risk>0?reward/risk:null, source:"DAILY_30_CANDLE_SWINGS" };
+    return { valid:risk>0&&reward>0, entry:price, stopLoss:support, target:resistance, riskReward:risk>0?reward/risk:null, source:support===number(s?.support20)&&resistance===number(s?.resistance20)?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK" };
   }
-  if (analysis.direction==="BEARISH"&&resistance>price&&support<price) {
+  if (analysis.direction==="BEARISH"&&supports.length&&resistances.length) {
+    const support=Math.max(...supports), resistance=Math.min(...resistances);
     const risk=resistance-price, reward=price-support;
-    return { valid:risk>0&&reward>0, entry:price, stopLoss:resistance, target:support, riskReward:risk>0?reward/risk:null, source:"DAILY_30_CANDLE_SWINGS" };
+    return { valid:risk>0&&reward>0, entry:price, stopLoss:resistance, target:support, riskReward:risk>0?reward/risk:null, source:support===number(s?.support20)&&resistance===number(s?.resistance20)?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK" };
   }
   return { valid:false, reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
 }
