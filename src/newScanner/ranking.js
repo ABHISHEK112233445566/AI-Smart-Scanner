@@ -13,17 +13,20 @@ function candidateScore(row) {
   const newsPoints=(news==="BULLISH"&&a.direction==="BULLISH")||(news==="BEARISH"&&a.direction==="BEARISH")?5:0;
   return Math.min(100,Math.round(evidence*.55+aligned*4+Math.min(10,rr*3)+volumePoints+newsPoints));
 }
+
 function rankCandidates(rows) {
+  // SCANNER is the ranked directional F&O shortlist, not only the final
+  // option-ready trades. Keep every valid directional candidate as TRADE/WATCH.
+  // Missing contract/quote/premium candles/OI must remain visible as WATCH with
+  // blank option fields and explicit rejection reasons, rather than disappearing.
   const candidates=(Array.isArray(rows)?rows:[]).filter(r=>
     ["BULLISH","BEARISH"].includes(r.directionalAnalysis?.direction) &&
     r.directionalAnalysis?.dataStatus==="VALID" &&
-    r.optionContract?.valid===true &&
-    r.optionPremiumSetup?.valid===true &&
-    Number(r.optionQuote?.ltp)>0 &&
     ["TRADE","WATCH"].includes(r.decision)
   );
   const sorted=candidates.map(r=>({...r,confidence:candidateScore(r)}))
-    .sort((a,b)=>b.confidence-a.confidence||(Number(b.optionPremiumSetup?.riskReward)||0)-(Number(a.optionPremiumSetup?.riskReward)||0));
+    .sort((a,b)=>b.confidence-a.confidence||
+      (Number(b.optionPremiumSetup?.riskReward)||0)-(Number(a.optionPremiumSetup?.riskReward)||0));
   const selected=sorted.slice(0,LIMITS.SCANNER_ROWS);
   const nifty=sorted.find(r=>r.isNiftyIndex===true||String(r.symbol).toUpperCase()==="NIFTY");
   if(nifty&&!selected.some(r=>r.symbol===nifty.symbol)){
@@ -32,6 +35,7 @@ function rankCandidates(rows) {
   }
   return selected.map((r,i)=>({...r,scannerRank:i+1}));
 }
+
 function dashboardRows(rows) {
   const sorted=[...(Array.isArray(rows)?rows:[])].filter(r=>["TRADE","WATCH"].includes(r.decision))
     .sort((a,b)=>b.confidence-a.confidence);
