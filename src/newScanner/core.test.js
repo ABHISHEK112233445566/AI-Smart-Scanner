@@ -39,21 +39,29 @@ assert.equal(tf.direction,"BULLISH");
 assert.equal(tf.bullishTimeframes,3);
 const conflict=validateCandidate({dataStatus:"VALID",quote:{previousClose:10},marketDataFresh:true,tradeWindowOpen:true,directionalAnalysis:{direction:"BULLISH",indicators:{latestVolume:100,averageVolume:100},rows:[]},underlyingLevels:{valid:true,riskReward:2},optionStatus:"VALID",timeframeAnalysis:{direction:"BULLISH",bullishTimeframes:4,bearishTimeframes:1,rows:[{patternStatus:"CONFIRMED",patternDirection:"BEARISH"},{patternStatus:"CONFIRMED",patternDirection:"BEARISH"}]},optionQuoteFresh:true,optionCandlesFresh:true,oi:{dataStatus:"VALID"},news:{status:"NO_MAJOR_NEWS"}});
 assert.ok(conflict.reasons.includes("CONFIRMED_PATTERN_CONFLICT_ACROSS_TIMEFRAMES"));
-const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,support20:95,resistance20:115}});
+const levels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,nearestSupport:95,nearestResistance:115,support20:90,resistance20:120}});
 assert.equal(levels.valid,true);
+assert.equal(levels.stopLoss,95);
+assert.equal(levels.target,115);
 assert.equal(levels.riskReward,3);
-// Breakout: current price is already above the prior 20-candle resistance.
-// The wider swing resistance must be used rather than blanking the setup.
+// Poor reward-to-risk must retain real levels for WATCH diagnostics, never
+// be marked valid or repaired by artificially moving target/stop.
 const breakoutLevels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:120,support20:95,resistance20:115,support:90,resistance:130}},120);
-assert.equal(breakoutLevels.valid,true);
+assert.equal(breakoutLevels.valid,false);
 assert.equal(breakoutLevels.stopLoss,95);
 assert.equal(breakoutLevels.target,130);
 assert.equal(breakoutLevels.riskReward,0.4);
+assert.equal(breakoutLevels.reason,"STRUCTURAL_REWARD_BELOW_1_5_RR");
 const breakdownLevels=deriveUnderlyingLevels({direction:"BEARISH",structure:{latestClose:80,support20:85,resistance20:105,support:70,resistance:110}},80);
-assert.equal(breakdownLevels.valid,true);
+assert.equal(breakdownLevels.valid,false);
 assert.equal(breakdownLevels.stopLoss,105);
 assert.equal(breakdownLevels.target,70);
 assert.equal(breakdownLevels.riskReward,0.4);
+const nearestPivotLevels=deriveUnderlyingLevels({direction:"BULLISH",structure:{latestClose:100,nearestSupport:98,nearestResistance:106,support20:90,resistance20:120}});
+assert.equal(nearestPivotLevels.valid,true);
+assert.equal(nearestPivotLevels.stopLoss,98);
+assert.equal(nearestPivotLevels.target,106);
+assert.equal(nearestPivotLevels.riskReward,3);
 
 const contracts=[
  {instrument_type:"CE",strike_price:100,expiry:"2026-12-31",instrument_key:"CE100"},
