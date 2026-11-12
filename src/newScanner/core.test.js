@@ -48,12 +48,12 @@ const breakoutLevels=deriveUnderlyingLevels({direction:"BULLISH",structure:{late
 assert.equal(breakoutLevels.valid,true);
 assert.equal(breakoutLevels.stopLoss,95);
 assert.equal(breakoutLevels.target,130);
-assert.equal(breakoutLevels.riskReward,2);
+assert.equal(breakoutLevels.riskReward,0.4);
 const breakdownLevels=deriveUnderlyingLevels({direction:"BEARISH",structure:{latestClose:80,support20:85,resistance20:105,support:70,resistance:110}},80);
 assert.equal(breakdownLevels.valid,true);
 assert.equal(breakdownLevels.stopLoss,105);
 assert.equal(breakdownLevels.target,70);
-assert.equal(breakdownLevels.riskReward,2);
+assert.equal(breakdownLevels.riskReward,0.4);
 
 const contracts=[
  {instrument_type:"CE",strike_price:100,expiry:"2026-12-31",instrument_key:"CE100"},
