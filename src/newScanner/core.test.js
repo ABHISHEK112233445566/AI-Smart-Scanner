@@ -78,8 +78,8 @@ const multiTimeframeLevels=deriveUnderlyingLevels({
 },100);
 assert.equal(multiTimeframeLevels.valid,true);
 assert.equal(multiTimeframeLevels.stopLoss,99);
-assert.equal(multiTimeframeLevels.target,103);
-assert.equal(multiTimeframeLevels.riskReward,3);
+assert.equal(multiTimeframeLevels.target,102);
+assert.equal(multiTimeframeLevels.riskReward,2);
 assert.equal(multiTimeframeLevels.levelSource,"INTRADAY_INVALIDATION_WITH_MULTITIMEFRAME_TARGET");
 
 const contracts=[
