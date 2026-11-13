@@ -112,45 +112,58 @@ function deriveUnderlyingLevels(analysis,currentPrice=null) {
   const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose);
   if (!price) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
 
-  // Stop uses the nearest confirmed swing on the invalidation side. Target
-  // searches outward through real resistance/support levels and selects the
-  // first level that genuinely offers >=1.5R. Never synthesize a target.
-  const supports=[number(s?.nearestSupport),number(s?.support20),number(s?.support)]
-    .filter(level=>level!==null&&level>0&&level<price)
-    .sort((a,b)=>b-a);
-  const resistances=[number(s?.nearestResistance),number(s?.resistance20),number(s?.resistance)]
-    .filter(level=>level!==null&&level>price)
-    .sort((a,b)=>a-b);
+  // Use confirmed intraday swings for the invalidation point, while allowing
+  // higher-timeframe pivots to define a realistic objective. The old daily-only
+  // calculation often paired a very distant daily stop with a nearby intraday
+  // target, making the Dashboard empty even when intraday structure was usable.
+  const timeframeRows=(analysis?.timeframeAnalysis?.rows||[])
+    .filter(row=>row?.dataStatus==="VALID"&&row?.structure);
+  const intradayRows=timeframeRows.filter(row=>["fiveMinute","fifteenMinute","oneHour"].includes(row.timeframe));
+  const stopRows=intradayRows.length?intradayRows:[{timeframe:"daily",structure:s}];
+  const allStructures=[{timeframe:"daily",structure:s},...timeframeRows]
+    .filter(row=>row.structure);
 
-  if (!supports.length||!resistances.length)
-    return { valid:false,entry:price,stopLoss:null,target:null,riskReward:null,reason:"NEAREST_STRUCTURAL_LEVELS_UNAVAILABLE" };
+  const collect=(rows,keys,side)=>rows.flatMap(row=>keys
+    .map(key=>number(row.structure?.[key]))
+    .filter(level=>level!==null&&level>0&&(side==="below"?level<price:level>price)));
 
-  let stopLoss,target,risk,reward,diagnosticTarget;
-  if (analysis.direction==="BULLISH") {
-    stopLoss=supports[0]; risk=price-stopLoss;
-    diagnosticTarget=resistances[0];
-    target=resistances.find(level=>risk>0&&(level-price)/risk>=1.5)??diagnosticTarget;
-    reward=target-price;
-  } else if (analysis.direction==="BEARISH") {
-    stopLoss=resistances[0]; risk=stopLoss-price;
-    diagnosticTarget=supports[0];
-    target=supports.find(level=>risk>0&&(price-level)/risk>=1.5)??diagnosticTarget;
-    reward=price-target;
-  } else {
-    return { valid:false,entry:price,stopLoss:null,target:null,riskReward:null,reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
+  const stopKeys=analysis.direction==="BULLISH"
+    ?["nearestSupport","support20","support"]
+    :["nearestResistance","resistance20","resistance"];
+  const targetKeys=analysis.direction==="BULLISH"
+    ?["nearestResistance","resistance20","resistance"]
+    :["nearestSupport","support20","support"];
+  const stopCandidates=collect(stopRows,stopKeys,analysis.direction==="BULLISH"?"below":"above")
+    .sort((a,b)=>analysis.direction==="BULLISH"?b-a:a-b);
+  const targetCandidates=collect(allStructures,targetKeys,analysis.direction==="BULLISH"?"above":"below");
+  for(const row of allStructures){
+    const levels=row.structure?.levels||{};
+    for(const key of (analysis.direction==="BULLISH"?["r1","r2"]:["s1","s2"])){
+      const level=number(levels[key]);
+      if(level!==null&&level>0&&(analysis.direction==="BULLISH"?level>price:level<price))targetCandidates.push(level);
+    }
   }
+  targetCandidates.sort((a,b)=>analysis.direction==="BULLISH"?a-b:b-a);
 
+  if(!["BULLISH","BEARISH"].includes(analysis.direction)||!stopCandidates.length||!targetCandidates.length)
+    return {valid:false,entry:price,stopLoss:null,target:null,riskReward:null,reason:"NEAREST_STRUCTURAL_LEVELS_UNAVAILABLE"};
+
+  const stopLoss=stopCandidates[0];
+  const risk=analysis.direction==="BULLISH"?price-stopLoss:stopLoss-price;
+  const diagnosticTarget=targetCandidates[0];
+  const target=targetCandidates.find(level=>{
+    const reward=analysis.direction==="BULLISH"?level-price:price-level;
+    return risk>0&&reward/risk>=1.5;
+  })??diagnosticTarget;
+  const reward=analysis.direction==="BULLISH"?target-price:price-target;
   const riskReward=risk>0&&reward>0?reward/risk:null;
-  const stopIsNearest=analysis.direction==="BULLISH"?stopLoss===number(s?.nearestSupport):stopLoss===number(s?.nearestResistance);
-  const targetIsNearest=analysis.direction==="BULLISH"?target===number(s?.nearestResistance):target===number(s?.nearestSupport);
-  const levelSource=stopIsNearest&&targetIsNearest?"NEAREST_CONFIRMED_SWING_PIVOTS":
-    stopLoss===(analysis.direction==="BULLISH"?number(s?.support20):number(s?.resistance20))&&
-    target===(analysis.direction==="BULLISH"?number(s?.resistance20):number(s?.support20))
-      ?"DAILY_20_CANDLE_SWINGS":"CONFIRMED_SWING_LEVELS";
+  const levelSource=intradayRows.length
+    ?"INTRADAY_INVALIDATION_WITH_MULTITIMEFRAME_TARGET"
+    :"DAILY_STRUCTURAL_SWINGS";
 
-  if (!(risk>0&&reward>0&&riskReward!==null))
+  if(!(risk>0&&reward>0&&riskReward!==null))
     return {valid:false,entry:price,stopLoss,target,riskReward,reason:"INVALID_STRUCTURAL_RISK_OR_REWARD",levelSource};
-  if (riskReward<1.5)
+  if(riskReward<1.5)
     return {valid:false,entry:price,stopLoss,target,riskReward,reason:"STRUCTURAL_REWARD_BELOW_1_5_RR",levelSource};
   return {valid:true,entry:price,stopLoss,target,riskReward,levelSource};
 }
