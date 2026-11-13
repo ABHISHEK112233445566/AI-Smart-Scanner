@@ -31,9 +31,9 @@ async function fetchOptionQuotes(keys,broker) {
   return Promise.all(keys.map(async key=>{try{const q=await broker.getOptionQuote(key);return{oi:number(q.oi),previousOI:number(q.previousOI)};}catch(_){return null;}}));
 }
 function parseXmlItems(xml) {
-  const out=[],blocks=String(xml??"").match(/<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi)||[];
+  const out=[],blocks=String(xml??"").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)||[];
   for(const block of blocks){
-    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\\\s\\\\S]*?)</"+tag+">","i"));return m?cleanTitle(m[1].replace(/<!\\[CDATA\\[|\\]\\]>/g,"")):"";};
+    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\s\\S]*?)</"+tag+">","i"));return m?cleanTitle(m[1].replace(/<!\\[CDATA\\[|\\]\\]>/g,"")):"";};
     out.push({title:get("title"),link:get("link"),published:get("pubDate"),source:get("source")});
   }
   return out;
