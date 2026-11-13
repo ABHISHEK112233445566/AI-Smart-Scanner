@@ -68,6 +68,19 @@ assert.equal(nearestPivotLevels.valid,true);
 assert.equal(nearestPivotLevels.stopLoss,98);
 assert.equal(nearestPivotLevels.target,106);
 assert.equal(nearestPivotLevels.riskReward,3);
+const multiTimeframeLevels=deriveUnderlyingLevels({
+  direction:"BULLISH",
+  structure:{latestClose:100,nearestSupport:80,nearestResistance:104,support20:70,resistance20:120},
+  timeframeAnalysis:{rows:[
+    {timeframe:"oneHour",dataStatus:"VALID",structure:{nearestSupport:98,nearestResistance:102,support20:97,resistance20:110,levels:{r1:108,r2:112}}},
+    {timeframe:"fifteenMinute",dataStatus:"VALID",structure:{nearestSupport:99,nearestResistance:103,support20:96,resistance20:106,levels:{r1:105,r2:107}}}
+  ]}
+},100);
+assert.equal(multiTimeframeLevels.valid,true);
+assert.equal(multiTimeframeLevels.stopLoss,99);
+assert.equal(multiTimeframeLevels.target,103);
+assert.equal(multiTimeframeLevels.riskReward,3);
+assert.equal(multiTimeframeLevels.levelSource,"INTRADAY_INVALIDATION_WITH_MULTITIMEFRAME_TARGET");
 
 const contracts=[
  {instrument_type:"CE",strike_price:100,expiry:"2026-12-31",instrument_key:"CE100"},
