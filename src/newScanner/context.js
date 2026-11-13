@@ -3,6 +3,25 @@
 const axios=require("axios");
 const {symbol,number}=require("./normalize");
 const NEWS_TTL_MS=15*60*1000,cache=new Map();
+
+const COMPANY_ALIASES=Object.freeze({
+  BSE:["BSE LIMITED","BSE LTD","BOMBAY STOCK EXCHANGE"],
+  RADICO:["RADICO KHAITAN"],
+  KARURVYSYA:["KARUR VYSYA BANK","KARUR VYSYA"],
+  DRREDDY:["DR REDDYS LABORATORIES","DR. REDDYS LABORATORIES","DR REDDYS","DR. REDDYS"],
+  NYKAA:["FSN E-COMMERCE","FSN E COMMERCE","NYKAA"]
+});
+function cleanTitle(value){return String(value??"").replace(/<[^>]*>/g," ").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g," ").trim();}
+function isCompanyNewsRelevant(title,stock) {
+  const s=symbol(stock),t=cleanTitle(title).toUpperCase();
+  if(!s||!t)return false;
+  const tokenMatch=new RegExp("(^|[^A-Z0-9])"+s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"([^A-Z0-9]|$)").test(t);
+  const aliases=COMPANY_ALIASES[s]||[];
+  const aliasMatch=aliases.some(alias=>t.includes(alias));
+  // Never accept a headline merely because it mentions an exchange, market,
+  // or another unrelated listed company. Require the actual issuer/ticker.
+  return tokenMatch||aliasMatch;
+}
 async function fetchOptionQuotes(keys,broker) {
   if(String(broker?.name||"").toUpperCase()==="UPSTOX"&&process.env.UPSTOX_ACCESS_TOKEN) {
     const response=await axios.get("https://api.upstox.com/v2/market-quote/quotes",{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:"Bearer "+process.env.UPSTOX_ACCESS_TOKEN},timeout:20000});
@@ -12,9 +31,9 @@ async function fetchOptionQuotes(keys,broker) {
   return Promise.all(keys.map(async key=>{try{const q=await broker.getOptionQuote(key);return{oi:number(q.oi),previousOI:number(q.previousOI)};}catch(_){return null;}}));
 }
 function parseXmlItems(xml) {
-  const out=[],blocks=String(xml??"").match(/<item>[\s\S]*?<\/item>/gi)||[];
+  const out=[],blocks=String(xml??"").match(/<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi)||[];
   for(const block of blocks){
-    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\s\\S]*?)</"+tag+">","i"));return m?m[1].replace(/<!\[CDATA\[|\]\]>/g,"").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&quot;/g,'"').trim():"";};
+    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\\\s\\\\S]*?)</"+tag+">","i"));return m?cleanTitle(m[1].replace(/<!\\[CDATA\\[|\\]\\]>/g,"")):"";};
     out.push({title:get("title"),link:get("link"),published:get("pubDate"),source:get("source")});
   }
   return out;
@@ -26,7 +45,10 @@ async function fetchNews(stock,client=axios) {
   try {
     const response=await client.get("https://news.google.com/rss/search?q="+query+"&hl=en-IN&gl=IN&ceid=IN:en",{timeout:10000,headers:{"User-Agent":"Mozilla/5.0"}});
     const cutoff=Date.now()-48*3600000;
-    const items=parseXmlItems(response.data).filter(x=>x.title&&Number.isFinite(Date.parse(x.published))&&Date.parse(x.published)>=cutoff).sort((a,b)=>Date.parse(b.published)-Date.parse(a.published));
+    const items=parseXmlItems(response.data)
+      .filter(x=>x.title&&Number.isFinite(Date.parse(x.published))&&Date.parse(x.published)>=cutoff)
+      .filter(x=>isCompanyNewsRelevant(x.title,s))
+      .sort((a,b)=>Date.parse(b.published)-Date.parse(a.published));
     const item=items[0]||null,headline=item?.title||"";
     const positiveWords=/profit|growth|order win|upgrade|strong results|beats|record revenue|dividend|buyback/i;
     const negativeWords=/loss|fraud|downgrade|default|penalty|investigation|weak results|misses|resignation/i;
@@ -65,9 +87,8 @@ async function fetchUnderlyingOI(stock,broker) {
     const changePercent=(oi-previousOI)/previousOI*100,price=stock.quote?.ltp,prev=stock.quote?.previousClose;
     const pricePercent=price&&prev?(price-prev)/prev*100:null;
     // Combined CE+PE OI cannot identify long/short buildup reliably.
-    // Keep it as context only; never label it bullish or bearish.
     const mood=changePercent>=1?"AGGREGATE_OI_RISING":changePercent<=-1?"AGGREGATE_OI_FALLING":"AGGREGATE_OI_FLAT";
     return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_NEAR_ATM_SAMPLE",expiry,contractsChecked:valid.length,oi,previousOI,changePercent,priceChangePercent:pricePercent,mood,sentiment:"UNKNOWN",directionalUse:"NOT_PERMITTED",warning:"Combined CE+PE OI is contextual only; side-specific OI/PCR is required for directional classification."};
   } catch(error) { return{dataStatus:"UNAVAILABLE",reason:error.message,mood:"UNKNOWN",sentiment:"UNKNOWN"}; }
 }
-module.exports={fetchNews,fetchUnderlyingOI,parseXmlItems};
+module.exports={fetchNews,fetchUnderlyingOI,parseXmlItems,isCompanyNewsRelevant};
