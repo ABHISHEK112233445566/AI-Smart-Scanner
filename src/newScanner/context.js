@@ -33,7 +33,7 @@ async function fetchOptionQuotes(keys,broker) {
 function parseXmlItems(xml) {
   const out=[],blocks=String(xml??"").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)||[];
   for(const block of blocks){
-    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\s\\S]*?)</"+tag+">","i"));return m?cleanTitle(m[1].replace(/<!\\[CDATA\\[|\\]\\]>/g,"")):"";};
+    const get=tag=>{const m=block.match(new RegExp("<"+tag+"[^>]*>([\\s\\S]*?)</"+tag+">","i"));return m?cleanTitle(m[1].replace(/<!\\[CDATA\\[/g,"").replace(/\\]\\]>/g,"")):"";};
     out.push({title:get("title"),link:get("link"),published:get("pubDate"),source:get("source")});
   }
   return out;
