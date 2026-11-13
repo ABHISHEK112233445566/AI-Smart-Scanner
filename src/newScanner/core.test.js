@@ -8,6 +8,7 @@ const {optionPremiumLevels,selectContract}=require("./options");
 const {validateCandidate,buildDailyRiskState,validateEntryPermission}=require("./risk");
 const {rankCandidates,dashboardRows}=require("./ranking");
 const {DASHBOARD_HEADERS,LIMITS}=require("./schema");
+const {isCompanyNewsRelevant}=require("./context");
 
 const quote=validateQuote({ltp:2668.3,net_change:85.4});
 assert.ok(Math.abs(quote.previousClose-2582.9)<1e-9);
@@ -78,7 +79,7 @@ const risk=buildDailyRiskState({date:"2026-11-10",tradeCount:1,realizedPnl:-100}
 assert.equal(validateEntryPermission(risk).allowed,false);
 assert.equal(validateCandidate({dataStatus:"VALID",quote:{previousClose:10},marketDataFresh:false,directionalAnalysis:{direction:"BULLISH"},underlyingLevels:{valid:true,riskReward:2},optionStatus:"VALID",oi:{dataStatus:"VALID"},news:{status:"NO_MAJOR_NEWS"}}).passed,false);
 
-const candidate={directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},optionContract:{valid:true},optionPremiumSetup:{valid:true,riskReward:2},optionQuote:{ltp:10},riskValidation:{passed:false},decision:"WATCH"};
+const candidate={underlyingLevels:{valid:true,entry:100,stopLoss:98,target:104,riskReward:2},directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},optionContract:{valid:true},optionPremiumSetup:{valid:true,riskReward:2},optionQuote:{ltp:10},riskValidation:{passed:false},decision:"WATCH"};
 assert.equal(rankCandidates([candidate]).length,1);
 assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false},symbol:"NO_PREMIUM"}]).length,1);
 assert.equal(rankCandidates([{...candidate,optionContract:{valid:false},symbol:"NO_CONTRACT"}]).length,1);
