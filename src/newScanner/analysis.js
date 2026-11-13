@@ -112,8 +112,9 @@ function deriveUnderlyingLevels(analysis,currentPrice=null) {
   const s=analysis?.structure, price=number(currentPrice)??number(s?.latestClose);
   if (!price) return { valid:false, reason:"MARKET_STRUCTURE_UNAVAILABLE" };
 
-  // Use the closest confirmed pivot levels first. The 20/30-candle extremes
-  // are fallbacks only; using those extremes by default creates oversized stops.
+  // Stop uses the nearest confirmed swing on the invalidation side. Target
+  // searches outward through real resistance/support levels and selects the
+  // first level that genuinely offers >=1.5R. Never synthesize a target.
   const supports=[number(s?.nearestSupport),number(s?.support20),number(s?.support)]
     .filter(level=>level!==null&&level>0&&level<price)
     .sort((a,b)=>b-a);
@@ -122,30 +123,35 @@ function deriveUnderlyingLevels(analysis,currentPrice=null) {
     .sort((a,b)=>a-b);
 
   if (!supports.length||!resistances.length)
-    return { valid:false, entry:price, stopLoss:null, target:null, riskReward:null, reason:"NEAREST_STRUCTURAL_LEVELS_UNAVAILABLE" };
+    return { valid:false,entry:price,stopLoss:null,target:null,riskReward:null,reason:"NEAREST_STRUCTURAL_LEVELS_UNAVAILABLE" };
 
-  const support=supports[0], resistance=resistances[0];
-  let stopLoss,target,risk,reward;
+  let stopLoss,target,risk,reward,diagnosticTarget;
   if (analysis.direction==="BULLISH") {
-    stopLoss=support; target=resistance; risk=price-stopLoss; reward=target-price;
+    stopLoss=supports[0]; risk=price-stopLoss;
+    diagnosticTarget=resistances[0];
+    target=resistances.find(level=>risk>0&&(level-price)/risk>=1.5)??diagnosticTarget;
+    reward=target-price;
   } else if (analysis.direction==="BEARISH") {
-    stopLoss=resistance; target=support; risk=stopLoss-price; reward=price-target;
+    stopLoss=resistances[0]; risk=stopLoss-price;
+    diagnosticTarget=supports[0];
+    target=supports.find(level=>risk>0&&(price-level)/risk>=1.5)??diagnosticTarget;
+    reward=price-target;
   } else {
-    return { valid:false, entry:price, stopLoss:null, target:null, riskReward:null, reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
+    return { valid:false,entry:price,stopLoss:null,target:null,riskReward:null,reason:"DIRECTIONAL_STRUCTURE_NOT_CONFIRMED" };
   }
 
   const riskReward=risk>0&&reward>0?reward/risk:null;
-  const levelSource=support===number(s?.nearestSupport)||resistance===number(s?.nearestResistance)
-    ?"NEAREST_CONFIRMED_SWING_PIVOTS"
-    :support===number(s?.support20)&&resistance===number(s?.resistance20)
-      ?"DAILY_20_CANDLE_SWINGS":"DAILY_SWING_LEVEL_FALLBACK";
-  // Never label an unbalanced setup as valid. Keep the real levels and RR
-  // visible for WATCH diagnostics; do not widen targets or tighten stops
-  // artificially to manufacture a passing ratio.
+  const stopIsNearest=analysis.direction==="BULLISH"?stopLoss===number(s?.nearestSupport):stopLoss===number(s?.nearestResistance);
+  const targetIsNearest=analysis.direction==="BULLISH"?target===number(s?.nearestResistance):target===number(s?.nearestSupport);
+  const levelSource=stopIsNearest&&targetIsNearest?"NEAREST_CONFIRMED_SWING_PIVOTS":
+    stopLoss===(analysis.direction==="BULLISH"?number(s?.support20):number(s?.resistance20))&&
+    target===(analysis.direction==="BULLISH"?number(s?.resistance20):number(s?.support20))
+      ?"DAILY_20_CANDLE_SWINGS":"CONFIRMED_SWING_LEVELS";
+
   if (!(risk>0&&reward>0&&riskReward!==null))
-    return { valid:false,entry:price,stopLoss,target,riskReward,reason:"INVALID_STRUCTURAL_RISK_OR_REWARD",levelSource };
+    return {valid:false,entry:price,stopLoss,target,riskReward,reason:"INVALID_STRUCTURAL_RISK_OR_REWARD",levelSource};
   if (riskReward<1.5)
-    return { valid:false,entry:price,stopLoss,target,riskReward,reason:"STRUCTURAL_REWARD_BELOW_1_5_RR",levelSource };
-  return { valid:true,entry:price,stopLoss,target,riskReward,levelSource };
+    return {valid:false,entry:price,stopLoss,target,riskReward,reason:"STRUCTURAL_REWARD_BELOW_1_5_RR",levelSource};
+  return {valid:true,entry:price,stopLoss,target,riskReward,levelSource};
 }
 module.exports = { calculateTechnicalEvidence, combineTimeframes, deriveUnderlyingLevels };
