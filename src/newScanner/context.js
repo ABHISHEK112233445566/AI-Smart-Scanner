@@ -8,7 +8,7 @@ const COMPANY_ALIASES=Object.freeze({
   BSE:["BSE LIMITED","BSE LTD","BOMBAY STOCK EXCHANGE"],
   RADICO:["RADICO KHAITAN"],
   KARURVYSYA:["KARUR VYSYA BANK","KARUR VYSYA"],
-  DRREDDY:["DR REDDYS LABORATORIES","DR. REDDYS LABORATORIES","DR REDDYS","DR. REDDYS"],
+  DRREDDY:["DR REDDY'S LABORATORIES","DR. REDDY'S LABORATORIES","DR REDDYS LABORATORIES","DR. REDDYS LABORATORIES","DR REDDY","DR REDDYS"],
   NYKAA:["FSN E-COMMERCE","FSN E COMMERCE","NYKAA"]
 });
 function cleanTitle(value){return String(value??"").replace(/<[^>]*>/g," ").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g," ").trim();}
