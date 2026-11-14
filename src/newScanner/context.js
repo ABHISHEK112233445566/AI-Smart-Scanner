@@ -23,12 +23,34 @@ function isCompanyNewsRelevant(title,stock) {
   return tokenMatch||aliasMatch;
 }
 async function fetchOptionQuotes(keys,broker) {
-  if(String(broker?.name||"").toUpperCase()==="UPSTOX"&&process.env.UPSTOX_ACCESS_TOKEN) {
-    const response=await axios.get("https://api.upstox.com/v2/market-quote/quotes",{params:{instrument_key:keys.join(",")},headers:{Accept:"application/json",Authorization:"Bearer "+process.env.UPSTOX_ACCESS_TOKEN},timeout:20000});
-    const data=response?.data?.data||{};
-    return keys.map(key=>{const raw=data[key]||data[encodeURIComponent(key)]||Object.entries(data).find(([k])=>decodeURIComponent(k)===key)?.[1];return raw?{oi:number(raw.oi??raw.open_interest),previousOI:number(raw.prev_oi??raw.previous_oi)}:null;});
-  }
-  return Promise.all(keys.map(async key=>{try{const q=await broker.getOptionQuote(key);return{oi:number(q.oi),previousOI:number(q.previousOI)};}catch(_){return null;}}));
+  // Upstox's live market-quote response normally exposes current OI but not
+  // previous-session OI. Read OI from the last two completed daily candles
+  // instead of treating the missing prev_oi quote field as missing data.
+  const rows=new Array(keys.length);
+  let cursor=0;
+  const workers=Array.from({length:Math.min(4,keys.length)},async()=>{
+    while(true) {
+      const index=cursor++;
+      if(index>=keys.length)return;
+      const key=keys[index];
+      try {
+        const candles=await broker.getHistoricalData(key,"ONE_DAY",{includeLiveQuote:false});
+        const valid=(Array.isArray(candles)?candles:[])
+          .filter(c=>number(c?.oi)!==null&&number(c?.oi)>=0)
+          .sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));
+        if(valid.length>=2) {
+          rows[index]={oi:number(valid.at(-1).oi),previousOI:number(valid.at(-2).oi),source:"DAILY_CANDLE_OI"};
+          continue;
+        }
+      } catch (_) {}
+      try {
+        const q=await broker.getOptionQuote(key);
+        rows[index]={oi:number(q?.oi),previousOI:number(q?.previousOI),source:"LIVE_QUOTE_FALLBACK"};
+      } catch (_) { rows[index]=null; }
+    }
+  });
+  await Promise.all(workers);
+  return rows;
 }
 function parseXmlItems(xml) {
   const out=[],blocks=String(xml??"").match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)||[];
