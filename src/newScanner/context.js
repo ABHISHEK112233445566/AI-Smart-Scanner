@@ -132,9 +132,11 @@ async function fetchUnderlyingOI(stock,broker) {
     const sentiment=bullish>bearish?"BULLISH":bearish>bullish?"BEARISH":"MIXED";
     const stockPrice=number(stock.quote?.ltp),previousClose=number(stock.quote?.previousClose);
     const priceChangePercent=stockPrice!==null&&previousClose!==null&&previousClose>0?(stockPrice/previousClose-1)*100:null;
+    const totalOI=sideStats.CE.oi+sideStats.PE.oi,totalPreviousOI=sideStats.CE.previousOI+sideStats.PE.previousOI;
+    const totalChangePercent=totalPreviousOI>0?(totalOI-totalPreviousOI)/totalPreviousOI*100:null;
     const mood=sentiment==="BULLISH"?"BULLISH_BUILDUP":sentiment==="BEARISH"?"BEARISH_BUILDUP":"MIXED_BUILDUP";
     return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_SIDE_SPECIFIC_OI_AND_PREMIUM",expiry,
-      contractsChecked:rows.length,sideStats,mood,sentiment,changePercent:null,priceChangePercent,
+      contractsChecked:rows.length,sideStats,mood,sentiment,changePercent:totalChangePercent,priceChangePercent,
       directionalUse:"SIDE_SPECIFIC_OPTION_PREMIUM_AND_OI",warning:"Option-chain sentiment is an inference from CE/PE premium and OI changes, not a substitute for underlying futures OI."};
   } catch(error) { return{dataStatus:"UNAVAILABLE",reason:error.message,mood:"UNKNOWN",sentiment:"UNKNOWN"}; }
 }
