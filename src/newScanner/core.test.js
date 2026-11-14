@@ -8,7 +8,7 @@ const {optionPremiumLevels,selectContract}=require("./options");
 const {validateCandidate,buildDailyRiskState,validateEntryPermission}=require("./risk");
 const {rankCandidates,dashboardRows}=require("./ranking");
 const {DASHBOARD_HEADERS,LIMITS}=require("./schema");
-const {isCompanyNewsRelevant}=require("./context");
+const {isCompanyNewsRelevant,classifyOptionBuildup,optionBuildupDirection}=require("./context");
 
 const quote=validateQuote({ltp:2668.3,net_change:85.4});
 assert.ok(Math.abs(quote.previousClose-2582.9)<1e-9);
@@ -113,6 +113,14 @@ const badStructure={...candidate,symbol:"BAD_RR",underlyingLevels:{valid:false,e
 assert.equal(rankCandidates([badStructure]).length,1,"invalid directional candidates remain visible in SCANNER");
 assert.equal(dashboardRows([badStructure]).length,0,"invalid RR candidates must never enter Dashboard");
 assert.equal(dashboardRows([{...candidate,underlyingLevels:{...candidate.underlyingLevels,riskReward:0.09}}]).length,0);
+assert.equal(classifyOptionBuildup("CE",12,5),"LONG_BUILDUP");
+assert.equal(classifyOptionBuildup("CE",12,-5),"SHORT_BUILDUP");
+assert.equal(classifyOptionBuildup("PE",-12,-5),"LONG_UNWINDING");
+assert.equal(classifyOptionBuildup("PE",-12,5),"SHORT_COVERING");
+assert.equal(optionBuildupDirection("CE","LONG_BUILDUP"),"BULLISH");
+assert.equal(optionBuildupDirection("CE","SHORT_BUILDUP"),"BEARISH");
+assert.equal(optionBuildupDirection("PE","SHORT_BUILDUP"),"BULLISH");
+assert.equal(optionBuildupDirection("PE","LONG_BUILDUP"),"BEARISH");
 assert.equal(isCompanyNewsRelevant("Paytm Shares Jump 7% to Multi-Year High of ₹1,903 on UPI Fee Hopes - JournalArta","BSE"),false);
 assert.equal(isCompanyNewsRelevant("Dr. Reddy's Laboratories receives regulatory approval","DRREDDY"),true);
 assert.equal(isCompanyNewsRelevant("Radico Khaitan posts quarterly results","RADICO"),true);
