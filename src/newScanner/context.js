@@ -106,7 +106,7 @@ async function fetchUnderlyingOI(stock,broker) {
     for(const side of ["CE","PE"]) {
       const sideRows=sorted.filter(c=>String(c.instrument_type??c.option_type??"").toUpperCase()===side||
         String(c.trading_symbol??"").toUpperCase().endsWith(side));
-      sampled.push(...sideRows.slice(0,10));
+      sampled.push(...sideRows.slice(0,2));
     }
     const keys=sampled.map(c=>c.instrument_key??c.instrumentKey).filter(Boolean);
     if(!keys.length)return{dataStatus:"UNAVAILABLE",reason:"NO_NEAR_ATM_OPTION_CONTRACTS",mood:"UNKNOWN",sentiment:"UNKNOWN"};
@@ -135,7 +135,7 @@ async function fetchUnderlyingOI(stock,broker) {
     const totalOI=sideStats.CE.oi+sideStats.PE.oi,totalPreviousOI=sideStats.CE.previousOI+sideStats.PE.previousOI;
     const totalChangePercent=totalPreviousOI>0?(totalOI-totalPreviousOI)/totalPreviousOI*100:null;
     const mood=sentiment==="BULLISH"?"BULLISH_BUILDUP":sentiment==="BEARISH"?"BEARISH_BUILDUP":"MIXED_BUILDUP";
-    return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_SIDE_SPECIFIC_OI_AND_PREMIUM",expiry,
+    return{dataStatus:"VALID",source:"UPSTOX_OPTION_CHAIN_SIDE_SPECIFIC_OI_AND_PREMIUM",expiry,contracts,
       contractsChecked:rows.length,sideStats,mood,sentiment,changePercent:totalChangePercent,priceChangePercent,
       directionalUse:"SIDE_SPECIFIC_OPTION_PREMIUM_AND_OI",warning:"Option-chain sentiment is an inference from CE/PE premium and OI changes, not a substitute for underlying futures OI."};
   } catch(error) { return{dataStatus:"UNAVAILABLE",reason:error.message,mood:"UNKNOWN",sentiment:"UNKNOWN"}; }
