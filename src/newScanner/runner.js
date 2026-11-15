@@ -82,7 +82,8 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     }
     const timeframeAnalysis=combineTimeframes(analyses);
     const underlyingLevels=deriveUnderlyingLevels({...stock.directionalAnalysis,timeframeAnalysis},stock.quote?.ltp);
-    const [news,oiResult]=await Promise.all([fetchNews(stock.symbol),fetchUnderlyingOI(stock,broker)]);\n    const optionContracts=oiResult.contracts;\n    const oi={...oiResult};\n    delete oi.contracts;
+    const [news,oiResult]=await Promise.all([fetchNews(stock.symbol),fetchUnderlyingOI(stock,broker)]);
+    const optionContracts=oiResult.contracts;\n    const oi={...oiResult};\n    delete oi.contracts;
     const timestamp=stock.quote.timestamp;
     const marketDataFresh=marketIsOpen()&&Number.isFinite(timestamp)&&Date.now()-timestamp<=LIMITS.MAX_QUOTE_AGE_MS;
     const base={...stock,candles:{...stock.candles,...deep.candles},timeframeAnalysis,underlyingLevels,news,oi,marketDataFresh,tradeWindowOpen:tradeWindowOpen(),scanTimestamp:new Date().toISOString()};
