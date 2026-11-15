@@ -54,11 +54,11 @@ function optionPremiumLevels(candles,currentLtp=null) {
     return {valid:false,reason:risk<minimumRisk?"OPTION_STOP_DISTANCE_TOO_TIGHT":"OPTION_PREMIUM_RR_BELOW_1_5",entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource};
   return {valid:true,entry,stopLoss:stop,target,riskReward:rr,candlesUsed:rows.length,levelSource};
 }
-async function analyzeOption(stock,broker) {
+async function analyzeOption(stock,broker,contractsOverride=null) {
   const direction=stock.directionalAnalysis?.direction??stock.direction;
   if(!["BULLISH","BEARISH"].includes(direction)) return {...stock,optionStatus:"REJECTED",optionReason:"NO_DIRECTIONAL_BIAS"};
   try {
-    const contracts=await broker.getOptionContracts(stock.instrumentKey);
+    const contracts=Array.isArray(contractsOverride)?contractsOverride:await broker.getOptionContracts(stock.instrumentKey);
     const selected=selectContract(contracts,direction,stock.quote?.ltp);
     if(!selected.valid) return {...stock,optionStatus:"REJECTED",optionReason:selected.reason};
     const quote=await broker.getOptionQuote(selected.instrumentKey);
