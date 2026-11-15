@@ -98,7 +98,7 @@ async function fetchUnderlyingOI(stock,broker) {
     const minExpiry=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
     const eligible=(Array.isArray(contracts)?contracts:[]).filter(c=>String(c.expiry||"").slice(0,10)>=minExpiry&&Number(c.strike_price??c.strike)>0);
     const expiry=[...new Set(eligible.map(c=>String(c.expiry).slice(0,10)))].sort()[0];
-    if(!expiry)return{dataStatus:"UNAVAILABLE",reason:"NO_ELIGIBLE_OPTION_EXPIRY",mood:"UNKNOWN",sentiment:"UNKNOWN"};
+    if(!expiry)return{dataStatus:"UNAVAILABLE",reason:"NO_ELIGIBLE_OPTION_EXPIRY",mood:"UNKNOWN",sentiment:"UNKNOWN",contracts};
     const chain=eligible.filter(c=>String(c.expiry).slice(0,10)===expiry);
     const spot=Number(stock.quote?.ltp)||0;
     const sorted=[...chain].sort((a,b)=>Math.abs(Number(a.strike_price??a.strike)-spot)-Math.abs(Number(b.strike_price??b.strike)-spot));
@@ -109,7 +109,7 @@ async function fetchUnderlyingOI(stock,broker) {
       sampled.push(...sideRows.slice(0,2));
     }
     const keys=sampled.map(c=>c.instrument_key??c.instrumentKey).filter(Boolean);
-    if(!keys.length)return{dataStatus:"UNAVAILABLE",reason:"NO_NEAR_ATM_OPTION_CONTRACTS",mood:"UNKNOWN",sentiment:"UNKNOWN"};
+    if(!keys.length)return{dataStatus:"UNAVAILABLE",reason:"NO_NEAR_ATM_OPTION_CONTRACTS",mood:"UNKNOWN",sentiment:"UNKNOWN",contracts};
     const quotes=await fetchOptionQuotes(keys,broker);
     const rows=sampled.filter(c=>c.instrument_key??c.instrumentKey).map((c,index)=>{
       const q=quotes[index],type=String(c.instrument_type??c.option_type??"").toUpperCase()||String(c.trading_symbol??"").toUpperCase().slice(-2);
@@ -127,7 +127,7 @@ async function fetchUnderlyingOI(stock,broker) {
       sideStats[side].direction=optionBuildupDirection(side,sideStats[side].mood);
     }
     const usable=[sideStats.CE,sideStats.PE].filter(x=>x.contracts>0&&x.direction!=="NEUTRAL"&&x.direction!=="UNKNOWN");
-    if(!usable.length)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_OI_OR_PREMIUM_HISTORY_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN",sideStats};
+    if(!usable.length)return{dataStatus:"UNAVAILABLE",reason:"OPTION_CHAIN_OI_OR_PREMIUM_HISTORY_UNAVAILABLE",mood:"UNKNOWN",sentiment:"UNKNOWN",sideStats,contracts};
     const bullish=usable.filter(x=>x.direction==="BULLISH").length,bearish=usable.length-bullish;
     const sentiment=bullish>bearish?"BULLISH":bearish>bullish?"BEARISH":"MIXED";
     const stockPrice=number(stock.quote?.ltp),previousClose=number(stock.quote?.previousClose);
