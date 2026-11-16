@@ -1,5 +1,5 @@
 const assert=require("assert");
-const {getWholeNseUniverse}=require("./marketUniverse");
+const {getWholeNseUniverse,getFastTradingUniverse}=require("./marketUniverse");
 
 (async()=>{
   const instruments=[
@@ -24,5 +24,14 @@ const {getWholeNseUniverse}=require("./marketUniverse");
     "symbol-only F&O rows should remain visible for diagnostics");
   assert.ok(universe.symbols.includes("DEF"),
     "an NSE_EQ stock must remain in the equity universe even without an exact F&O link");
+  const nifty500Universe=await getFastTradingUniverse({loadInstruments:async()=>instruments},["ABC","DEF","DUP","NOT_IN_MASTER"]);
+  assert.deepStrictEqual(nifty500Universe.nifty500Symbols,["ABC","DEF","DUP","NOT_IN_MASTER"]);
+  assert.deepStrictEqual(nifty500Universe.optionEligibleSymbols,["ABC"],
+    "the dynamic options universe must be the NIFTY 500 intersection with exact NSE_EQ/NSE_FO keys");
+  assert.strictEqual(nifty500Universe.instrumentAuditCounts.NO_NSE_EQ,1);
+  assert.strictEqual(nifty500Universe.instrumentAuditCounts.DUPLICATE_NSE_EQ_KEYS,1);
+  assert.strictEqual(nifty500Universe.instrumentAuditCounts.NO_NSE_FO,1);
+  assert.strictEqual(nifty500Universe.instrumentAuditCounts.MATCH,1);
+  assert.ok(!("configuredSymbols" in nifty500Universe),"no fixed configured stock list may control option eligibility");
   console.log("Market universe exact NSE_EQ/NSE_FO identity tests passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -11,74 +11,53 @@ function isNseDerivative(i){const segment=String(i?.segment||'').toUpperCase(),e
 function getUnderlyingSymbol(i){return normalizeSymbol(i?.underlying_symbol??i?.underlyingSymbol??i?.underlying_stock_symbol??i?.underlyingStockSymbol??i?.underlying);}
 
 /*
- * FAST TRADING UNIVERSE
- * We still load the instrument master (needed for instrument keys), but we
- * no longer create a live-quote ranking for every NSE equity.
- *
- * Equity universe = stocks that have an NSE equity-derivative contract.
- * This is a liquid, actively traded subset and is also the natural universe
- * for the options pipeline. The instrument master is local/in-memory work;
- * the expensive market-quote calls are performed only for this subset.
+ * The NIFTY 500 is the sole starting universe. A stock enters the options
+ * pipeline only when its unique NSE_EQ instrument key is exactly referenced
+ * by an NSE_FO stock-option row (underlying_key + underlying_symbol).
+ * No manually maintained stock list or symbol-only fallback is permitted.
  */
-// Complete stock-options symbol list copied from ICICI Direct's ALL options-stocks page.
-// This is the scanner's configured stock-option universe; no Top-N or liquidity
-// filtering is applied while building the universe. Live quote/contract availability
-// is handled later by the existing market-data and options-contract stages.
-const ICICI_OPTION_STOCK_SYMBOLS = `360ONE ABB APLAPOLLO AUBANK ADANIENSOL ADANIENT ADANIGREEN ADANIPORTS ADANIPOWER ABCAPITAL ALKEM AMBER AMBUJACEM ANANDRATHI ANGELONE APOLLOHOSP ASHOKLEY ASIANPAINT ASTRAL ATHERENERG AUROPHARMA DMART AXISBANK BSE BAJAJ-AUTO BAJFINANCE BAJAJFINSV BANDHANBNK BANKBARODA BANKINDIA MAHABANK BDL BEL BHARATFORG BHEL BPCL BHARTIARTL BIOCON BLUESTARCO BOSCHLTD BRITANNIA CGPOWER CANBK CDSL CHOLAFIN CIPLA CUB COALINDIA COCHINSHIP COFORGE COLPAL CAMS CONCOR COROMANDEL CROMPTON CUMMINSIND DLF DABUR DATAPATTNS DELHIVERY DIVISLAB DIXON DRREDDY EICHERMOT ETERNAL NYKAA FEDERALBNK FORCEMOT FORTIS GAIL GVT&D GMRAIRPORT GLENMARK GODFRYPHLP GODREJCP GODREJPROP GRASIM HCLTECH HDFCAMC HDFCBANK HDFCLIFE HAVELLS HEROMOTOCO HINDALCO HAL HINDPETRO HINDUNILVR HINDZINC HITACHIENERGY HYUNDAI ICICIBANK ICICIGI ICICIPRULI IDFCFIRSTB ITC INDIANB IEX INDHOTEL IOC IRFC IREDA INDUSTOWER INDUSINDBK NAUKRI INFY INOXWIND INDIGO JSWENERGY JSWSTEEL JINDALSTEL JIOFIN JUBLFOOD KEI KFINTECH KPITTECH KALYANKJIL KARURVYSYA KAYNES KOTAKBANK LTF LICHSGFIN LTM LT LAURUSLABS LICI LODHA LUPIN M&M MANAPPURAM MANKIND MARICO MARUTI MFSL MAXHEALTH MAZDOCK MOTILALOFS MPHASIS MCX MUTHOOTFIN NBCC NHPC NMDC NTPC NATIONALUM NAVINFLUOR NESTLEIND NAM-INDIA OBEROIRLTY ONGC OIL PAYTM OFSS PIIND POLICYBZR PGEL PNBHOUSING PAGEIND PATANJALI PERSISTENT PETRONET PHOENIXLTD PIDILITIND POLYCAB PFC POWERGRID PREMIERENE PRESTIGE PNB RBLBANK RECLTD RADICO RVNL RELIANCE SBICARD SBILIFE SRF SAGILITY MOTHERSON SHREECEM SHRIRAMFIN SIEMENS SOLARINDS SONACOMS SBIN SAIL SUNPHARMA SUPREMEIND SUZLON SWIGGY SYRMA TVSMOTOR TCS TATACONSUM TATAELXSI TMPV TATAPOWER TATASTEEL TECHM TITAN TORNTPHARM TRENT TIINDIA UPL UJJIVANSFB ULTRACEMCO UNIONBANK UNITDSPR UNOMINDA VBL VEDL VMM IDEA VOLTAS WAAREEENER WIPRO YESBANK ZYDUSLIFE`.split(/\s+/).filter(Boolean);
-
-async function getFastTradingUniverse(broker){
+async function getFastTradingUniverse(broker,nifty500Symbols){
   if(!broker||typeof broker.loadInstruments!=='function')throw new Error('Broker instrument master is unavailable');
+  const candidates=[...new Set((Array.isArray(nifty500Symbols)?nifty500Symbols:[]).map(normalizeSymbol).filter(Boolean))].sort();
+  if(!candidates.length)throw new Error('NIFTY 500 candidate universe is empty; refusing to use a fallback stock list');
   const master=await getWholeNseUniverse(broker);
-  const liveFnoSymbols=[...new Set((master.optionEligibleSymbols||[]).map(normalizeSymbol).filter(Boolean))].sort();
-  const configuredEquitySymbols=[...new Set(ICICI_OPTION_STOCK_SYMBOLS.map(normalizeSymbol).filter(symbol=>master.equityInstrumentKeyBySymbol?.has(symbol)))].sort();
-  if(!liveFnoSymbols.length)throw new Error('No NSE stock-option underlyings found in the live broker instrument master');
-
-  // Audit each configured symbol against the actual NSE_EQ instrument key and
-  // the NSE_FO underlying_key. Do not change the configured universe based on
-  // symbol-name similarity alone; report exact-key and symbol-only matches.
-  const configuredInstrumentAudit=ICICI_OPTION_STOCK_SYMBOLS.map(raw=>{
-    const symbol=normalizeSymbol(raw);
+  const configuredInstrumentAudit=candidates.map(symbol=>{
     const equityKeys=[...(master.equityKeysBySymbol?.get(symbol)||[])].sort();
     const equityKey=equityKeys.length===1?equityKeys[0]:null;
     const foKeys=[...(master.foRowsByUnderlyingSymbol?.get(symbol)||[])].sort();
     const exactFoLinked=equityKey?master.foRowsByUnderlyingKey?.get(equityKey)?.has(symbol)===true:false;
-    const foSymbolPresent=foKeys.length>0||(master.optionEligibleSymbols||[]).some(x=>normalizeSymbol(x)===symbol);
     let status='MATCH';
     if(equityKeys.length===0)status='NO_NSE_EQ';
     else if(equityKeys.length>1)status='DUPLICATE_NSE_EQ_KEYS';
-    else if(exactFoLinked)status='MATCH';
-    else if(foSymbolPresent)status='FO_SYMBOL_ONLY_KEY_MISMATCH';
-    else status='NO_NSE_FO';
-    return{configuredSymbol:raw,nseEquitySymbol:symbol,nseEquityInstrumentKey:equityKey,equityKeyCount:equityKeys.length,foUnderlyingKeys:foKeys,exactFoKeyMatch:exactFoLinked,status};
+    else if(!exactFoLinked)status=foKeys.length?'FO_SYMBOL_ONLY_KEY_MISMATCH':'NO_NSE_FO';
+    return{nifty500Symbol:symbol,nseEquityInstrumentKey:equityKey,equityKeyCount:equityKeys.length,foUnderlyingKeys:foKeys,exactFoKeyMatch:exactFoLinked,status};
   });
   const auditCounts=configuredInstrumentAudit.reduce((a,row)=>(a[row.status]=(a[row.status]||0)+1,a),{});
-  console.log('NSE_EQ + NSE_FO INSTRUMENT-KEY AUDIT: '+JSON.stringify(auditCounts));
-  for(const row of configuredInstrumentAudit)console.log('INSTRUMENT KEY MATCH: '+JSON.stringify(row));
-
-  // Preserve current symbol-intersection behavior until the complete audit is reviewed.
-  const liveFnoSet=new Set(liveFnoSymbols);
-  const configuredSymbols=[...new Set(ICICI_OPTION_STOCK_SYMBOLS.map(normalizeSymbol).filter(symbol=>liveFnoSet.has(symbol)))].sort();
-  const configuredMissing=ICICI_OPTION_STOCK_SYMBOLS.filter(symbol=>!liveFnoSet.has(normalizeSymbol(symbol)));
-  const symbols=configuredSymbols.length?configuredSymbols:liveFnoSymbols;
-  console.log('CONFIGURED OPTIONS UNIVERSE: '+configuredSymbols.length+'/'+ICICI_OPTION_STOCK_SYMBOLS.length+' configured symbols verified in live F&O master');
-  if(configuredMissing.length)console.log('CONFIGURED SYMBOLS NOT IN LIVE F&O MASTER: '+configuredMissing.join(', '));
+  const mappedEquitySymbols=configuredInstrumentAudit.filter(row=>row.equityKeyCount===1).map(row=>row.nifty500Symbol);
+  const optionEligibleSymbols=configuredInstrumentAudit.filter(row=>row.status==='MATCH').map(row=>row.nifty500Symbol);
+  const rejectedSymbols=configuredInstrumentAudit.filter(row=>row.status!=='MATCH');
+  console.log('NIFTY 500 → UPSTOX NSE_EQ/NSE_FO EXACT-KEY AUDIT: '+JSON.stringify({
+    nifty500:candidates.length,mappedEquity: mappedEquitySymbols.length,
+    optionEligible:optionEligibleSymbols.length,rejected:rejectedSymbols.length,status:auditCounts
+  }));
+  for(const row of configuredInstrumentAudit)if(row.status!=='MATCH')console.log('NIFTY 500 OPTION-ELIGIBILITY REJECT: '+JSON.stringify(row));
+  if(!optionEligibleSymbols.length)throw new Error('No NIFTY 500 stocks have an exact NSE_EQ instrument-key match to NSE_FO stock options');
   return{
-    name:configuredSymbols.length?'CONFIGURED_NSE_FNO_STOCK_OPTIONS':'UPSTOX_NSE_FNO_STOCK_OPTIONS_FALLBACK',
-    symbols,
-    universeSize:symbols.length,
-    optionEligibleSymbols:symbols,
-    optionEligibleCount:symbols.length,
-    configuredSymbols,
-    configuredEquitySymbols,
-    liveFnoSymbols,
-    configuredMissing,
-    configuredEquityMissing:ICICI_OPTION_STOCK_SYMBOLS.filter(symbol=>!master.equityInstrumentKeyBySymbol?.has(normalizeSymbol(symbol))),
+    name:'NIFTY500_UPSTOX_NSE_FO_STOCK_OPTIONS',
+    symbols:optionEligibleSymbols,
+    universeSize:optionEligibleSymbols.length,
+    optionEligibleSymbols,
+    optionEligibleCount:optionEligibleSymbols.length,
+    nifty500Symbols:candidates,
+    nifty500Count:candidates.length,
+    mappedEquitySymbols,
+    mappedEquityCount:mappedEquitySymbols.length,
+    rejectedSymbols,
     configuredInstrumentAudit,
     instrumentAuditCounts:auditCounts,
-    source:configuredSymbols.length?'Configured options stocks intersected with live Upstox NSE F&O master':'Live Upstox NSE derivative instrument master fallback'
+    source:'NIFTY 500 constituents intersected with exact Upstox NSE_EQ/NSE_FO underlying instrument-key identities'
   };
 }
-function equityByKeyHasSymbol(map,symbol){for(const value of map.values())if(value===symbol)return true;return false;}
 
 async function getNifty500Universe(){
   if(!axios||typeof axios.get!=="function")throw new Error("axios is unavailable for Nifty 500 universe");
