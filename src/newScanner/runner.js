@@ -24,6 +24,25 @@ function tradeWindowOpen(now=new Date()) {
 function currentIstDate(now=new Date()) {
   return new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(now);
 }
+
+function calculateSectorMomentum(rows) {
+  const groups=new Map();
+  for(const row of Array.isArray(rows)?rows:[]) {
+    const sector=String(row.sector||"UNKNOWN").trim()||"UNKNOWN";
+    if(sector==="UNKNOWN"||!row.quote?.valid||!Number.isFinite(Number(row.quote.changePercent)))continue;
+    if(!groups.has(sector))groups.set(sector,{sector,count:0,advancers:0,decliners:0,returns:[]});
+    const group=groups.get(sector),change=Number(row.quote.changePercent);
+    group.count++;group.returns.push(change);
+    if(change>0)group.advancers++;else if(change<0)group.decliners++;
+  }
+  const values=[...groups.values()].map(group=>{
+    const averageChange=group.returns.reduce((sum,x)=>sum+x,0)/group.returns.length;
+    const breadth=group.count?(group.advancers-group.decliners)/group.count:0;
+    return {...group,averageChange,breadth,score:Math.max(0,Math.min(100,50+averageChange*8+breadth*25))};
+  }).sort((a,b)=>b.score-a.score);
+  const ranked=new Map(values.map((group,index)=>[group.sector,{...group,rank:index+1}]));
+  return {groups:values,bySector:ranked};
+}
 async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheets=true}={}) {
   const started=Date.now(),errors=[];
   const status={status:"RUNNING",lastScanTime:new Date().toISOString(),errors:[]};
@@ -59,13 +78,19 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
     return {...data,directionalAnalysis:analysis,timeframeAnalysis:{direction:"NOT_ANALYSED",unknownTimeframes:4},scanTimestamp:new Date().toISOString()};
   });
 
-  // Stage 3: deeper MTF, option-chain, premium-candle, OI and news checks only
-  // for the highest-quality directional F&O shortlist. Other NIFTY 500 rows
-  // remain visible in EQUITY with an explicit deep-analysis status.
+  // Stage 3: rank F&O candidates using stock direction plus sector breadth/return.
+  // Broad rallies (for example, Auto) can therefore reach deeper analysis.
+  const sectorMomentum=calculateSectorMomentum(dailyRows);
+  for(const row of dailyRows){
+    const sector=sectorMomentum.bySector.get(row.sector);
+    row.sectorMomentum=sector?{rank:sector.rank,score:sector.score,averageChange:sector.averageChange,breadth:sector.breadth,count:sector.count}:null;
+    row.sectorStrengthScore=sector?.score??50;
+  }
   const moverSymbols=new Set(fnoMovers.map(r=>r.symbol));
   const fnoCandidates=dailyRows.filter(r=>r.fnoEligible&&(r.inNifty500||r.isNiftyIndex||moverSymbols.has(r.symbol))&&
     r.directionalAnalysis?.dataStatus==="VALID"&&["BULLISH","BEARISH"].includes(r.directionalAnalysis.direction));
-  fnoCandidates.sort((a,b)=>Math.max(b.directionalAnalysis.bullScore||0,b.directionalAnalysis.bearScore||0)-Math.max(a.directionalAnalysis.bullScore||0,a.directionalAnalysis.bearScore||0));
+  const dailyRankScore=row=>Math.max(Number(row.directionalAnalysis?.bullScore)||0,Number(row.directionalAnalysis?.bearScore)||0);
+  fnoCandidates.sort((a,b)=>(dailyRankScore(b)*0.7+(b.sectorStrengthScore-50)*0.6)-(dailyRankScore(a)*0.7+(a.sectorStrengthScore-50)*0.6));
   const deepLimit=Math.max(20,Math.min(100,Number(process.env.NEW_SCANNER_DEEP_ANALYSIS_LIMIT||60)));
   const deepCandidates=fnoCandidates.slice(0,deepLimit);
   const deepRows=await mapLimit(deepCandidates,6,async stock=>{
@@ -108,7 +133,7 @@ async function runNewScanner({brokerName=process.env.BROKER||"UPSTOX",writeSheet
   const dashboard=dashboardRows(ranked);
   Object.assign(status,{
     status:successfulQuotes.length&&equityRows.length?"SUCCESS":"NO_DATA",universeSize:universe.combined.length,nifty500Size:universe.nifty500.length,
-    fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,niftyIndexIncluded:Boolean(niftyIndex),
+    fnoUniverseSize:universe.fnoStocks.length,fnoMoversSelected:fnoMovers.length,niftyIndexIncluded:Boolean(niftyIndex),\n    sectorCount:sectorMomentum.groups.length,topSectors:sectorMomentum.groups.slice(0,5).map(({sector,score,averageChange,breadth,count})=>({sector,score,averageChange,breadth,count})),
     dailyAnalysisCount:dailyRows.length,deepAnalysisCount:deepRows.length,deepAnalysisLimit:deepLimit,
     stocksScanned:snapshots.length,successfulQuotes:successfulQuotes.length,failedQuotes:failedQuotes.length,
     tradeCount:ranked.filter(r=>r.decision==="TRADE").length,
@@ -151,4 +176,4 @@ if(require.main===module)runNewScanner().catch(async error=>{
   }
   process.exitCode=1;
 });
-module.exports={runNewScanner,marketIsOpen,tradeWindowOpen,currentIstDate};
+module.exports={runNewScanner,marketIsOpen,tradeWindowOpen,currentIstDate,calculateSectorMomentum};

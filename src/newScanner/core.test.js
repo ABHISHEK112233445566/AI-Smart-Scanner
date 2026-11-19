@@ -6,7 +6,8 @@ const {buildFnoUniverse,buildUniverse,parseCsvSymbols,findNiftyIndex}=require(".
 const {combineTimeframes,deriveUnderlyingLevels,calculateTechnicalEvidence}=require("./analysis");
 const {optionPremiumLevels,selectContract}=require("./options");
 const {validateCandidate,buildDailyRiskState,validateEntryPermission}=require("./risk");
-const {rankCandidates,dashboardRows}=require("./ranking");
+const {rankCandidates,dashboardRows,candidateScore}=require("./ranking");
+const {calculateSectorMomentum}=require("./runner");
 const {DASHBOARD_HEADERS,LIMITS}=require("./schema");
 const {isCompanyNewsRelevant,classifyOptionBuildup,optionBuildupDirection}=require("./context");
 
@@ -34,6 +35,16 @@ assert.equal(universe.nifty500.length,2);
 assert.equal(universe.fnoStocks.length,1);
 assert.equal(universe.combined.length,3);
 assert.equal(universe.combined.find(x=>x.symbol==="NIFTY").isNiftyIndex,true);
+
+const sectorMomentum=calculateSectorMomentum([
+ {symbol:"AUTO_A",sector:"Automobile",quote:{valid:true,changePercent:2.5}},
+ {symbol:"AUTO_B",sector:"Automobile",quote:{valid:true,changePercent:1.5}},
+ {symbol:"AUTO_C",sector:"Automobile",quote:{valid:true,changePercent:1.0}},
+ {symbol:"BANK_A",sector:"Banking",quote:{valid:true,changePercent:-0.5}},
+ {symbol:"BANK_B",sector:"Banking",quote:{valid:true,changePercent:-1.0}}
+]);
+assert.equal(sectorMomentum.groups[0].sector,"Automobile");
+assert.ok(sectorMomentum.bySector.get("Automobile").score>sectorMomentum.bySector.get("Banking").score);
 
 const tf=combineTimeframes({daily:{direction:"BULLISH"},fourHour:{direction:"BULLISH"},oneHour:{direction:"BULLISH"},fifteenMinute:{direction:"UNKNOWN"},fiveMinute:{direction:"BEARISH"}});
 assert.equal(tf.direction,"BULLISH");
@@ -99,6 +110,16 @@ assert.equal(validateCandidate({dataStatus:"VALID",quote:{previousClose:10},mark
 
 const candidate={underlyingLevels:{valid:true,entry:100,stopLoss:98,target:104,riskReward:2},directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:90,bearScore:0},timeframeAnalysis:{bullishTimeframes:4,bearishTimeframes:1},quote:{volume:100000},optionContract:{valid:true},optionPremiumSetup:{valid:true,riskReward:2},optionQuote:{ltp:10},riskValidation:{passed:false},decision:"WATCH"};
 assert.equal(rankCandidates([candidate]).length,1);
+
+const conflictingCandidate={...candidate,symbol:"CONFLICT",directionalAnalysis:{direction:"BULLISH",dataStatus:"VALID",bullScore:100,bearScore:0},timeframeAnalysis:{direction:"NEUTRAL",bullishTimeframes:2,bearishTimeframes:3,rows:[
+ {timeframe:"daily",dataStatus:"VALID",direction:"BULLISH",bullScore:100,bearScore:0},
+ {timeframe:"fourHour",dataStatus:"VALID",direction:"BULLISH",bullScore:70,bearScore:30},
+ {timeframe:"oneHour",dataStatus:"VALID",direction:"BEARISH",bullScore:30,bearScore:70},
+ {timeframe:"fifteenMinute",dataStatus:"VALID",direction:"BEARISH",bullScore:20,bearScore:80},
+ {timeframe:"fiveMinute",dataStatus:"VALID",direction:"BEARISH",bullScore:10,bearScore:90}
+]},oi:{mood:"BEARISH_BUILDUP"}};
+assert.ok(candidateScore(conflictingCandidate)<candidateScore(candidate),"conflicting timeframes and bearish OI must reduce confidence");
+assert.ok(candidateScore(conflictingCandidate)<50,"strong conflicts must not retain a high confidence score");
 assert.equal(rankCandidates([{...candidate,optionPremiumSetup:{valid:false},symbol:"NO_PREMIUM"}]).length,1);
 assert.equal(rankCandidates([{...candidate,optionContract:{valid:false},symbol:"NO_CONTRACT"}]).length,1);
 const filler=Array.from({length:22},(_,i)=>({...candidate,symbol:"STOCK"+i,confidence:100-i,isNiftyIndex:false}));
