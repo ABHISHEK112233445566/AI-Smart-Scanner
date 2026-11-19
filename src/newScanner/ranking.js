@@ -2,16 +2,46 @@
 
 const { LIMITS } = require("./schema");
 
+function directionalEdge(row) {
+  const a = row?.directionalAnalysis || {};
+  const direction = a.direction;
+  if (!["BULLISH", "BEARISH"].includes(direction)) return 0;
+  const rows = row?.timeframeAnalysis?.rows || [];
+  const valid = rows.filter(x => x?.dataStatus === "VALID" && ["BULLISH", "BEARISH"].includes(x.direction));
+  if (!valid.length) return direction === "BULLISH"
+    ? Number(a.bullScore || 0) - Number(a.bearScore || 0)
+    : Number(a.bearScore || 0) - Number(a.bullScore || 0);
+  const weights = { daily: 1.5, fourHour: 1.4, oneHour: 1.2, fifteenMinute: 1, fiveMinute: 1 };
+  let total = 0, weightTotal = 0;
+  for (const frame of valid) {
+    const w = weights[frame.timeframe] || 1;
+    const bull = Number(frame.bullScore ?? 0), bear = Number(frame.bearScore ?? 0);
+    const edge = frame.direction === "BULLISH" ? bull - bear : bear - bull;
+    const signed = direction === "BULLISH" ? edge : -edge;
+    total += signed * w;
+    weightTotal += w;
+  }
+  return weightTotal ? total / weightTotal : 0;
+}
+
 function candidateScore(row) {
-  const a=row.directionalAnalysis||{}, t=row.timeframeAnalysis||{};
-  const evidence=Math.max(a.bullScore||0,a.bearScore||0);
-  const aligned=Math.max(t.bullishTimeframes||0,t.bearishTimeframes||0);
-  const rr=Number(row.optionPremiumSetup?.riskReward)||0;
-  const volume=Number(row.quote?.volume)||0;
-  const volumePoints=volume>0?Math.min(5,Math.log10(volume)):0;
-  const news=row.news?.direction;
-  const newsPoints=(news==="BULLISH"&&a.direction==="BULLISH")||(news==="BEARISH"&&a.direction==="BEARISH")?5:0;
-  return Math.min(100,Math.round(evidence*.55+aligned*4+Math.min(10,rr*3)+volumePoints+newsPoints));
+  const a = row.directionalAnalysis || {};
+  const edge = Math.max(0, Math.min(100, directionalEdge(row)));
+  const direction = a.direction;
+  const oi = row.oi || {};
+  const oiMood = String(oi.mood || oi.sentiment || "").toUpperCase();
+  const oiConflict = direction === "BULLISH"
+    ? /BEARISH|SHORT_BUILDUP|LONG_UNWINDING/.test(oiMood)
+    : direction === "BEARISH" && /BULLISH|LONG_BUILDUP|SHORT_COVERING/.test(oiMood);
+  const rr = Number(row.optionPremiumSetup?.riskReward) || 0;
+  const rrPoints = Math.min(5, Math.max(0, rr * 2));
+  const volume = Number(row.quote?.volume) || 0;
+  const volumePoints = volume > 0 ? Math.min(3, Math.log10(volume)) : 0;
+  let score = edge * 0.75 + rrPoints + volumePoints;
+  if (oiConflict) score -= 12;
+  if (oiMood === "UNKNOWN" || !oiMood) score -= 3;
+  if (row.marketDataFresh === false) score = Math.min(score, 45);
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function validatedUnderlyingStructure(row) {
@@ -30,9 +60,6 @@ function validatedUnderlyingStructure(row) {
 }
 
 function rankCandidates(rows) {
-  // Keep directional WATCH candidates in SCANNER for diagnostics. A WATCH row
-  // may have incomplete option data or invalid structure, so it must not be
-  // promoted to the compact Dashboard where no decision/rejection column exists.
   const candidates=(Array.isArray(rows)?rows:[]).filter(r=>
     ["BULLISH","BEARISH"].includes(r.directionalAnalysis?.direction) &&
     r.directionalAnalysis?.dataStatus==="VALID" &&
@@ -51,9 +78,6 @@ function rankCandidates(rows) {
 }
 
 function dashboardRows(rows) {
-  // Dashboard has no decision/rejection column. Only publish rows with a
-  // complete, directionally correct underlying plan and independently
-  // recomputed structural RR >= 1.5. Keep rejected/WATCH diagnostics in SCANNER.
   const sorted=(Array.isArray(rows)?rows:[]).filter(r=>
     ["TRADE","WATCH"].includes(r.decision)&&validatedUnderlyingStructure(r)
   ).sort((a,b)=>b.confidence-a.confidence);
@@ -65,4 +89,4 @@ function dashboardRows(rows) {
   }
   return selected;
 }
-module.exports={candidateScore,rankCandidates,dashboardRows,validatedUnderlyingStructure};
+module.exports={candidateScore,rankCandidates,dashboardRows,validatedUnderlyingStructure,directionalEdge};
