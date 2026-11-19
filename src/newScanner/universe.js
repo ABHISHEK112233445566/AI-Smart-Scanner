@@ -22,14 +22,22 @@ function isStockOption(instrument) {
   if (["CE", "PE"].includes(type)) return !underlyingType || underlyingType === "EQUITY";
   return ["CE", "PE"].includes(optionType) && (!underlyingType || underlyingType === "EQUITY");
 }
-function parseCsvSymbols(csv) {
+function parseCsvRows(csv) {
   const lines = String(csv ?? "").replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
   if (lines.length < 450) throw new Error(`NIFTY500_CONSTITUENTS_TOO_SHORT:${lines.length}`);
+  const headers = lines[0].split(",").map(x => x.trim().replace(/^"|"$/g, "").toUpperCase());
+  const symbolIndex = headers.indexOf("SYMBOL") >= 0 ? headers.indexOf("SYMBOL") : 2;
+  const industryIndex = headers.indexOf("INDUSTRY") >= 0 ? headers.indexOf("INDUSTRY") : 1;
   const rows = lines.slice(1).map(line => line.split(",").map(x => x.trim().replace(/^"|"$/g, "")));
-  const symbols = [...new Set(rows.map(cols => symbol(cols[2] || cols[0])).filter(x => x && x !== "SYMBOL"))];
-  if (symbols.length < 450) throw new Error(`NIFTY500_INVALID_SYMBOL_COUNT:${symbols.length}`);
-  return symbols;
+  const bySymbol = new Map();
+  for (const cols of rows) {
+    const s = symbol(cols[symbolIndex] || cols[2] || cols[0]);
+    if (s && s !== "SYMBOL") bySymbol.set(s, { symbol: s, sector: String(cols[industryIndex] || "UNKNOWN").trim() || "UNKNOWN" });
+  }
+  if (bySymbol.size < 450) throw new Error(`NIFTY500_INVALID_SYMBOL_COUNT:${bySymbol.size}`);
+  return [...bySymbol.values()];
 }
+function parseCsvSymbols(csv) { return parseCsvRows(csv).map(row => row.symbol); }
 async function fetchNifty500(http = axios) {
   const failures = [];
   for (const url of [NIFTY500_URL, NIFTY500_FALLBACK_URL]) {
@@ -38,8 +46,8 @@ async function fetchNifty500(http = axios) {
         timeout: 20000, responseType: "text",
         headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/csv,text/plain,*/*", "Referer": "https://www.niftyindices.com/" }
       });
-      const symbols = parseCsvSymbols(response.data);
-      return { name: "NIFTY_500", source: url, symbols, count: symbols.length };
+      const rows = parseCsvRows(response.data);
+      return { name: "NIFTY_500", source: url, symbols: rows.map(row => row.symbol), sectors: Object.fromEntries(rows.map(row => [row.symbol, row.sector])), count: rows.length };
     } catch (error) { failures.push(`${url}: ${error.message}`); }
   }
   throw new Error(`NIFTY500_FETCH_FAILED: ${failures.join(" | ")}`);
@@ -62,8 +70,7 @@ function buildFnoUniverse(instruments) {
   }
   const rows = [];
   for (const [stock, equity] of equities) {
-    const linkedSymbols = foByKey.get(equity.instrumentKey);
-    if (!linkedSymbols) continue;
+    if (!foByKey.has(equity.instrumentKey)) continue;
     rows.push({ ...equity, fnoVerified: true, identitySource: "NSE_EQ_TO_NSE_FO_UNDERLYING_KEY" });
   }
   return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -89,14 +96,15 @@ function findNiftyIndex(instruments) {
   return { symbol: "NIFTY", instrumentKey, fnoEligible: true, isNiftyIndex: true, identitySource: "NSE_INDEX_NIFTY_50" };
 }
 function buildUniverse(nifty500, fnoStocks, niftyIndex = null) {
+  const sectors = nifty500?.sectors || {};
   const nifty = new Set((nifty500?.symbols ?? []).map(symbol).filter(Boolean));
   const fno = new Map((fnoStocks ?? []).map(row => [symbol(row.symbol), row]));
-  const nifty500Rows = [...nifty].map(s => ({ symbol: s, inNifty500: true, fnoEligible: fno.has(s), ...(fno.get(s) || {}) }));
-  const fnoRows = [...fno.values()].map(row => ({ ...row, inNifty500: nifty.has(row.symbol), fnoEligible: true }));
+  const nifty500Rows = [...nifty].map(s => ({ symbol: s, sector: sectors[s] || "UNKNOWN", inNifty500: true, fnoEligible: fno.has(s), ...(fno.get(s) || {}) }));
+  const fnoRows = [...fno.values()].map(row => ({ ...row, sector: sectors[row.symbol] || row.sector || "UNKNOWN", inNifty500: nifty.has(row.symbol), fnoEligible: true }));
   return {
     nifty500: nifty500Rows,
     fnoStocks: fnoRows,
     combined: [...new Map([...nifty500Rows, ...fnoRows, ...(niftyIndex ? [niftyIndex] : [])].map(row => [row.symbol, row])).values()]
   };
 }
-module.exports = { fetchNifty500, parseCsvSymbols, buildFnoUniverse, buildFnoMovers, buildUniverse, findNiftyIndex, isEquity, isStockOption };
+module.exports = { fetchNifty500, parseCsvSymbols, parseCsvRows, buildFnoUniverse, buildFnoMovers, buildUniverse, findNiftyIndex, isEquity, isStockOption };
